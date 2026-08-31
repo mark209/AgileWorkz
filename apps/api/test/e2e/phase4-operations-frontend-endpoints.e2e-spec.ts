@@ -196,6 +196,24 @@ describe("Phase 4 Operations Frontend — backend additions (live)", () => {
         expect(t.status).toBeUndefined();
       }
     });
+
+    // Phase 7 Wave 1 — closing a carry-forward gap from the Phase 4
+    // closure audit: the test above only ever proved response *shape*
+    // against the seeded (all-ACTIVE) data. This test creates a genuine
+    // INACTIVE row and proves the where:{status:ACTIVE} filter actually
+    // excludes it, not just that the seeded data happens to have none.
+    it("excludes an INACTIVE report type from the response", async () => {
+      const inactiveCode = `P4FE_INACTIVE_${Date.now().toString(36)}`;
+      await prisma.serviceReportType.create({
+        data: { code: inactiveCode, label: "Retired Report Type", sortOrder: 999, status: "INACTIVE" },
+      });
+
+      const res = await request(app.getHttpServer()).get("/service-reports/types").set("Authorization", technician.authHeader);
+      expect(res.status).toBe(200);
+      expect(res.body.some((t: { code: string }) => t.code === inactiveCode)).toBe(false);
+
+      await prisma.serviceReportType.delete({ where: { code: inactiveCode } });
+    });
   });
 
   describe("Enriched Work Order list/detail (approved Decision 5)", () => {
