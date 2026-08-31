@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { ServiceReportVerificationService } from "../src/modules/service-report-verification/service-report-verification.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AuditService } from "../src/modules/audit/audit.service";
@@ -110,6 +110,23 @@ function buildHarness(opts: { report?: Record<string, unknown>; measurementRows?
 
   const reportUpdate = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...report, ...data }));
 
+  // Phase 7 Wave 1 (F3.1) — completeVerification() now runs its status
+  // transition through $transaction + a guarded updateMany (same pattern
+  // as WorkOrdersService.startOwn), not a plain update. This stand-in
+  // mutates the same `report` object the rest of the harness already
+  // shares, so a real status guard actually applies: updateMany "fails"
+  // (count: 0) if the where-clause's expected status no longer matches,
+  // exactly mirroring what a real concurrent-status-change would do.
+  const reportUpdateMany = jest.fn(async ({ where, data }: { where: { status?: string }; data: Record<string, unknown> }) => {
+    if (where.status !== undefined && report.status !== where.status) return { count: 0 };
+    Object.assign(report, data);
+    return { count: 1 };
+  });
+  const reportFindUniqueOrThrow = jest.fn(async () => report);
+  const transactionFn = jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback({ serviceReport: { updateMany: reportUpdateMany, findUniqueOrThrow: reportFindUniqueOrThrow } }),
+  );
+
   const prisma = mockOf<PrismaService>({
     serviceReport: { findUnique: jest.fn().mockResolvedValue(report), update: reportUpdate },
     extractionBasicInfo: stores.basicInfo.delegate,
@@ -118,6 +135,7 @@ function buildHarness(opts: { report?: Record<string, unknown>; measurementRows?
     extractionMeasurement: stores.measurement.delegate,
     extractionNarrativeItem: stores.narrativeItem.delegate,
     extractionSignoff: stores.signoff.delegate,
+    $transaction: transactionFn,
   });
 
   const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
@@ -323,5 +341,34 @@ describe("ServiceReportVerificationService.completeVerification", () => {
   it("rejects completing verification twice", async () => {
     const { service } = buildHarness({ report: { status: "CONFIRMED" } });
     await expect(service.completeVerification("sr-1", actor)).rejects.toThrow(BadRequestException);
+  });
+
+  // Phase 7 Wave 1 (F3.1) — the guard itself: a report that reads as
+  // PENDING_VERIFICATION at the top of the method but has already been
+  // transitioned by someone else by the time the guarded updateMany
+  // actually runs (a genuine concurrent completion) must surface as a
+  // clean 409-mapped ConflictException, never a silent double-write. The
+  // e2e-level "only one of two concurrent completion requests... succeeds"
+  // test proves this against a real DB; this proves the same guard logic
+  // in isolation, independent of real concurrency/timing.
+  it("throws ConflictException when the guarded update finds the report no longer PENDING_VERIFICATION", async () => {
+    const report = { id: "sr-1", status: "PENDING_VERIFICATION" };
+    const prisma = mockOf<PrismaService>({
+      serviceReport: { findUnique: jest.fn().mockResolvedValue(report) },
+      extractionBasicInfo: { count: jest.fn().mockResolvedValue(0) },
+      extractionEquipmentUnit: { count: jest.fn().mockResolvedValue(0) },
+      extractionProblem: { count: jest.fn().mockResolvedValue(0) },
+      extractionMeasurement: { count: jest.fn().mockResolvedValue(0) },
+      extractionNarrativeItem: { count: jest.fn().mockResolvedValue(0) },
+      extractionSignoff: { count: jest.fn().mockResolvedValue(0) },
+      // Simulates another request having already won the race — the
+      // guard's own WHERE clause no longer matches, exactly as it
+      // wouldn't against a real DB in the same situation.
+      $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({ serviceReport: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } }),
+      ),
+    });
+    const service = new ServiceReportVerificationService(prisma, mockOf<StorageProvider>({}), mockOf<AuditService>({}));
+    await expect(service.completeVerification("sr-1", actor)).rejects.toThrow(ConflictException);
   });
 });

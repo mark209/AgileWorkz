@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { ActorType, ExtractionConfidence, ExtractionReviewStatus, ServiceReportStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -381,9 +381,28 @@ export class ServiceReportVerificationService {
       );
     }
 
-    const updated = await this.prisma.serviceReport.update({
-      where: { id: serviceReportId },
-      data: { status: ServiceReportStatus.VERIFIED, verifiedBy: actor.userId, verifiedAt: new Date() },
+    // Phase 7 Wave 1 (F3.1) — hardened to the same guarded-updateMany
+    // pattern already used everywhere else in this codebase for a
+    // status-driven transition (e.g. WorkOrdersService.startOwn). Closes a
+    // check-then-act race: the plain `.update()` this replaces would let
+    // two concurrent completeVerification calls for the same report both
+    // pass the assertPendingVerification check above and both write,
+    // producing two audit entries for what should be one genuine human
+    // action. The precondition (still PENDING_VERIFICATION), the
+    // resulting status (VERIFIED), the fields written, the RBAC gate on
+    // this endpoint, and every other Phase 5 behavior are unchanged —
+    // only the write itself is now atomic and race-safe.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.serviceReport.updateMany({
+        where: { id: serviceReportId, status: ServiceReportStatus.PENDING_VERIFICATION },
+        data: { status: ServiceReportStatus.VERIFIED, verifiedBy: actor.userId, verifiedAt: new Date() },
+      });
+      if (guarded.count === 0) {
+        throw new ConflictException(
+          "This Service Report is no longer PENDING_VERIFICATION — it may have just been actioned by someone else",
+        );
+      }
+      return tx.serviceReport.findUniqueOrThrow({ where: { id: serviceReportId } });
     });
 
     await this.audit.write({

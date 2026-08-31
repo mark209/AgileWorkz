@@ -383,5 +383,31 @@ describe("Service Report Human Verification Workflow (live)", () => {
       expect(res.status).toBe(201);
       expect(res.body.status).toBe("VERIFIED");
     });
+
+    // Phase 7 Wave 1 (F3.1) — completeVerification() was hardened from a
+    // plain check-then-act update to the same guarded-updateMany pattern
+    // already used throughout this codebase (e.g.
+    // WorkOrdersService.startOwn), specifically to close this race. Same
+    // style/shape as quotation-lifecycle.e2e-spec.ts's own
+    // "only one of two concurrent ... requests ... succeeds" tests.
+    it("only one of two concurrent completion requests on the same PENDING_VERIFICATION report succeeds — the other gets 409", async () => {
+      const { report } = await createPendingVerificationReport("concurrent-complete", technician.user.id, [
+        { fieldName: "a", aiValue: "1", aiConfidence: "HIGH", reviewStatus: "CONFIRMED" },
+      ]);
+
+      const [a, b] = await Promise.all([
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", officeStaff.authHeader),
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", officeStaff.authHeader),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([201, 409]);
+
+      // Exactly one real transition happened — not two, not zero.
+      const finalReport = await prisma.serviceReport.findUnique({ where: { id: report.id } });
+      expect(finalReport!.status).toBe("VERIFIED");
+
+      const verifiedAudits = await prisma.auditLog.findMany({ where: { action: "service_report_verified", entityId: report.id } });
+      expect(verifiedAudits).toHaveLength(1);
+    });
   });
 });
