@@ -1,6 +1,15 @@
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  # Phase 7 P0 — @nestjs/platform-express@10.4.22 pins its own nested
+  # multer dependency to exactly 2.0.2 (4 High + 1 Moderate DoS advisories,
+  # fixed in >=2.2.0). Bumping apps/api's own direct "multer" dependency
+  # alone does not reach that nested copy — pnpm won't dedupe an exact
+  # "2.0.2" pin with a compatible-range bump. This override forces every
+  # resolution of multer anywhere in the tree, including nested ones, to
+  # a patched version, without waiting for an upstream NestJS release.
+  multer: ^2.3.0
 allowBuilds:
   '@google/genai': true
   '@nestjs/core': true
