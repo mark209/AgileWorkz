@@ -14,6 +14,21 @@ export const envValidationSchema = Joi.object({
   REDIS_URL: Joi.string().uri().default("redis://localhost:6379"),
   STORAGE_PROVIDER: Joi.string().valid("local", "s3").default("local"),
   STORAGE_LOCAL_ROOT: Joi.string().default("./storage-local"),
+  // Phase 7 P0 — required only when STORAGE_PROVIDER=s3, same conditional
+  // pattern already used for the Vertex AI vars below. Before this, a
+  // deploy with STORAGE_PROVIDER=s3 and a missing credential booted
+  // "successfully" (S3StorageProvider falls back to an empty string) and
+  // only failed at the first real upload, with a cryptic AWS SDK auth
+  // error instead of a clear boot-time failure.
+  S3_ENDPOINT: Joi.string().uri().when("STORAGE_PROVIDER", { is: "s3", then: Joi.required(), otherwise: Joi.optional() }),
+  S3_REGION: Joi.string().when("STORAGE_PROVIDER", { is: "s3", then: Joi.required(), otherwise: Joi.optional() }),
+  S3_BUCKET: Joi.string().when("STORAGE_PROVIDER", { is: "s3", then: Joi.required(), otherwise: Joi.optional() }),
+  S3_ACCESS_KEY_ID: Joi.string().when("STORAGE_PROVIDER", { is: "s3", then: Joi.required(), otherwise: Joi.optional() }),
+  S3_SECRET_ACCESS_KEY: Joi.string().when("STORAGE_PROVIDER", {
+    is: "s3",
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
   EXTRACTION_PROVIDER: Joi.string().valid("stub", "vertex-gemini").default("stub"),
   // Required only when EXTRACTION_PROVIDER=vertex-gemini. Presence/shape
   // only — the "must be a locational, not global, endpoint" rule and the
