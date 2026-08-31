@@ -55,4 +55,12 @@ export const envValidationSchema = Joi.object({
   OCR_WORKER_DATABASE_URL: Joi.string().uri().required(),
   WEB_APP_ORIGIN: Joi.string().uri().default("http://localhost:3000"),
   FIELD_APP_ORIGIN: Joi.string().uri().default("http://localhost:3002"),
+  // Phase 7 P0 — Express's "trust proxy" setting, narrowly scoped to a
+  // hop count rather than blindly trusting every X-Forwarded-* header
+  // (which would let any direct caller spoof req.ip merely by sending
+  // one). Defaults to 0 (Express's own default: trust nothing, req.ip is
+  // always the real socket address) — safe for local dev and any
+  // deployment with no reverse proxy in front. Set to 1 for the expected
+  // single-reverse-proxy pilot/production topology; see main.ts.
+  TRUST_PROXY_HOPS: Joi.number().integer().min(0).default(0),
 }).unknown(true);
