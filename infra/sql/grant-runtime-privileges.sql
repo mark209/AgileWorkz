@@ -154,6 +154,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   problem_types
   TO app_runtime;
 
+-- Phase 7 (F7.1) — service_report_upload_idempotency_keys, same full-DML
+-- treatment as every other app-managed table above. Not an OCR/extraction
+-- table (ocr_worker gets nothing on it, same as every canonical table).
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  service_report_upload_idempotency_keys
+  TO app_runtime;
+
 -- ocr_worker — the Phase 1 policy record's non-negotiable rule, executed
 -- exactly as specified in docs/architecture/ocr-worker-db-isolation.md:
 -- SELECT, INSERT, UPDATE on exactly these six tables, granted table-by-table

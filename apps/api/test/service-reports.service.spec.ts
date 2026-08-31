@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
   UnsupportedMediaTypeException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { ServiceReportsService } from "../src/modules/service-reports/service-reports.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AuditService } from "../src/modules/audit/audit.service";
@@ -373,5 +375,157 @@ describe("ServiceReportsService.listForUploader", () => {
     expect(prisma.serviceReport.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { uploadedBy: "u1" } }),
     );
+  });
+});
+
+// Phase 7 (F7.1) — claimIdempotencyKey()'s branching logic, isolated from
+// real DB/HTTP/concurrency timing (that proof lives in
+// service-reports-upload-idempotency.e2e-spec.ts, per the explicit
+// instruction that database/concurrency behavior must be proven at the
+// e2e level, not merely asserted here). These tests cover branches that
+// are impractical or impossible to trigger against a real DB (a
+// structurally-impossible COMPLETED-with-no-report row; forcing a P2002
+// on the very first insert).
+describe("ServiceReportsService.upload — Idempotency-Key branches", () => {
+  it("never touches serviceReportUploadIdempotencyKey when no key is supplied", async () => {
+    const idemKey = { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await service.upload("cust-1", makeFile(), baseDto, actor);
+
+    expect(idemKey.findUnique).not.toHaveBeenCalled();
+    expect(idemKey.create).not.toHaveBeenCalled();
+  });
+
+  it("a brand-new key: creates an IN_PROGRESS claim, proceeds, then marks it COMPLETED with the new report id", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "claim-1" }),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn(),
+    };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    const result = await service.upload("cust-1", makeFile(), baseDto, actor, "fresh-key");
+
+    expect(idemKey.create).toHaveBeenCalledWith({ data: { uploadedBy: actor.userId, idempotencyKey: "fresh-key", status: "IN_PROGRESS" } });
+    expect(idemKey.update).toHaveBeenCalledWith({ where: { id: "claim-1" }, data: { status: "COMPLETED", serviceReportId: result.id } });
+  });
+
+  it("an existing COMPLETED key short-circuits: no storage write, no new report, no enqueue", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "COMPLETED", serviceReportId: "sr-existing" }),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    };
+    const existingReport = { id: "sr-existing", documentFileKey: "k", documentMimeType: "image/jpeg", uploadedBy: actor.userId };
+    const { service, storage, extractionQueue } = buildHarness({
+      prisma: { serviceReportUploadIdempotencyKey: idemKey, serviceReport: { findUnique: jest.fn().mockResolvedValue(existingReport) } },
+    });
+
+    const result = await service.upload("cust-1", makeFile(), baseDto, actor, "already-done-key");
+
+    expect(result.id).toBe("sr-existing");
+    expect(storage.putObject).not.toHaveBeenCalled();
+    expect(extractionQueue.enqueueExtraction).not.toHaveBeenCalled();
+    expect(idemKey.create).not.toHaveBeenCalled();
+  });
+
+  it("a COMPLETED key with no linked report is a data-inconsistency error, not a silent guess", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "COMPLETED", serviceReportId: null }),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "broken-key")).rejects.toThrow(InternalServerErrorException);
+  });
+
+  it("an existing IN_PROGRESS key is a genuine concurrent conflict — 409, no work done", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "IN_PROGRESS", serviceReportId: null }),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    };
+    const { service, storage } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "in-flight-key")).rejects.toThrow(ConflictException);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("an existing FAILED key is atomically re-claimed and the upload retried", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "FAILED", serviceReportId: null }),
+      create: jest.fn(),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    const { service, storage } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    const result = await service.upload("cust-1", makeFile(), baseDto, actor, "retry-key");
+
+    expect(idemKey.updateMany).toHaveBeenCalledWith({ where: { id: "claim-1", status: "FAILED" }, data: { status: "IN_PROGRESS" } });
+    expect(storage.putObject).toHaveBeenCalled();
+    expect(idemKey.update).toHaveBeenCalledWith({ where: { id: "claim-1" }, data: { status: "COMPLETED", serviceReportId: result.id } });
+  });
+
+  it("loses the re-claim race on a FAILED row (updateMany count 0), re-reads, and resolves against the fresh state", async () => {
+    const idemKey = {
+      findUnique: jest
+        .fn()
+        .mockResolvedValueOnce({ id: "claim-1", status: "FAILED", serviceReportId: null })
+        .mockResolvedValueOnce({ id: "claim-1", status: "IN_PROGRESS", serviceReportId: null }),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "contested-key")).rejects.toThrow(ConflictException);
+    expect(idemKey.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it("loses the create race on a brand-new key (P2002), re-reads, and resolves against the winner's state", async () => {
+    const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "5.22.0" });
+    const idemKey = {
+      findUnique: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: "claim-1", status: "COMPLETED", serviceReportId: "sr-winner" }),
+      create: jest.fn().mockRejectedValue(p2002),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    };
+    const { service, storage } = buildHarness({
+      prisma: {
+        serviceReportUploadIdempotencyKey: idemKey,
+        serviceReport: { findUnique: jest.fn().mockResolvedValue({ id: "sr-winner", documentFileKey: "k", documentMimeType: "image/jpeg" }) },
+      },
+    });
+
+    const result = await service.upload("cust-1", makeFile(), baseDto, actor, "raced-new-key");
+
+    expect(result.id).toBe("sr-winner");
+    expect(storage.putObject).not.toHaveBeenCalled(); // never proceeded — the winner already completed it
+  });
+
+  it("marks the claim FAILED (not left IN_PROGRESS) when the upload itself throws, and still surfaces the original error", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "claim-1" }),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn(),
+    };
+    const { service } = buildHarness({
+      prisma: { serviceReportUploadIdempotencyKey: idemKey },
+      storage: { putObject: jest.fn().mockRejectedValue(new Error("simulated storage outage")) },
+    });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "will-fail-key")).rejects.toThrow("simulated storage outage");
+    expect(idemKey.update).toHaveBeenCalledWith({ where: { id: "claim-1" }, data: { status: "FAILED" } });
   });
 });

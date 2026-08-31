@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -11,7 +12,9 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import {
   ActorType,
+  IdempotencyKeyStatus,
   NumberSeries,
+  Prisma,
   ReferenceStatus,
   ServiceReport,
   ServiceReportSourceType,
@@ -94,15 +97,131 @@ export class ServiceReportsService {
   ) {}
 
   /**
-   * POST /customers/:customerId/service-reports (multipart). Creates the
-   * canonical header row and enqueues the existing extraction job — the
-   * queue processor built in Step 3 owns everything from here (storage
-   * retrieval, staging writes, status transitions into
-   * PENDING_VERIFICATION/EXTRACTION_FAILED). This method's only job is to
-   * get a valid header row and a queued job into existence together, or
-   * neither — see the rollback behavior below.
+   * POST /customers/:customerId/service-reports (multipart). Phase 7
+   * (F7.1, approved mini-design) — the public entry point now branches on
+   * an optional caller-supplied Idempotency-Key header before doing any
+   * real work:
+   *
+   *   - No key at all -> performUpload() runs exactly as it always has.
+   *     Fully backward compatible; nothing about this path changed.
+   *   - A key is present -> claimIdempotencyKey() atomically decides
+   *     whether this request should proceed (a genuinely new attempt or a
+   *     retry of a previously-FAILED one), return the ORIGINAL result of
+   *     an already-COMPLETED attempt (no new ServiceReport, no new
+   *     extraction job, no double-write of any kind), or be rejected as a
+   *     409 Conflict (another request is genuinely IN_PROGRESS with this
+   *     same key right now). Only the "proceed" branch ever calls
+   *     performUpload() — everything inside it, including the extraction
+   *     enqueue and its own rollback behavior, is completely unchanged.
    */
   async upload(
+    customerId: string,
+    file: Express.Multer.File | undefined,
+    dto: UploadServiceReportDto,
+    actor: ActorContext,
+    idempotencyKey?: string,
+  ): Promise<PublicServiceReport> {
+    if (!idempotencyKey) {
+      return this.performUpload(customerId, file, dto, actor);
+    }
+
+    const claim = await this.claimIdempotencyKey(actor.userId, idempotencyKey);
+    if (claim.mode === "return-existing") {
+      const existing = await this.findByIdOrThrow(claim.serviceReportId);
+      return toPublicServiceReport(existing);
+    }
+    if (claim.mode === "conflict") {
+      throw new ConflictException(
+        "An upload with this Idempotency-Key is already being processed for this account.",
+      );
+    }
+
+    try {
+      const report = await this.performUpload(customerId, file, dto, actor);
+      await this.prisma.serviceReportUploadIdempotencyKey.update({
+        where: { id: claim.claimId },
+        data: { status: IdempotencyKeyStatus.COMPLETED, serviceReportId: report.id },
+      });
+      return report;
+    } catch (e) {
+      // Never leave the key stuck at IN_PROGRESS forever — a subsequent
+      // retry with this same key must be able to try again. If this
+      // cleanup update itself fails, the original error is still what
+      // gets thrown; a permanently-IN_PROGRESS row is a lesser problem
+      // than masking the real failure, and is still recoverable (see
+      // claimIdempotencyKey's own bounded-retry read of a stale
+      // IN_PROGRESS row -> conflict, not a silent hang).
+      await this.prisma.serviceReportUploadIdempotencyKey
+        .update({ where: { id: claim.claimId }, data: { status: IdempotencyKeyStatus.FAILED } })
+        .catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /**
+   * The atomic "claim" step — see the class-level upload() doc comment.
+   * Never a plain read-then-write: the very first insert attempt is the
+   * real DB-level race guard (the @@unique([uploadedBy, idempotencyKey])
+   * index), caught as P2002 exactly like
+   * WorkOrderAssignmentsService.assign's own precedent. Bounded to two
+   * passes — realistically converges on the first; a second genuinely
+   * concurrent loss on the same key within the same request is treated as
+   * a conflict rather than retried indefinitely.
+   */
+  private async claimIdempotencyKey(
+    uploadedBy: string,
+    idempotencyKey: string,
+  ): Promise<{ mode: "proceed"; claimId: string } | { mode: "return-existing"; serviceReportId: string } | { mode: "conflict" }> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const existing = await this.prisma.serviceReportUploadIdempotencyKey.findUnique({
+        where: { uploadedBy_idempotencyKey: { uploadedBy, idempotencyKey } },
+      });
+
+      if (!existing) {
+        try {
+          const created = await this.prisma.serviceReportUploadIdempotencyKey.create({
+            data: { uploadedBy, idempotencyKey, status: IdempotencyKeyStatus.IN_PROGRESS },
+          });
+          return { mode: "proceed", claimId: created.id };
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+            continue; // lost the create race — loop back and read what's there now
+          }
+          throw e;
+        }
+      }
+
+      if (existing.status === IdempotencyKeyStatus.COMPLETED) {
+        if (!existing.serviceReportId) {
+          // Should be structurally impossible (COMPLETED is only ever set
+          // together with serviceReportId, in the same update) — fail
+          // loudly rather than silently guessing.
+          throw new InternalServerErrorException(
+            "Idempotency key is COMPLETED with no linked Service Report — data inconsistency",
+          );
+        }
+        return { mode: "return-existing", serviceReportId: existing.serviceReportId };
+      }
+
+      if (existing.status === IdempotencyKeyStatus.IN_PROGRESS) {
+        return { mode: "conflict" };
+      }
+
+      // FAILED — attempt to atomically re-claim it for this retry.
+      const guarded = await this.prisma.serviceReportUploadIdempotencyKey.updateMany({
+        where: { id: existing.id, status: IdempotencyKeyStatus.FAILED },
+        data: { status: IdempotencyKeyStatus.IN_PROGRESS },
+      });
+      if (guarded.count === 1) {
+        return { mode: "proceed", claimId: existing.id };
+      }
+      // Lost the re-claim race to another concurrent retry — loop back and
+      // read the fresh state before deciding.
+    }
+    return { mode: "conflict" };
+  }
+
+  private async performUpload(
     customerId: string,
     file: Express.Multer.File | undefined,
     dto: UploadServiceReportDto,

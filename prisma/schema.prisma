@@ -257,6 +257,9 @@ model User {
   serviceReportsVerified           ServiceReport[]           @relation("ServiceReportVerifiedBy")
   serviceReportsConfirmed          ServiceReport[]           @relation("ServiceReportConfirmedBy")
   serviceReportsLocked             ServiceReport[]           @relation("ServiceReportLockedBy")
+  // Phase 7 (F7.1) — one row per upload attempt this user made with an
+  // Idempotency-Key header; see ServiceReportUploadIdempotencyKey.
+  serviceReportUploadIdempotencyKeys ServiceReportUploadIdempotencyKey[] @relation("ServiceReportUploadIdempotencyKeyUploadedBy")
   extractionBasicInfoVerified      ExtractionBasicInfo[]     @relation("ExtractionBasicInfoVerifiedBy")
   extractionEquipmentUnitsVerified ExtractionEquipmentUnit[] @relation("ExtractionEquipmentUnitVerifiedBy")
   extractionProblemsVerified       ExtractionProblem[]       @relation("ExtractionProblemVerifiedBy")
@@ -1496,12 +1499,67 @@ model ServiceReport {
   extractionNarrativeItems ExtractionNarrativeItem[]
   extractionSignoffs       ExtractionSignoff[]
 
+  // Phase 7 (F7.1) — the claim row (if any) that produced this report via
+  // an idempotency-key-protected upload. Optional: a caller that never
+  // sends an Idempotency-Key never gets a row here at all — see
+  // ServiceReportUploadIdempotencyKey below.
+  uploadIdempotencyKey ServiceReportUploadIdempotencyKey?
+
   @@index([customerId])
   @@index([siteId])
   @@index([workOrderId])
   @@index([reportTypeCode])
   @@index([status])
   @@map("service_reports")
+}
+
+// Phase 7 (F7.1, approved mini-design —
+// docs/architecture/phase7-f7.1-idempotency-design.md) — dedup for
+// POST /customers/:id/service-reports. A double-tap, a client retry after
+// a timeout, or a genuinely concurrent duplicate submission with the same
+// caller-generated Idempotency-Key header must never create a second
+// ServiceReport row or a second extraction job for what is really one
+// upload attempt.
+//
+// The uniqueness rule is deliberately scoped PER UPLOADER
+// (@@unique([uploadedBy, idempotencyKey])), not globally: a key is only
+// ever meaningful in the context of who generated it, so two different
+// technicians' independently-generated keys colliding by coincidence must
+// never be treated as the same upload. This is enforced at the database
+// level (a real unique index, not an application-memory check) — the
+// "claim" this row represents is acquired via an atomic insert/guarded
+// update, never a plain read-then-write.
+//
+// No expiry/TTL/cleanup job: one row per real upload attempt, growing at
+// the same rate as service_reports itself — see the design doc for why a
+// purge job isn't justified at this scale.
+model ServiceReportUploadIdempotencyKey {
+  id             String               @id @default(uuid())
+  idempotencyKey String               @map("idempotency_key") @db.VarChar(100)
+  uploadedBy     String               @map("uploaded_by")
+  // IN_PROGRESS: this request currently owns the claim and is doing the
+  // real upload work. COMPLETED: the upload succeeded — serviceReportId is
+  // set, and any retry with this same key must return that same report,
+  // never create a new one. FAILED: the owning request's upload work threw
+  // partway through — never left permanently stuck, a subsequent request
+  // with the same key is allowed to re-claim it (see
+  // ServiceReportsService.claimIdempotencyKey) and try again.
+  status          IdempotencyKeyStatus @default(IN_PROGRESS)
+  serviceReportId String?              @unique @map("service_report_id")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  uploadedByUser User          @relation("ServiceReportUploadIdempotencyKeyUploadedBy", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  serviceReport  ServiceReport? @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+
+  @@unique([uploadedBy, idempotencyKey])
+  @@map("service_report_upload_idempotency_keys")
+}
+
+enum IdempotencyKeyStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
 }
 
 // Step 1 correction (Recommendation E) — who performed the work, as many

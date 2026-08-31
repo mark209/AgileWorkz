@@ -71,12 +71,12 @@ export interface UploadedServiceReport {
 export function uploadServiceReport(
   accessToken: string,
   customerId: string,
-  input: { siteId: string; workOrderId: string; reportTypeCode: string; file: File },
+  input: { siteId: string; workOrderId: string; reportTypeCode: string; file: File; idempotencyKey?: string },
 ) {
   const formData = new FormData();
   formData.append("siteId", input.siteId);
   formData.append("workOrderId", input.workOrderId);
   formData.append("reportTypeCode", input.reportTypeCode);
   formData.append("file", input.file);
-  return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken);
+  return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken, input.idempotencyKey);
 }

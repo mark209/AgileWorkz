@@ -59,6 +59,13 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  // Phase 7 (F7.1) — generated once per logical upload attempt, not once
+  // per submit click: a retry (button click again after a timeout/error)
+  // reuses the SAME key on purpose, so the server can recognize it as the
+  // same attempt rather than a new upload. A fresh key is only drawn after
+  // a successful upload, for the technician's NEXT, genuinely different
+  // attempt (e.g. a second document for the same job).
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   function setReportTypeCode(value: string) {
     setReportTypeCodeState(value);
@@ -92,10 +99,12 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
         workOrderId: workOrder.id,
         reportTypeCode,
         file,
+        idempotencyKey,
       });
       setUploaded(result.serviceReportNumber);
       setReportTypeCode(""); // also clears the persisted draft, via the wrapper above
       setFile(null);
+      setIdempotencyKey(crypto.randomUUID()); // this attempt is done — the next one gets its own key
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to upload Service Report.");
     } finally {

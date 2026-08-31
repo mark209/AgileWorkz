@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UploadedFile, UseFilters, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Patch, Post, Req, UploadedFile, UseFilters, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { Request } from "express";
 import { CustomersService } from "./customers.service";
@@ -151,7 +151,11 @@ export class CustomersController {
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: UploadServiceReportDto,
     @Req() req: AuthedRequest,
+    // Phase 7 (F7.1) — optional. A caller that never sends this header
+    // gets exactly the pre-F7.1 behavior (see ServiceReportsService.upload)
+    // — this is additive, never a breaking change to existing callers.
+    @Headers("idempotency-key") idempotencyKey?: string,
   ) {
-    return this.serviceReportsService.upload(id, file, dto, actorFrom(req));
+    return this.serviceReportsService.upload(id, file, dto, actorFrom(req), idempotencyKey);
   }
 }

@@ -84,12 +84,20 @@ export async function apiRequest<T>(
 // Content-Type: application/json. Deliberately NOT setting Content-Type
 // here either — the browser must set it itself (multipart/form-data with
 // the correct boundary), which it only does when left alone.
-export async function apiUpload<T>(path: string, formData: FormData, accessToken: string): Promise<T> {
+export async function apiUpload<T>(path: string, formData: FormData, accessToken: string, idempotencyKey?: string): Promise<T> {
   const res = await fetchWithTimeout(
     `${API_BASE_URL}${path}`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        // Phase 7 (F7.1) — optional. The server treats a missing header as
+        // exactly the pre-F7.1 behavior; every apps/field caller sends one
+        // (see uploadServiceReport) precisely so a timeout-triggered retry
+        // (the whole reason apiUpload now has a timeout at all — see
+        // above) can never create a duplicate Service Report.
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      },
       body: formData,
     },
     UPLOAD_TIMEOUT_MS,

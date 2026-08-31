@@ -87,6 +87,7 @@ describe("ServiceReportUploadForm", () => {
         workOrderId: "wo1",
         reportTypeCode: "MAINTENANCE_CLEANING",
         file,
+        idempotencyKey: expect.any(String), // Phase 7 (F7.1) — a real UUID, generated per attempt
       }),
     );
     expect(await screen.findByText(/SR-2026-08-00001/)).toBeInTheDocument();
@@ -111,6 +112,54 @@ describe("ServiceReportUploadForm", () => {
     listServiceReportTypesMock.mockRejectedValue(new ApiError(403, "Forbidden"));
     render(<ServiceReportUploadForm workOrder={job()} />);
     expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
+  });
+
+  // Phase 7 (F7.1) — the whole point of sending a key at all is that a
+  // retry of the SAME logical attempt must reuse it, so the server can
+  // recognize a timeout-triggered resubmission instead of creating a
+  // second Service Report.
+
+  it("reuses the SAME idempotency key when retrying after a failed upload", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockRejectedValueOnce(new ApiError(500, "Internal server error"));
+    uploadServiceReportMock.mockResolvedValueOnce({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await screen.findByText(/internal server error/i);
+
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledTimes(2));
+
+    const firstKey = uploadServiceReportMock.mock.calls[0][2].idempotencyKey;
+    const secondKey = uploadServiceReportMock.mock.calls[1][2].idempotencyKey;
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("draws a NEW idempotency key for the next attempt after a successful upload", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f1.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await screen.findByText(/SR-2026-08-00001/);
+
+    // A second, genuinely different document for the same job.
+    await user.selectOptions(screen.getByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.upload(screen.getByLabelText(/photo or document/i), new File(["y"], "f2.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledTimes(2));
+
+    const firstKey = uploadServiceReportMock.mock.calls[0][2].idempotencyKey;
+    const secondKey = uploadServiceReportMock.mock.calls[1][2].idempotencyKey;
+    expect(secondKey).not.toBe(firstKey);
   });
 
   // Phase 7 Wave 1 (F6.2, scoped mitigation) — the file itself can never
