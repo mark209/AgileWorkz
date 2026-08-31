@@ -45,6 +45,7 @@ function reportType(overrides: Partial<ServiceReportType> = {}): ServiceReportTy
 describe("ServiceReportUploadForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     listServiceReportTypesMock.mockResolvedValue([reportType()]);
   });
 
@@ -110,5 +111,42 @@ describe("ServiceReportUploadForm", () => {
     listServiceReportTypesMock.mockRejectedValue(new ApiError(403, "Forbidden"));
     render(<ServiceReportUploadForm workOrder={job()} />);
     expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
+  });
+
+  // Phase 7 Wave 1 (F6.2, scoped mitigation) — the file itself can never
+  // survive a lost session (a File object isn't serializable), but the
+  // report-type selection is persisted to sessionStorage per Work Order so
+  // a technician re-logging in mid-job doesn't have to re-pick it.
+
+  it("restores a previously-selected report type from sessionStorage on mount", async () => {
+    sessionStorage.setItem("sr-upload-draft:wo1", "MAINTENANCE_CLEANING");
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const select = (await screen.findByLabelText(/report type/i)) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("MAINTENANCE_CLEANING"));
+  });
+
+  it("persists the report-type selection to sessionStorage, scoped to this Work Order", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    render(<ServiceReportUploadForm workOrder={job({ id: "wo-42" })} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+
+    expect(sessionStorage.getItem("sr-upload-draft:wo-42")).toBe("MAINTENANCE_CLEANING");
+  });
+
+  it("clears the persisted draft once an upload succeeds", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+
+    await waitFor(() => expect(sessionStorage.getItem("sr-upload-draft:wo1")).toBeNull());
   });
 });
