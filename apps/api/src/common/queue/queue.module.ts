@@ -21,7 +21,28 @@ import { HealthCheckProcessor } from "./health-check.processor";
 })
 export class QueueModule {}
 
-function parseRedisUrl(url: string): { host: string; port: number } {
+// Phase 7 P0 — this previously extracted only host/port, silently
+// dropping any username/password/TLS scheme even if REDIS_URL actually
+// contained them: an operator who correctly set a credentialed URL would
+// have gotten an unauthenticated connection anyway, with no error and no
+// indication anything was wrong. Never hardcodes a credential — every
+// value here comes from REDIS_URL itself; the plain `redis://localhost:
+// 6379` default used in local dev has no username/password/tls, so
+// nothing changes for that case. `rediss:` (TLS) is the scheme used by
+// most managed Redis providers' connection strings.
+export function parseRedisUrl(url: string): {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  tls?: Record<string, never>;
+} {
   const parsed = new URL(url);
-  return { host: parsed.hostname, port: Number(parsed.port || 6379) };
+  return {
+    host: parsed.hostname,
+    port: Number(parsed.port || 6379),
+    ...(parsed.username ? { username: decodeURIComponent(parsed.username) } : {}),
+    ...(parsed.password ? { password: decodeURIComponent(parsed.password) } : {}),
+    ...(parsed.protocol === "rediss:" ? { tls: {} } : {}),
+  };
 }
