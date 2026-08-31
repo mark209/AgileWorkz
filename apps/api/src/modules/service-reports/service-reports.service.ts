@@ -40,6 +40,19 @@ const STORAGE_KEY_PREFIX = "service-reports";
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB per file
 export const ALLOWED_UPLOAD_MIME_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
+// Phase 7 P0 — matches the DB column's own VarChar(100) exactly (see
+// ServiceReportUploadIdempotencyKey in schema.prisma). Enforced here too,
+// not just at the DB, so an oversized/invalid key produces a clean 400
+// before any DB round-trip, instead of an unhandled Postgres length-
+// violation surfacing as a generic 500 via AllExceptionsFilter. The
+// character allowlist (matching a UUID's own shape, the value
+// apps/field actually sends) is intentionally generous — letters,
+// digits, hyphens, underscores — enough to also accept other reasonable
+// client-generated idempotency-key formats without inviting control
+// characters or byte sequences with no legitimate reason to appear here.
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 100;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+
 /**
  * The client-safe projection of a ServiceReport row. documentFileKey is
  * deliberately never included — the approved requirement is "do not expose
@@ -124,6 +137,11 @@ export class ServiceReportsService {
   ): Promise<PublicServiceReport> {
     if (!idempotencyKey) {
       return this.performUpload(customerId, file, dto, actor);
+    }
+    if (idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+      throw new BadRequestException(
+        `Idempotency-Key must be 1-${IDEMPOTENCY_KEY_MAX_LENGTH} characters, using only letters, digits, hyphens, and underscores.`,
+      );
     }
 
     const claim = await this.claimIdempotencyKey(actor.userId, idempotencyKey);

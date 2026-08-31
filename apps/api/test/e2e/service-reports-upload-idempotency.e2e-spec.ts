@@ -290,6 +290,29 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
     });
   });
 
+  describe("Idempotency-Key validation (Phase 7 P0)", () => {
+    it("rejects an oversized key (101 chars) with a controlled 400, not a 500, and writes nothing", async () => {
+      const { customer, site } = await createCustomerSite("oversized");
+      const res = await uploadRequest(app, customer.id, site.id, technician.authHeader, "x".repeat(101));
+      expect(res.status).toBe(400);
+      expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
+    });
+
+    it("rejects a key containing disallowed characters with a controlled 400, not a 500, and writes nothing", async () => {
+      const { customer, site } = await createCustomerSite("badchars");
+      const res = await uploadRequest(app, customer.id, site.id, technician.authHeader, "has spaces/and,commas");
+      expect(res.status).toBe(400);
+      expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
+    });
+
+    it("accepts a key at exactly the 100-character boundary", async () => {
+      const { customer, site } = await createCustomerSite("boundary");
+      const res = await uploadRequest(app, customer.id, site.id, technician.authHeader, "y".repeat(100));
+      expect(res.status).toBe(201);
+      expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(1);
+    });
+  });
+
   describe("RBAC is unaffected by the Idempotency-Key header", () => {
     it("still rejects a caller without service_reports.upload, whether or not a key is sent", async () => {
       const { customer, site } = await createCustomerSite("rbac");

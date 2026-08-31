@@ -422,6 +422,60 @@ describe("ServiceReportsService.listForUploader", () => {
 // are impractical or impossible to trigger against a real DB (a
 // structurally-impossible COMPLETED-with-no-report row; forcing a P2002
 // on the very first insert).
+describe("ServiceReportsService.upload — Idempotency-Key validation", () => {
+  it("rejects a key longer than 100 characters with a clean BadRequestException, no DB round-trip", async () => {
+    const idemKey = { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() };
+    const { service, storage } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "x".repeat(101))).rejects.toThrow(BadRequestException);
+    expect(idemKey.findUnique).not.toHaveBeenCalled();
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("accepts a key at exactly the 100-character boundary", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "claim-1" }),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn(),
+    };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "x".repeat(100))).resolves.toBeDefined();
+  });
+
+  it("treats an empty-string key the same as no key at all (today's exact pre-F7.1 behavior), not a validation error", async () => {
+    // An empty string is falsy in JS, so `upload()`'s own `if (!idempotencyKey)`
+    // check takes the early-return path before ever reaching this
+    // length/character validation — documenting that explicitly rather
+    // than leaving it ambiguous which check "wins".
+    const { service } = buildHarness();
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor, "")).resolves.toBeDefined();
+  });
+
+  it.each(["has spaces", "has/slash", "has,comma", "has\nnewline", "has\ttab"])(
+    "rejects a key containing disallowed characters: %j",
+    async (key) => {
+      const { service } = buildHarness();
+      await expect(service.upload("cust-1", makeFile(), baseDto, actor, key)).rejects.toThrow(BadRequestException);
+    },
+  );
+
+  it("accepts a realistic UUID-shaped key", async () => {
+    const idemKey = {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "claim-1" }),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn(),
+    };
+    const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
+
+    await expect(
+      service.upload("cust-1", makeFile(), baseDto, actor, "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe("ServiceReportsService.upload — Idempotency-Key branches", () => {
   it("never touches serviceReportUploadIdempotencyKey when no key is supplied", async () => {
     const idemKey = { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() };
