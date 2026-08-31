@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    // A production build must always be a full, clean compile. Incremental
+    // mode caches state in a .tsbuildinfo file that lives outside dist/, so
+    // `deleteOutDir` never clears it — if that cache goes stale relative to
+    // a config change (e.g. a different outDir/rootDir), tsc can silently
+    // emit nothing at all while still exiting 0. Not worth the risk here;
+    // tsconfig.json (dev/typecheck/watch) keeps incremental on.
+    "incremental": false
+  },
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.e2e-spec.ts"]
+}

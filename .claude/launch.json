@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@agileworks/web", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@agileworks/api", "start:dev"],
+      "port": 3001
+    },
+    {
+      "name": "field",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@agileworks/field", "dev"],
+      "port": 3002
+    }
+  ]
+}

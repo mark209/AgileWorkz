@@ -1,0 +1,1990 @@
+// AgileWorks HVAC ERP — Phase 1 schema (Platform domain only)
+// Matches the Rev 7 blueprint + the two Phase 1 revision decisions:
+//   1. users <-> roles is many-to-many via user_roles
+//   2. audit_logs carries an explicit actor_type
+// No Customer/Site/Work Order/Service Report tables — those are Phases 2-5.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// Kept as a Postgres enum (not a free string) because the set of actor kinds
+// is small and slow-changing, unlike audit_logs.action. Adding a 5th value
+// later is a single additive `ALTER TYPE ... ADD VALUE` migration — not a
+// redesign, but not literally migration-free either. Flag if a plain string
+// column is preferred instead for zero-migration extensibility.
+enum ActorType {
+  USER
+  SYSTEM
+  WORKER
+  INTEGRATION
+}
+
+enum SettingValueType {
+  NUMBER
+  STRING
+  BOOL
+}
+
+// --- Phase 2 — Customer, Site & Equipment domain enums ---------------------
+
+enum CustomerType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ContactStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SiteStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EquipmentSystemStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AssetStatus {
+  ACTIVE
+  OUT_OF_SERVICE
+  DECOMMISSIONED
+}
+
+// Shared by capacity_units, equipment_types, and equipment_system_types —
+// all three are pure controlled-value reference/lookup tables of the same
+// kind (disable, never delete), unlike Customer/Contact/Site/EquipmentSystem
+// which are distinct business entities and each get their own named status
+// enum, matching the UserStatus precedent from Phase 1.
+enum ReferenceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DocumentRelatedType {
+  CUSTOMER
+  SITE
+  ASSET
+  // Step 3 correction — reuses the existing polymorphic customer_documents
+  // infrastructure for inquiry attachments instead of building a parallel
+  // system. Additive: does not affect existing CUSTOMER/SITE/ASSET rows.
+  INQUIRY
+  // Phase 4 Step 1 — same reuse pattern as INQUIRY above, for technician
+  // notes/photos/attachments on a Work Order. No new table.
+  WORK_ORDER
+  // Phase 5 Step 1 — same reuse pattern, for the original Service Report
+  // document (photo/scan of the signed field form) uploaded ahead of OCR.
+  SERVICE_REPORT
+}
+
+enum DocumentType {
+  CONTRACT
+  WARRANTY
+  PHOTO
+  MANUAL
+  COMPLIANCE_CERT
+  OTHER
+}
+
+// --- Phase 3 — Sales Workflow domain enums ---------------------------------
+
+enum QuotationType {
+  REPAIR
+  PREVENTIVE_MAINTENANCE
+  SUPPLY_INSTALLATION
+  PROJECT
+}
+
+// Shared by quotations.status (denormalized mirror) and quotation_revisions.status
+// — a behavior-affecting lifecycle taxonomy, not a controlled-value list, so it's
+// a real Postgres enum rather than a reference table (matches the AssetStatus
+// precedent from Phase 2, not the ReferenceStatus precedent).
+enum QuotationRevisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  SUPERSEDED
+}
+
+// Approved Phase 3 Rev 3 V1 tax model: exactly two per-line-item treatments.
+//
+// Step 5 verification note: taxability (taxable vs. exempt) and price-
+// display direction (inclusive vs. exclusive of VAT, only meaningful when
+// taxable) are two independent dimensions, not one. This enum's two values
+// each map to exactly one cell of that matrix — VAT_INCLUSIVE = taxable +
+// inclusive display; VAT_EXEMPT = not taxable at all, so the
+// inclusive/exclusive question doesn't apply. The third real combination,
+// VAT_EXCLUSIVE (taxable + exclusive display, VAT added on top separately),
+// is a genuine, distinct state that is deliberately out of V1 scope — not
+// folded into or confused with either value that exists. VAT_EXEMPT must
+// never be read as "VAT-exclusive pricing"; it means genuinely non-taxable.
+// Adding VAT_EXCLUSIVE later (if ever approved) is a single additive
+// `ALTER TYPE ... ADD VALUE` plus one more formula-table row in §06/Step 6
+// — not a redesign of this model.
+enum TaxTreatment {
+  VAT_INCLUSIVE
+  VAT_EXEMPT
+}
+
+enum MaintenanceFrequency {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUAL
+  ANNUAL
+  CUSTOM
+}
+
+// Deliberately a separate enum from MaintenanceFrequency, not a shared one —
+// the two value sets genuinely differ (PER_VISIT/LUMP_SUM here, WEEKLY/CUSTOM
+// there), so a single shared enum would admit invalid combinations.
+enum MaintenanceBillingFrequency {
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUAL
+  ANNUAL
+  PER_VISIT
+  LUMP_SUM
+}
+
+// Step 3 correction. Each value is a numbering series with its own
+// independent monthly counter and its own configurable prefix (see
+// DocumentNumberCounter). Deliberately a real enum, not a reference table —
+// unlike Trade, a series drives real behavior (which system_settings prefix
+// key to read, which counter row to lock), matching the project's own
+// enum-vs-reference-table rule.
+// Phase 4 Step 1 — WORK_ORDER added. Same shared engine, own independent
+// monthly counter and prefix (work_order_number_prefix), format
+// WO-YYYY-MM-NNNNN — identical shape to QUOTATION/INQUIRY (D9).
+enum NumberSeries {
+  INQUIRY
+  QUOTATION
+  WORK_ORDER
+  SERVICE_REPORT
+}
+
+// Step 3. OPEN -> CONVERTED happens automatically when a quotation is
+// created from this inquiry (wired up in Step 5, once quotation creation
+// itself exists) or OPEN -> CLOSED via the explicit close action. CONVERTED
+// and CLOSED are both terminal — matches audit_logs' inquiry_converted /
+// inquiry_closed actions (§12).
+enum InquiryStatus {
+  OPEN
+  CONVERTED
+  CLOSED
+}
+
+// ---------------------------------------------------------------------------
+// Platform
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  fullName     String     @map("full_name") @db.VarChar(160)
+  email        String     @unique @db.VarChar(255)
+  phone        String?    @db.VarChar(30)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  // No role_id column — membership lives entirely in UserRole.
+  // No deletedAt — users are disabled via status, never deleted.
+
+  userRoles                        UserRole[]                @relation("UserToUserRoles")
+  rolesAssignedByMe                UserRole[]                @relation("UserRoleAssignedBy")
+  systemSettingEdits               SystemSetting[]           @relation("SystemSettingUpdatedBy")
+  auditLogEntries                  AuditLog[]                @relation("AuditLogActor")
+  customerAccounts                 Customer[]                @relation("CustomerAccountManager")
+  uploadedDocuments                CustomerDocument[]        @relation("CustomerDocumentUploadedBy")
+  // Phase 3 — no new column on `users`, just the two back-relations Prisma
+  // requires for quotation_revisions.created_by/approved_by (see §02).
+  quotationRevisionsCreated        QuotationRevision[]       @relation("QuotationRevisionCreatedBy")
+  quotationRevisionsApproved       QuotationRevision[]       @relation("QuotationRevisionApprovedBy")
+  // Phase 3 Step 3 — no new column on `users`, just the back-relation Prisma
+  // requires for inquiries.created_by.
+  inquiriesCreated                 Inquiry[]                 @relation("InquiryCreatedBy")
+  // Phase 4 Step 1 — no new column on `users`, just the back-relations
+  // Prisma requires for every actor-tracking FK on work_orders and its
+  // child tables. One relation name per distinct FK, per Prisma's own
+  // requirement whenever more than one FK on the same model points at the
+  // same target — same pattern already used above for quotation_revisions.
+  workOrdersCreated                WorkOrder[]               @relation("WorkOrderCreatedBy")
+  workOrdersStarted                WorkOrder[]               @relation("WorkOrderStartedBy")
+  workOrdersCompleted              WorkOrder[]               @relation("WorkOrderCompletedBy")
+  workOrdersClosed                 WorkOrder[]               @relation("WorkOrderClosedBy")
+  workOrderCancellationsRequested  WorkOrder[]               @relation("WorkOrderCancellationRequestedBy")
+  workOrdersCancelled              WorkOrder[]               @relation("WorkOrderCancelledBy")
+  workOrderAssignmentsAsTechnician WorkOrderAssignment[]     @relation("WorkOrderAssignmentTechnician")
+  workOrderAssignmentsGranted      WorkOrderAssignment[]     @relation("WorkOrderAssignmentAssignedBy")
+  workOrderAssignmentsEnded        WorkOrderAssignment[]     @relation("WorkOrderAssignmentUnassignedBy")
+  workOrderActualCostsRecorded     WorkOrderActualCost[]     @relation("WorkOrderActualCostRecordedBy")
+  // Phase 5 Step 1 — no new column on `users`, just the back-relations
+  // Prisma requires for every actor-tracking FK on service_reports and the
+  // six extraction_* staging tables. Same one-relation-name-per-FK
+  // discipline as Phase 4 Step 1 above.
+  serviceReportsUploaded           ServiceReport[]           @relation("ServiceReportUploadedBy")
+  serviceReportsVerified           ServiceReport[]           @relation("ServiceReportVerifiedBy")
+  serviceReportsConfirmed          ServiceReport[]           @relation("ServiceReportConfirmedBy")
+  serviceReportsLocked             ServiceReport[]           @relation("ServiceReportLockedBy")
+  extractionBasicInfoVerified      ExtractionBasicInfo[]     @relation("ExtractionBasicInfoVerifiedBy")
+  extractionEquipmentUnitsVerified ExtractionEquipmentUnit[] @relation("ExtractionEquipmentUnitVerifiedBy")
+  extractionProblemsVerified       ExtractionProblem[]       @relation("ExtractionProblemVerifiedBy")
+  extractionMeasurementsVerified   ExtractionMeasurement[]   @relation("ExtractionMeasurementVerifiedBy")
+  extractionNarrativeItemsVerified ExtractionNarrativeItem[] @relation("ExtractionNarrativeItemVerifiedBy")
+  extractionSignoffsVerified       ExtractionSignoff[]       @relation("ExtractionSignoffVerifiedBy")
+  // Phase 5 Step 1 correction — no new column on `users`, just the back-
+  // relation Prisma requires for service_report_technicians.user_id
+  // (Recommendation E: optional resolution of a handwritten technician name
+  // to a real ERP account).
+  serviceReportTechnicianLinks     ServiceReportTechnician[] @relation("ServiceReportTechnicianUser")
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id        String   @id @default(uuid())
+  name      String   @unique @db.VarChar(60)
+  isSystem  Boolean  @default(false) @map("is_system")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  assignedBy String?  @map("assigned_by")
+
+  user           User  @relation("UserToUserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  role           Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  assignedByUser User? @relation("UserRoleAssignedBy", fields: [assignedBy], references: [id], onDelete: SetNull)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  module      String   @db.VarChar(60)
+  action      String   @db.VarChar(30)
+  description String?  @db.VarChar(200)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String   @map("role_id")
+  permissionId String   @map("permission_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model SystemSetting {
+  key         String           @id @db.VarChar(100)
+  value       String           @db.Text
+  valueType   SettingValueType @map("value_type")
+  description String?          @db.Text
+  updatedBy   String?          @map("updated_by")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  updatedByUser User? @relation("SystemSettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  actorType   ActorType @map("actor_type")
+  actorUserId String?   @map("actor_user_id")
+  action      String    @db.VarChar(60)
+  entityType  String    @map("entity_type") @db.VarChar(60)
+  entityId    String?   @map("entity_id") @db.VarChar(100)
+  beforeData  Json?     @map("before_data")
+  afterData   Json?     @map("after_data")
+  reason      String?   @db.Text
+  ipAddress   String?   @map("ip_address") @db.VarChar(64)
+  userAgent   String?   @map("user_agent") @db.VarChar(255)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  actorUser User? @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Customer, Site & Equipment domain
+// Purely additive: no Phase 1 model, column, or grant is touched. Matches the
+// approved Phase 2 plan/ERD (Customers -> Contacts -> Sites -> Assets, with
+// equipment_systems for logical grouping and equipment_types /
+// equipment_system_types / capacity_units as extensible reference tables
+// instead of Postgres enums).
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id               String         @id @default(uuid())
+  name             String         @db.VarChar(200)
+  customerType     CustomerType   @map("customer_type")
+  billingAddress   String         @map("billing_address") @db.Text
+  taxId            String?        @map("tax_id") @db.VarChar(60)
+  phone            String?        @db.VarChar(30)
+  email            String?        @db.VarChar(255)
+  accountManagerId String?        @map("account_manager_id")
+  status           CustomerStatus @default(ACTIVE)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  // Never deleted, only disabled via status — same convention as User.
+
+  accountManager User?           @relation("CustomerAccountManager", fields: [accountManagerId], references: [id], onDelete: SetNull)
+  contacts       Contact[]
+  sites          Site[]
+  // Phase 3 — no new column on `customers`, just the back-relations Prisma
+  // requires for quotations.customer_id (see §02/§03) and inquiries.customer_id
+  // (Step 3).
+  quotations     Quotation[]
+  inquiries      Inquiry[]
+  // Phase 4 Step 1 — no new column on `customers`, just the back-relation
+  // Prisma requires for work_orders.customer_id.
+  workOrders     WorkOrder[]
+  // Phase 5 Step 1 — no new column on `customers`, just the back-relation
+  // Prisma requires for service_reports.customer_id.
+  serviceReports ServiceReport[]
+
+  @@index([status])
+  @@map("customers")
+}
+
+model Contact {
+  id          String        @id @default(uuid())
+  customerId  String        @map("customer_id")
+  fullName    String        @map("full_name") @db.VarChar(160)
+  designation String?       @db.VarChar(100)
+  phone       String?       @db.VarChar(30)
+  email       String?       @db.VarChar(255)
+  isPrimary   Boolean       @default(false) @map("is_primary")
+  status      ContactStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // CASCADE: a contact has no independent existence outside its customer.
+
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sitesAsPrimary Site[]    @relation("SitePrimaryContact")
+  // Phase 3 Step 3 — no new column on `contacts`, just the back-relation
+  // Prisma requires for inquiries.contact_id.
+  inquiries      Inquiry[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("contacts")
+}
+
+model Site {
+  id               String     @id @default(uuid())
+  customerId       String     @map("customer_id")
+  label            String     @db.VarChar(160)
+  addressLine      String     @map("address_line") @db.Text
+  city             String?    @db.VarChar(100)
+  region           String?    @db.VarChar(100)
+  postalCode       String?    @map("postal_code") @db.VarChar(20)
+  geoLat           Decimal?   @map("geo_lat") @db.Decimal(9, 6)
+  geoLng           Decimal?   @map("geo_lng") @db.Decimal(9, 6)
+  primaryContactId String?    @map("primary_contact_id")
+  accessNotes      String?    @map("access_notes") @db.Text
+  status           SiteStatus @default(ACTIVE)
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  // CASCADE: a site has no independent existence outside its customer.
+  // primaryContact is SET NULL: losing a named contact should never take
+  // the site record down with it.
+
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  primaryContact   Contact?          @relation("SitePrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+  assets           Asset[]
+  equipmentSystems EquipmentSystem[]
+  // Phase 3 — no new column on `sites`, just the back-relations Prisma
+  // requires for quotations.site_id (see §02/§03) and inquiries.site_id
+  // (Step 3).
+  quotations       Quotation[]
+  inquiries        Inquiry[]
+  // Phase 4 Step 1 — no new column on `sites`, just the back-relation
+  // Prisma requires for work_orders.site_id.
+  workOrders       WorkOrder[]
+  // Phase 5 Step 1 — no new column on `sites`, just the back-relation
+  // Prisma requires for service_reports.site_id.
+  serviceReports   ServiceReport[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("sites")
+}
+
+// --- Reference/lookup tables — controlled-value lists, not Postgres enums,
+// so adding a new equipment type, system type, or capacity unit later is a
+// seeded row, never a schema migration. -------------------------------------
+
+model EquipmentType {
+  code      String          @id @db.VarChar(30)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  assets                      Asset[]
+  // Phase 5 Step 1 correction — no new column on `equipment_types`, just the
+  // back-relation Prisma requires for service_report_equipment_units'
+  // equipment_type_code (Recommendation C: reuse this existing Phase 2
+  // taxonomy directly rather than inventing a parallel one).
+  serviceReportEquipmentUnits ServiceReportEquipmentUnit[]
+
+  @@index([status])
+  @@map("equipment_types")
+}
+
+model EquipmentSystemType {
+  code      String          @id @db.VarChar(20)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  equipmentSystems EquipmentSystem[]
+
+  @@index([status])
+  @@map("equipment_system_types")
+}
+
+model CapacityUnit {
+  code      String          @id @db.VarChar(20)
+  label     String          @db.VarChar(60)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@index([status])
+  @@map("capacity_units")
+}
+
+model EquipmentSystem {
+  id             String                @id @default(uuid())
+  siteId         String                @map("site_id")
+  name           String                @db.VarChar(160)
+  systemTypeCode String                @map("system_type_code") @db.VarChar(20)
+  status         EquipmentSystemStatus @default(ACTIVE)
+  notes          String?               @db.Text
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+
+  // RESTRICT on systemType: a type in active use can't be removed out from
+  // under it — same treatment as roles in Phase 1's user_roles.role_id.
+  // A system never spans sites, hence CASCADE on siteId.
+
+  site       Site                @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  systemType EquipmentSystemType @relation(fields: [systemTypeCode], references: [code], onDelete: Restrict)
+  assets     Asset[]
+
+  @@index([siteId])
+  @@index([systemTypeCode])
+  @@index([status])
+  @@map("equipment_systems")
+}
+
+model Asset {
+  id                String      @id @default(uuid())
+  siteId            String      @map("site_id")
+  equipmentSystemId String?     @map("equipment_system_id")
+  parentAssetId     String?     @map("parent_asset_id")
+  assetTag          String      @map("asset_tag") @db.VarChar(60)
+  equipmentTypeCode String      @map("equipment_type_code") @db.VarChar(30)
+  brand             String?     @db.VarChar(100)
+  modelNo           String?     @map("model_no") @db.VarChar(100)
+  serialNo          String?     @map("serial_no") @db.VarChar(100)
+  capacityValue     Decimal?    @map("capacity_value") @db.Decimal(8, 2)
+  capacityUnitCode  String?     @map("capacity_unit_code") @db.VarChar(20)
+  refrigerantType   String?     @map("refrigerant_type") @db.VarChar(30)
+  locationInSite    String?     @map("location_in_site") @db.VarChar(160)
+  installDate       DateTime?   @map("install_date") @db.Date
+  warrantyExpiry    DateTime?   @map("warranty_expiry") @db.Date
+  status            AssetStatus @default(ACTIVE)
+  notes             String?     @db.Text
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  // One row = one physical unit, always. parentAssetId (self-FK) expresses
+  // direct equipment pairing (indoor -> outdoor); equipmentSystemId expresses
+  // logical grouping where a single parent can't (VRF with multiple outdoor
+  // modules, a chilled-water plant serving many terminal units). Both SET
+  // NULL: losing a link should never take the equipment record down with it.
+  // equipmentType/capacityUnit are RESTRICT reference-table lookups. The
+  // parent_asset_id <> id guard is a DB-level CHECK constraint added by hand
+  // to the generated migration (Prisma has no declarative CHECK attribute as
+  // of the pinned 5.20 version) — see migration.sql.
+
+  site                        Site                         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  equipmentSystem             EquipmentSystem?             @relation(fields: [equipmentSystemId], references: [id], onDelete: SetNull)
+  parentAsset                 Asset?                       @relation("AssetParentChild", fields: [parentAssetId], references: [id], onDelete: SetNull)
+  childAssets                 Asset[]                      @relation("AssetParentChild")
+  equipmentType               EquipmentType                @relation(fields: [equipmentTypeCode], references: [code], onDelete: Restrict)
+  capacityUnit                CapacityUnit?                @relation(fields: [capacityUnitCode], references: [code], onDelete: Restrict)
+  // Phase 3 — no new column on `assets`, just the back-relation Prisma
+  // requires for quotation_line_items.asset_id (see §02).
+  quotationLineItems          QuotationLineItem[]
+  // Phase 5 Step 1 correction — no new column on `assets`, just the back-
+  // relation Prisma requires for service_report_equipment_units.asset_id
+  // (Recommendation C: optional resolution to a real, trackable Asset for
+  // cross-visit service history).
+  serviceReportEquipmentUnits ServiceReportEquipmentUnit[]
+
+  @@unique([siteId, assetTag])
+  @@index([siteId])
+  @@index([equipmentSystemId])
+  @@index([parentAssetId])
+  @@index([equipmentTypeCode])
+  @@index([capacityUnitCode])
+  @@index([status])
+  @@map("assets")
+}
+
+model CustomerDocument {
+  id             String              @id @default(uuid())
+  relatedType    DocumentRelatedType @map("related_type")
+  relatedId      String              @map("related_id")
+  documentType   DocumentType        @map("document_type")
+  fileKey        String              @map("file_key") @db.VarChar(500)
+  fileName       String              @map("file_name") @db.VarChar(255)
+  fileSize       Int                 @map("file_size")
+  mimeType       String              @map("mime_type") @db.VarChar(100)
+  checksumSha256 String              @map("checksum_sha256") @db.VarChar(64)
+  uploadedBy     String?             @map("uploaded_by")
+  uploadedAt     DateTime            @map("uploaded_at")
+  caption        String?             @db.VarChar(255)
+  description    String?             @db.Text
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  // relatedId is intentionally NOT a Prisma relation()/DB FK — it targets
+  // one of three different tables depending on relatedType. Referential
+  // integrity for this polymorphic pointer is enforced at the service layer,
+  // the same accepted tradeoff already used for audit_logs.entity_id.
+  // No updatedAt: the uploaded original is immutable by design.
+
+  uploadedByUser User? @relation("CustomerDocumentUploadedBy", fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  @@index([relatedType, relatedId])
+  @@index([documentType])
+  @@map("customer_documents")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Sales Workflow domain (Step 1: schema only)
+// Purely additive: no Phase 1 or Phase 2 model, column, or grant is touched by
+// this migration — only new back-relation fields on User/Customer/Site/Asset,
+// which Prisma requires for the FKs below and which generate no new column.
+// Matches the approved Phase 3 Sales Workflow Plan, Revision 3 (Final) —
+// phase3-plan.html §02/§06/§06a/§06b/§15.
+//
+// `inquiries` (Step 3): Rev 3's §02 says only "unchanged from Revision 1"
+// without restating its columns, and Revision 1's literal text was not
+// available in this session — so the Inquiry model below is a good-faith
+// reconstruction from the domain model (§01), API surface (§13), and audit
+// requirements (§12) sections of the approved plan, not a verbatim copy of
+// Revision 1. Flagged explicitly in the Step 3 report. `Quotation.inquiryId`
+// now has its real FK/relation, completed in this step as instructed.
+// ---------------------------------------------------------------------------
+
+// Extensible trade/discipline reference table — same pattern as Phase 2's
+// capacity_units/equipment_types/equipment_system_types: a new trade later is
+// a seeded row, never a migration.
+model Trade {
+  code      String          @id @db.VarChar(20)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  quotations    Quotation[]
+  sections      QuotationSection[]
+  termTemplates QuotationTermTemplate[]
+  // Step 3 correction — no new column on `trades`, just the back-relation
+  // Prisma requires for inquiries.trade_code.
+  inquiries     Inquiry[]
+
+  @@index([status])
+  @@map("trades")
+}
+
+// Master T&C templates — copied (not referenced) onto a revision at creation
+// time; editing a template never touches an already-issued revision. Managed
+// like a Phase 2 reference table (list/create/deactivate), per §08.
+model QuotationTermTemplate {
+  id            String          @id @default(uuid())
+  name          String          @db.VarChar(160)
+  quotationType QuotationType?  @map("quotation_type")
+  tradeCode     String?         @map("trade_code") @db.VarChar(20)
+  body          String          @db.Text
+  isDefault     Boolean         @default(false) @map("is_default")
+  status        ReferenceStatus @default(ACTIVE)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  trade Trade? @relation(fields: [tradeCode], references: [code], onDelete: Restrict)
+
+  @@index([quotationType])
+  @@index([tradeCode])
+  @@index([status])
+  @@map("quotation_term_templates")
+}
+
+// Stable header/"opportunity" — customer, site, type, trade, and the
+// immutable-once-issued quotation_number never change identity here.
+// Negotiable content lives entirely in QuotationRevision. Disable-never-
+// delete is not modeled at this layer because there is no status independent
+// of the current revision's — see `status` below.
+model Quotation {
+  id                  String                  @id @default(uuid())
+  inquiryId           String?                 @map("inquiry_id")
+  customerId          String                  @map("customer_id")
+  siteId              String                  @map("site_id")
+  quotationNumber     String                  @unique @map("quotation_number") @db.VarChar(30)
+  quotationType       QuotationType           @map("quotation_type")
+  primaryTradeCode    String                  @map("primary_trade_code") @db.VarChar(20)
+  // Step 5 — the customer's own RFQ/PO/reference number. Header-level (not
+  // per-revision) because it identifies the customer's request itself, the
+  // same category of fact as quotation_number — stable across every
+  // revision of the negotiation, not something that varies per round.
+  // Nullable: not every inquiry/quotation originates from a formal
+  // reference number. Pre-fills from Inquiry.customerReferenceNo on
+  // conversion, overridable by the caller — see quotations.service.ts.
+  customerReferenceNo String?                 @map("customer_reference_no") @db.VarChar(100)
+  // Denormalized mirror of the current revision's status, for fast list/filter
+  // queries without a join — kept in sync by the service layer, never an
+  // independent source of truth. See §02.
+  status              QuotationRevisionStatus @default(DRAFT)
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  customer   Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site       Site                @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  inquiry    Inquiry?            @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+  trade      Trade               @relation(fields: [primaryTradeCode], references: [code], onDelete: Restrict)
+  revisions  QuotationRevision[]
+  // Phase 4 Step 1 — no new column on `quotations`, just the back-relation
+  // Prisma requires for work_orders.quotation_id. Doubles as the
+  // project/contract grouping key when multiple Work Orders share one
+  // quotation (D8).
+  workOrders WorkOrder[]
+
+  @@index([customerId])
+  @@index([siteId])
+  @@index([inquiryId])
+  @@index([primaryTradeCode])
+  @@index([status])
+  @@map("quotations")
+}
+
+// Step 3 correction: generalized from the original quotation-only
+// `quotation_number_counters` table into a shared numbering engine, one row
+// per (series, calendar month), created on first use via an atomic
+// `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` (NumberingService) —
+// row-locks that one (series, year, month) row for the duration, so
+// concurrent callers genuinely serialize. The increment always shares a
+// transaction with the entity insert that consumes the returned number, so
+// a number is never issued-then-abandoned. Approved specifically because
+// this table had zero rows at the time of the change (Step 5's quotation
+// numbering was never exercised) — no data migration was needed. Each
+// series has its own independently-configurable prefix in system_settings
+// (quotation_number_prefix, inquiry_number_prefix) — the counter itself is
+// scoped by (series, year, month) only, never by prefix, so changing a
+// prefix mid-month never forks a series into a parallel sequence. Designed
+// to extend to future series (e.g. Work Orders) without a new table.
+model DocumentNumberCounter {
+  series       NumberSeries
+  year         Int
+  month        Int
+  lastSequence Int          @default(0) @map("last_sequence")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@id([series, year, month])
+  @@map("document_number_counters")
+}
+
+// The actual versioned offer — immutable once it leaves DRAFT (§05). Exactly
+// one row per quotation_id may have is_current = true; Prisma has no
+// declarative partial-unique-index attribute, so that invariant is enforced
+// by a hand-added partial unique index in migration.sql, the same pattern
+// already used for the Phase 2 assets.parent_asset_id CHECK constraint.
+model QuotationRevision {
+  id                  String                  @id @default(uuid())
+  quotationId         String                  @map("quotation_id")
+  revisionNumber      Int                     @map("revision_number")
+  isCurrent           Boolean                 @map("is_current")
+  status              QuotationRevisionStatus @default(DRAFT)
+  scopeOfWork         String?                 @map("scope_of_work") @db.Text
+  defaultTaxTreatment TaxTreatment            @map("default_tax_treatment")
+  vatRatePercent      Decimal                 @map("vat_rate_percent") @db.Decimal(6, 2)
+  subtotal            Decimal                 @default(0) @db.Decimal(14, 2)
+  netAmount           Decimal                 @default(0) @map("net_amount") @db.Decimal(14, 2)
+  vatAmount           Decimal                 @default(0) @map("vat_amount") @db.Decimal(14, 2)
+  discountPercent     Decimal                 @default(0) @map("discount_percent") @db.Decimal(6, 2)
+  discountAmount      Decimal                 @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  totalAmount         Decimal                 @default(0) @map("total_amount") @db.Decimal(14, 2)
+  paymentTerms        String?                 @map("payment_terms") @db.Text
+  warranty            String?                 @db.Text
+  leadTime            String?                 @map("lead_time") @db.Text
+  notes               String?                 @db.Text
+  exclusions          String?                 @db.Text
+  termsAndConditions  String?                 @map("terms_and_conditions") @db.Text
+  validUntil          DateTime?               @map("valid_until") @db.Date
+  createdBy           String?                 @map("created_by")
+  submittedAt         DateTime?               @map("submitted_at")
+  approvedBy          String?                 @map("approved_by")
+  approvedAt          DateTime?               @map("approved_at")
+  rejectedAt          DateTime?               @map("rejected_at")
+  sentAt              DateTime?               @map("sent_at")
+  customerDecisionAt  DateTime?               @map("customer_decision_at")
+  // Step 7 (B1) — the one lifecycle transition that had no dedicated
+  // timestamp column, unlike submittedAt/approvedAt/rejectedAt/sentAt/
+  // customerDecisionAt which all already existed. Populated whenever a
+  // revision transitions SENT -> EXPIRED, whether via the manual
+  // "mark as expired" endpoint (Step 7) or a future scheduled auto-expiry
+  // process (deferred — see quotations.service.ts).
+  expiredAt           DateTime?               @map("expired_at")
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  quotation                 Quotation                           @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  createdByUser             User?                               @relation("QuotationRevisionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  approvedByUser            User?                               @relation("QuotationRevisionApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+  sections                  QuotationSection[]
+  lineItems                 QuotationLineItem[]
+  maintenanceDetails        QuotationMaintenanceDetails?
+  testingCommissioningItems QuotationTestingCommissioningItem[]
+  // Phase 4 Step 1 — no new column on `quotation_revisions`, just the
+  // back-relation Prisma requires for work_orders.quotation_revision_id —
+  // the exact accepted revision a Work Order traces back to (D1).
+  workOrders                WorkOrder[]
+
+  @@unique([quotationId, revisionNumber])
+  @@index([quotationId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([approvedBy])
+  @@map("quotation_revisions")
+}
+
+// User-defined, reorderable, optional grouping layer for BOQ-style project
+// quotations — a simple quotation just has no sections (line items attach
+// directly to the revision). net/vat/final_amount are server-computed
+// aggregates of this section's own line items, post-discount-allocation
+// (§06b).
+model QuotationSection {
+  id                  String  @id @default(uuid())
+  quotationRevisionId String  @map("quotation_revision_id")
+  name                String  @db.VarChar(160)
+  tradeCode           String? @map("trade_code") @db.VarChar(20)
+  sortOrder           Int     @default(0) @map("sort_order")
+  netAmount           Decimal @default(0) @map("net_amount") @db.Decimal(14, 2)
+  vatAmount           Decimal @default(0) @map("vat_amount") @db.Decimal(14, 2)
+  finalAmount         Decimal @default(0) @map("final_amount") @db.Decimal(14, 2)
+
+  quotationRevision QuotationRevision   @relation(fields: [quotationRevisionId], references: [id], onDelete: Cascade)
+  trade             Trade?              @relation(fields: [tradeCode], references: [code], onDelete: Restrict)
+  lineItems         QuotationLineItem[]
+
+  @@index([quotationRevisionId])
+  @@index([tradeCode])
+  @@map("quotation_sections")
+}
+
+// Generic, trade-agnostic line item — core + optional customer-facing fields
+// + optional internal-only costing fields, per §06/§06a/§06b. unit_cost_expense,
+// markup_percent, total_internal_cost, gross_profit_amount, and
+// gross_margin_percent are internal-only: the schema does not enforce this by
+// itself (Postgres has no column-level ACL), the API/DTO layer built in a
+// later step must exclude them from any customer-facing response — see the
+// approved plan's §06a access-control note and the Step 1 report.
+model QuotationLineItem {
+  id                  String       @id @default(uuid())
+  quotationRevisionId String       @map("quotation_revision_id")
+  sectionId           String?      @map("section_id")
+  assetId             String?      @map("asset_id")
+  description         String       @db.VarChar(255)
+  specification       String?      @db.Text
+  brand               String?      @db.VarChar(100)
+  model               String?      @db.VarChar(100)
+  quantity            Decimal      @db.Decimal(12, 3)
+  unit                String       @db.VarChar(30)
+  unitCostExpense     Decimal?     @map("unit_cost_expense") @db.Decimal(14, 2)
+  markupPercent       Decimal?     @map("markup_percent") @db.Decimal(6, 2)
+  unitPriceBeforeVat  Decimal      @map("unit_price_before_vat") @db.Decimal(14, 2)
+  totalInternalCost   Decimal?     @map("total_internal_cost") @db.Decimal(14, 2)
+  grossProfitAmount   Decimal?     @map("gross_profit_amount") @db.Decimal(14, 2)
+  grossMarginPercent  Decimal?     @map("gross_margin_percent") @db.Decimal(6, 2)
+  taxTreatment        TaxTreatment @map("tax_treatment")
+  unitPrice           Decimal      @map("unit_price") @db.Decimal(14, 2)
+  materialAmount      Decimal?     @map("material_amount") @db.Decimal(14, 2)
+  laborAmount         Decimal?     @map("labor_amount") @db.Decimal(14, 2)
+  lineAmount          Decimal      @map("line_amount") @db.Decimal(14, 2)
+  lineDiscountAmount  Decimal      @default(0) @map("line_discount_amount") @db.Decimal(14, 2)
+  lineFinalAmount     Decimal      @map("line_final_amount") @db.Decimal(14, 2)
+  lineNetAmount       Decimal      @map("line_net_amount") @db.Decimal(14, 2)
+  lineVatAmount       Decimal      @map("line_vat_amount") @db.Decimal(14, 2)
+  sortOrder           Int          @default(0) @map("sort_order")
+
+  quotationRevision QuotationRevision @relation(fields: [quotationRevisionId], references: [id], onDelete: Cascade)
+  section           QuotationSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  asset             Asset?            @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([quotationRevisionId])
+  @@index([sectionId])
+  @@index([assetId])
+  @@map("quotation_line_items")
+}
+
+// 1:1 extension table — only ever populated for quotation_type =
+// PREVENTIVE_MAINTENANCE. Keeps quotation_revisions lean instead of every
+// REPAIR/SUPPLY/PROJECT row carrying four permanently-null columns (§02
+// rationale, Decision 4).
+model QuotationMaintenanceDetails {
+  quotationRevisionId  String                      @id @map("quotation_revision_id")
+  contractPeriodMonths Int                         @map("contract_period_months")
+  frequency            MaintenanceFrequency
+  scheduledVisits      Int                         @map("scheduled_visits")
+  billingFrequency     MaintenanceBillingFrequency @map("billing_frequency")
+
+  quotationRevision QuotationRevision @relation(fields: [quotationRevisionId], references: [id], onDelete: Cascade)
+
+  @@map("quotation_maintenance_details")
+}
+
+// What's required, not results (§06/Decision 5) — a simple named checklist,
+// never a fixed enum, since different trades/projects need different tests.
+model QuotationTestingCommissioningItem {
+  id                  String  @id @default(uuid())
+  quotationRevisionId String  @map("quotation_revision_id")
+  description         String  @db.VarChar(200)
+  included            Boolean @default(true)
+  sortOrder           Int     @default(0) @map("sort_order")
+
+  quotationRevision QuotationRevision @relation(fields: [quotationRevisionId], references: [id], onDelete: Cascade)
+  // Phase 4 Step 1 — no new column here, just the back-relation Prisma
+  // requires for work_order_tasks.source_testing_item_id (traceability
+  // only, when a checklist item is copied onto a Work Order at conversion).
+  workOrderTasks    WorkOrderTask[]
+
+  @@index([quotationRevisionId])
+  @@map("quotation_testing_commissioning_items")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 Step 3 — Inquiries
+// Optional intake record that can precede a Quotation (approved plan §01) —
+// a quotation can also be created directly with no inquiry at all. See the
+// reconstruction note on the Phase 3 section header above: this field list
+// is derived from the domain model/API surface/audit sections of the
+// approved Rev 3 plan, not copied verbatim from Revision 1's original text.
+// Disable-never-delete does not apply the usual way here — an inquiry's
+// lifecycle is OPEN -> {CONVERTED | CLOSED}, both terminal, tracked via
+// `status`, not a separate Active/Inactive toggle.
+// ---------------------------------------------------------------------------
+
+// Step 3 correction — reference tables for Inquiry Source and Inquiry Type.
+// Same pattern as trades/equipment_types: pure classification, no differing
+// behavior at the Inquiry level, so a reference table (extend by seeding a
+// row) rather than a Postgres enum. Deliberately NOT linked to each other or
+// to QuotationType/Trade by any FK/shared-enum coupling — see the Step 3
+// correction report for why Inquiry classification and Quotation
+// classification are kept independent by design, not by omission.
+
+model InquirySource {
+  code      String          @id @db.VarChar(30)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  inquiries Inquiry[]
+
+  @@index([status])
+  @@map("inquiry_sources")
+}
+
+model InquiryType {
+  code      String          @id @db.VarChar(30)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  inquiries Inquiry[]
+
+  @@index([status])
+  @@map("inquiry_types")
+}
+
+model Inquiry {
+  id                   String        @id @default(uuid())
+  // System-generated, immutable once issued — see DocumentNumberCounter /
+  // NumberingService. Format INQ-YYYY-MM-NNNNN, same algorithm and
+  // guarantees as the approved quotation numbering design (§05a).
+  inquiryNumber        String        @unique @map("inquiry_number") @db.VarChar(30)
+  customerId           String        @map("customer_id")
+  siteId               String?       @map("site_id")
+  contactId            String?       @map("contact_id")
+  sourceCode           String?       @map("source_code") @db.VarChar(30)
+  tradeCode            String?       @map("trade_code") @db.VarChar(20)
+  inquiryTypeCode      String?       @map("inquiry_type_code") @db.VarChar(30)
+  subject              String        @db.VarChar(200)
+  description          String?       @db.Text
+  customerReferenceNo  String?       @map("customer_reference_no") @db.VarChar(100)
+  // The customer's requested/preferred date only — never the confirmed
+  // service schedule. Actual scheduling belongs to a future Work Order /
+  // Operations module; this field must not be read as one.
+  preferredServiceDate DateTime?     @map("preferred_service_date") @db.Date
+  status               InquiryStatus @default(OPEN)
+  closedAt             DateTime?     @map("closed_at")
+  convertedAt          DateTime?     @map("converted_at")
+  createdBy            String?       @map("created_by")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  // CASCADE on customer: an inquiry has no independent existence outside its
+  // customer, same convention as Contact/Site. SET NULL on site/contact/
+  // source/trade/type/createdBy: losing an optional link should never take
+  // the inquiry down. trade/type/source are RESTRICT-on-delete reference
+  // lookups, matching every other reference-table FK in this schema.
+
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site          Site?          @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  contact       Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  source        InquirySource? @relation(fields: [sourceCode], references: [code], onDelete: Restrict)
+  trade         Trade?         @relation(fields: [tradeCode], references: [code], onDelete: Restrict)
+  inquiryType   InquiryType?   @relation(fields: [inquiryTypeCode], references: [code], onDelete: Restrict)
+  createdByUser User?          @relation("InquiryCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  quotations    Quotation[]
+
+  @@index([customerId])
+  @@index([siteId])
+  @@index([contactId])
+  @@index([sourceCode])
+  @@index([tradeCode])
+  @@index([inquiryTypeCode])
+  @@index([status])
+  @@map("inquiries")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 Step 1 — Operations: Work Orders & Technician Assignment
+// Reconstructed from the one-line Rev 7 summary ("Operations — work orders,
+// technician assignment"), the approved Phase 1-3 architecture, and Phase
+// 3's own forward-references — see the approved Phase 4 Operations Plan and
+// Decision Review (D1-D10, all resolved) for the full reasoning behind
+// every choice below. Purely additive: no Phase 1-3 table, column, or grant
+// is touched by anything in this section.
+// ---------------------------------------------------------------------------
+
+// D1: one Work Order per quotation section/scope. D2: COMPLETED and CLOSED
+// are kept as two distinct terminal-ish states — COMPLETED is technical
+// execution done, CLOSED is the final administrative sign-off. D5:
+// cancellation is a request/confirm split, not a single-step action, so
+// CANCELLED itself is reached only via the final Manager/Admin-Owner
+// action, never directly by whoever requested it.
+enum WorkOrderStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+  CANCELLED
+}
+
+// Records which creation path was used (§05/§02 of the plan), independent
+// of whether quotation_id later becomes null via SET NULL.
+enum WorkOrderType {
+  FROM_QUOTATION
+  STANDALONE
+}
+
+// D10: standalone (non-quotation) Work Orders require both a free-text
+// reason and this classification, so standalone volume is reportable by
+// kind, not just individually readable.
+enum StandaloneReasonType {
+  EMERGENCY
+  WARRANTY
+  CALLBACK
+  INTERNAL
+  OTHER
+}
+
+// Structure only in Phase 4 (§01 of the plan) — the foundation a later
+// field-execution phase operates on. No screen sets this yet.
+enum WorkOrderTaskStatus {
+  PENDING
+  DONE
+  SKIPPED
+}
+
+// The full cost-category list from the approved costing requirement.
+// OVERHEAD is deliberately just another value in this same enum, not a
+// separate mechanism: actual gross profit sums every category except
+// OVERHEAD, actual net profit sums all 7 — one uniform table, two filters,
+// per the approved plan's §09/§12 costing architecture.
+enum WorkOrderCostType {
+  LABOR
+  MATERIAL
+  MOBILIZATION
+  SUBCONTRACTOR
+  EQUIPMENT_RENTAL
+  OVERHEAD
+  OTHER
+}
+
+// The operational bridge from the Sales Pipeline (Phase 3) into field
+// operations. Scope/pricing are read by reference via quotation_id /
+// quotation_revision_id — never duplicated onto this table, so there is
+// exactly one place pricing can ever drift from (§05 of the plan).
+model WorkOrder {
+  id                   String                @id @default(uuid())
+  workOrderNumber      String                @unique @map("work_order_number") @db.VarChar(30)
+  customerId           String                @map("customer_id")
+  siteId               String                @map("site_id")
+  quotationId          String?               @map("quotation_id")
+  quotationRevisionId  String?               @map("quotation_revision_id")
+  workOrderType        WorkOrderType         @map("work_order_type")
+  standaloneReason     String?               @map("standalone_reason") @db.Text
+  standaloneReasonType StandaloneReasonType? @map("standalone_reason_type")
+  // D10 extension point — an optional staff-entered rough estimate for
+  // STANDALONE jobs only (which have no quotation to read a real estimate
+  // from). Exists so a future configurable approval threshold has a value
+  // to compare against; no threshold logic reads it in Phase 4.
+  estimatedValue       Decimal?              @map("estimated_value") @db.Decimal(14, 2)
+  status               WorkOrderStatus       @default(DRAFT)
+  scheduledDate        DateTime?             @map("scheduled_date") @db.Date
+  description          String?               @db.Text
+
+  // Read-through convenience cache of the linked revision's own totals at
+  // conversion time — never a second source of truth, always re-derivable
+  // from quotationRevisionId.
+  estimatedTotalCost          Decimal? @map("estimated_total_cost") @db.Decimal(14, 2)
+  estimatedGrossProfitAmount  Decimal? @map("estimated_gross_profit_amount") @db.Decimal(14, 2)
+  estimatedGrossMarginPercent Decimal? @map("estimated_gross_margin_percent") @db.Decimal(6, 2)
+
+  // Extension points (approved costing requirement) — nullable, unpopulated
+  // by any Phase 4 workflow. actualTotalCost sums every WorkOrderActualCost
+  // row; the gross figures exclude OVERHEAD-tagged rows, the net figures
+  // include them — deliberately separate columns, gross and net are never
+  // conflated, same discipline as markup vs. margin in Phase 3.
+  actualTotalCost              Decimal? @map("actual_total_cost") @db.Decimal(14, 2)
+  actualGrossProfitAmount      Decimal? @map("actual_gross_profit_amount") @db.Decimal(14, 2)
+  actualGrossMarginPercent     Decimal? @map("actual_gross_margin_percent") @db.Decimal(6, 2)
+  actualNetProfitAmount        Decimal? @map("actual_net_profit_amount") @db.Decimal(14, 2)
+  actualNetProfitMarginPercent Decimal? @map("actual_net_profit_margin_percent") @db.Decimal(6, 2)
+
+  createdBy                   String?   @map("created_by")
+  // D6 — the assigned technician's own self-start action (backend-verified
+  // against work_order_assignments, not just the permission grant) writes
+  // these, distinct from staff-driven completion.
+  startedAt                   DateTime? @map("started_at")
+  startedBy                   String?   @map("started_by")
+  completedAt                 DateTime? @map("completed_at")
+  completedBy                 String?   @map("completed_by")
+  // D2 — the final administrative sign-off, distinct from completedAt.
+  // Manager/Admin-Owner only at the RBAC layer (Step 2).
+  closedAt                    DateTime? @map("closed_at")
+  closedBy                    String?   @map("closed_by")
+  // D5 — Office Staff's request_cancel action populates these WITHOUT
+  // changing status; Manager/Admin-Owner's cancel action either confirms
+  // (setting cancelledAt/By/Reason below and status = CANCELLED) or
+  // dismisses the request (clearing these three fields, status unchanged).
+  cancellationRequestedAt     DateTime? @map("cancellation_requested_at")
+  cancellationRequestedBy     String?   @map("cancellation_requested_by")
+  cancellationRequestedReason String?   @map("cancellation_requested_reason") @db.Text
+  cancelledAt                 DateTime? @map("cancelled_at")
+  cancelledBy                 String?   @map("cancelled_by")
+  cancellationReason          String?   @map("cancellation_reason") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // CASCADE on customer/site: a Work Order has no independent existence
+  // outside its customer/site, same convention as Quotation. SET NULL on
+  // quotation/quotationRevision: losing that link should never take the
+  // Work Order down with it — matches Quotation.inquiryId's precedent.
+  // Every actor FK is SET NULL: losing a user account should never corrupt
+  // Work Order history, the audit log remains the durable actor record.
+  customer                    Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site                        Site               @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  quotation                   Quotation?         @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  quotationRevision           QuotationRevision? @relation(fields: [quotationRevisionId], references: [id], onDelete: SetNull)
+  createdByUser               User?              @relation("WorkOrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  startedByUser               User?              @relation("WorkOrderStartedBy", fields: [startedBy], references: [id], onDelete: SetNull)
+  completedByUser             User?              @relation("WorkOrderCompletedBy", fields: [completedBy], references: [id], onDelete: SetNull)
+  closedByUser                User?              @relation("WorkOrderClosedBy", fields: [closedBy], references: [id], onDelete: SetNull)
+  cancellationRequestedByUser User?              @relation("WorkOrderCancellationRequestedBy", fields: [cancellationRequestedBy], references: [id], onDelete: SetNull)
+  cancelledByUser             User?              @relation("WorkOrderCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
+
+  assignments    WorkOrderAssignment[]
+  tasks          WorkOrderTask[]
+  actualCosts    WorkOrderActualCost[]
+  // Phase 5 Step 1 — no new column on `work_orders`, just the back-relation
+  // Prisma requires for service_reports.work_order_id (nullable — a Service
+  // Report is optional on a Work Order and vice versa, per Rev 7).
+  serviceReports ServiceReport[]
+
+  @@index([customerId])
+  @@index([siteId])
+  @@index([quotationId])
+  @@index([quotationRevisionId])
+  @@index([status])
+  @@index([createdBy])
+  @@map("work_orders")
+}
+
+// D3: team assignment with full individual history — modeled as an
+// append-only log, never a mutable pointer. One row per technician per
+// assignment period; reassignment closes the old row (unassignedAt) and
+// opens a new one rather than overwriting anything. Multiple simultaneously
+// -active rows per Work Order are permitted (a crew). A hand-added partial
+// unique index (see migration.sql, same pattern as quotation_revisions'
+// is_current constraint) prevents the same technician holding two
+// simultaneously-active rows on the same Work Order.
+model WorkOrderAssignment {
+  id           String    @id @default(uuid())
+  workOrderId  String    @map("work_order_id")
+  technicianId String    @map("technician_id")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  assignedBy   String?   @map("assigned_by")
+  unassignedAt DateTime? @map("unassigned_at")
+  unassignedBy String?   @map("unassigned_by")
+
+  // RESTRICT on technician: a user actively assigned can't be deleted out
+  // from under the record (matches EquipmentSystem.systemType's precedent).
+  // Users are disable-never-delete anyway, so this is a theoretical guard,
+  // not a practical constraint.
+  workOrder        WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  technician       User      @relation("WorkOrderAssignmentTechnician", fields: [technicianId], references: [id], onDelete: Restrict)
+  assignedByUser   User?     @relation("WorkOrderAssignmentAssignedBy", fields: [assignedBy], references: [id], onDelete: SetNull)
+  unassignedByUser User?     @relation("WorkOrderAssignmentUnassignedBy", fields: [unassignedBy], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@index([technicianId])
+  @@map("work_order_assignments")
+}
+
+// The working checklist a technician operates against — copied from the
+// source revision's QuotationTestingCommissioningItem rows at conversion
+// time (§05 of the plan: a real copy, not a reference, since a technician's
+// working checklist needs its own mutable state independent of the frozen
+// quotation). sourceTestingItemId is traceability only, never required.
+model WorkOrderTask {
+  id                  String              @id @default(uuid())
+  workOrderId         String              @map("work_order_id")
+  description         String              @db.VarChar(200)
+  sourceTestingItemId String?             @map("source_testing_item_id")
+  sortOrder           Int                 @default(0) @map("sort_order")
+  status              WorkOrderTaskStatus @default(PENDING)
+
+  workOrder         WorkOrder                          @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  sourceTestingItem QuotationTestingCommissioningItem? @relation(fields: [sourceTestingItemId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@map("work_order_tasks")
+}
+
+// Extension point (approved costing requirement) — one flexible cost line,
+// not seven narrow tables, same "generic line, optional breakdown"
+// reasoning already applied to quotation_line_items in Phase 3. This table
+// exists in Phase 4; no create/update endpoint reads or writes it yet —
+// see the plan's §09. Pure cost, never a selling price — no VAT/markup
+// concept here.
+model WorkOrderActualCost {
+  id          String            @id @default(uuid())
+  workOrderId String            @map("work_order_id")
+  costType    WorkOrderCostType @map("cost_type")
+  description String            @db.VarChar(255)
+  quantity    Decimal?          @db.Decimal(12, 3)
+  unit        String?           @db.VarChar(30)
+  unitCost    Decimal?          @map("unit_cost") @db.Decimal(14, 2)
+  amount      Decimal?          @db.Decimal(14, 2)
+  recordedBy  String?           @map("recorded_by")
+  recordedAt  DateTime?         @map("recorded_at")
+
+  workOrder      WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  recordedByUser User?     @relation("WorkOrderActualCostRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@index([costType])
+  @@map("work_order_actual_costs")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 Step 1 — Service Report Intake: schema & migration only.
+// Reconstructed from the Rev 7 summary's fixed pipeline (Original Document ->
+// OCR/AI Extraction -> Extraction Staging -> Human Verification -> Confirm
+// Report -> Canonical Data -> LOCKED), the Phase 1 policy record
+// docs/architecture/ocr-worker-db-isolation.md (which fixes the six staging
+// table names and the ocr_worker grant shape), and the approved Phase 5
+// Baseline's OD1-OD8 resolutions. See the Phase 5 Approved Baseline document
+// for the full reasoning behind every choice below — nothing here is
+// implemented beyond schema/migration in this step.
+// ---------------------------------------------------------------------------
+
+// OD1: service_reports exists from upload onward, status-driven throughout.
+// OD5: CONFIRMED and LOCKED are kept as two distinct states — a controlled
+// correction window exists between them (application logic, not schema).
+enum ServiceReportStatus {
+  PENDING_EXTRACTION
+  EXTRACTION_FAILED
+  PENDING_VERIFICATION
+  VERIFIED
+  CONFIRMED
+  LOCKED
+}
+
+// Required (app-validated) when work_order_id is null — approved Rev 7 fact
+// ("source_type records why the service happened when there's no Work
+// Order"). Amended per your explicit instruction: a dedicated, independently
+// -designed classification, NOT a reuse of WorkOrder.StandaloneReasonType —
+// Work Order standalone reasons and Service Report source/origin are
+// separate business concepts even where a value's real-world meaning
+// happens to overlap. Nullability/requiredness on service_reports.source_type
+// itself is unchanged from the original Step 1 design (still nullable,
+// still app-validated-required only when work_order_id is null) —
+// WORK_ORDER_LINKED exists so the taxonomy can explicitly represent "this
+// report is tied to an existing Work Order" if a caller ever wants to set
+// it, not because the column becomes mandatory in that case.
+enum ServiceReportSourceType {
+  WORK_ORDER_LINKED
+  EMERGENCY_CALL
+  WARRANTY_SERVICE
+  CALLBACK_VISIT
+  INTERNAL_SERVICE
+  OTHER
+}
+
+// Mirrors ExtractionProvider's own confidence union type
+// (apps/api/src/common/extraction/extraction-provider.interface.ts) exactly
+// — not a new taxonomy, just the existing TypeScript contract reflected into
+// the database.
+enum ExtractionConfidence {
+  HIGH
+  MEDIUM
+  LOW
+  UNREADABLE
+}
+
+// Phase 5 Step 5 (Human Verification) — a reviewer's explicit decision on
+// one staged field, distinct from the raw verified_value text so that
+// "not yet reviewed" (review_status IS NULL), "confirmed blank" (reviewer
+// affirmatively decided no value applies), and "flagged, unresolved" never
+// collapse into the same NULL representation. Never written by ocr_worker
+// — only app_runtime's verification endpoint sets this.
+enum ExtractionReviewStatus {
+  // Reviewer agrees with the AI value as-is; verified_value is copied from
+  // ai_value.
+  CONFIRMED
+  // Reviewer entered a different value in verified_value.
+  CORRECTED
+  // Reviewer affirmatively confirms this field has no applicable value —
+  // distinct from an unreviewed blank. verified_value stays null.
+  CONFIRMED_BLANK
+  // Reviewer cannot confirm this field from the document as available
+  // (e.g. still illegible even to a human) and flags it rather than
+  // guessing. Blocks the report's PENDING_VERIFICATION -> VERIFIED
+  // transition until resolved into one of the other three statuses.
+  NEEDS_FOLLOW_UP
+}
+
+// Step 1 correction — controlled, centrally-managed classification for
+// which business/template type a Service Report follows (Maintenance
+// Cleaning, General Service/Repair, Installation/Commissioning, ...).
+// Identified as a genuine hierarchy gap while validating a real sample
+// report: nothing previously distinguished one report template from
+// another. Exact same reference-table pattern as MeasurementType/
+// SignoffRole/MeasurementStage — expandable later by seeding a row, never a
+// migration, so a new report template never requires a schema change.
+// Seeded with the three types explicitly named as required at this
+// correction (see seed.ts) — unlike measurement_types/signoff_roles/
+// measurement_stages, this table is NOT left empty, since a concrete
+// initial list was explicitly approved rather than deferred.
+model ServiceReportType {
+  code      String          @id @db.VarChar(40)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  serviceReports ServiceReport[]
+
+  @@index([status])
+  @@map("service_report_types")
+}
+
+// The operational anchor and canonical mirror of "basic_info" (OD3) — one
+// header row exists from the moment the original document is uploaded
+// (OD1), long before anything about it is canonical-true. Its own
+// technician_name/service_date/report_reference_number/general_notes
+// columns stay null until Confirm populates them from
+// extraction_basic_info's verified values; every other identifying field
+// (customer/site, and work_order_id if linked) is set at upload time, not
+// extracted — the uploader always selects the real Customer/Site record,
+// same as every other document-bearing entity in this schema.
+model ServiceReport {
+  id                  String                   @id @default(uuid())
+  serviceReportNumber String                   @unique @map("service_report_number") @db.VarChar(30)
+  customerId          String                   @map("customer_id")
+  siteId              String                   @map("site_id")
+  workOrderId         String?                  @map("work_order_id")
+  // Step 1 correction — the hierarchy gap identified while validating a real
+  // sample report: nothing previously distinguished a Maintenance Cleaning
+  // report from a Repair or Installation/Commissioning report. Required
+  // (not nullable) — every report has a definite business/template type
+  // from creation, the technician is always filling out one specific form.
+  // Controlled reference table (same pattern as measurement_type/
+  // signoff_role/measurement_stage below), never a Postgres enum, so a new
+  // report template is a seeded row, never a migration.
+  reportTypeCode      String                   @map("report_type_code") @db.VarChar(40)
+  sourceType          ServiceReportSourceType? @map("source_type")
+  status              ServiceReportStatus      @default(PENDING_EXTRACTION)
+
+  // Step 4 (Upload API) — the original uploaded document's storage
+  // reference. Every Service Report row is created BY an upload (there is
+  // no other code path that creates one), so these are required, not
+  // nullable. documentFileKey is never returned to an API client — see
+  // ServiceReportsService's response mapping, which exposes documentFileName
+  // (safe — just the original filename) but strips the storage key/mime/size
+  // internals per the approved "never expose storage internals" requirement.
+  documentFileKey  String @map("document_file_key") @db.VarChar(500)
+  documentMimeType String @map("document_mime_type") @db.VarChar(100)
+  documentFileName String @map("document_file_name") @db.VarChar(255)
+  documentFileSize Int    @map("document_file_size")
+
+  // Canonical basic_info fields (OD3) — populated only by the future Confirm
+  // transaction (Step 6), never by extraction directly (extraction writes
+  // only to extraction_basic_info, per the fixed ocr_worker isolation spec).
+  // technicianName (singular) is REMOVED as of this correction — superseded
+  // by the ServiceReportTechnician child table below, which supports
+  // multiple technicians per report; keeping both would leave two
+  // ambiguous, potentially-conflicting sources for "who performed this".
+  serviceDate           DateTime? @map("service_date") @db.Date
+  // Step 1 correction — real sample reports show technicians writing these
+  // in by hand because the paper form has no printed field for them.
+  timeIn                DateTime? @map("time_in") @db.Time
+  timeOut               DateTime? @map("time_out") @db.Time
+  reportReferenceNumber String?   @map("report_reference_number") @db.VarChar(60)
+  // Step 1 correction round 2 (Recommendation I) — appeared on 2 of 3 real
+  // forms reviewed ("Contact No." / "Contact Person / Tel No."), distinct
+  // from the customer's own on-file phone (Customer.phone, Phase 2) — this
+  // is the specific on-site contact for that visit, which may differ.
+  // Free text, no FK to Contact (Phase 2) — not every on-site contact is
+  // necessarily a registered Contact record.
+  contactName           String?   @map("contact_name") @db.VarChar(160)
+  contactPhone          String?   @map("contact_phone") @db.VarChar(30)
+  generalNotes          String?   @map("general_notes") @db.Text
+
+  // D5-style actor/timestamp pairs — one pair per pipeline milestone, same
+  // shape as Work Order's started/completed/closed columns (Phase 4 §04).
+  uploadedBy  String?   @map("uploaded_by")
+  uploadedAt  DateTime  @map("uploaded_at")
+  verifiedBy  String?   @map("verified_by")
+  verifiedAt  DateTime? @map("verified_at")
+  confirmedBy String?   @map("confirmed_by")
+  confirmedAt DateTime? @map("confirmed_at")
+  // OD5 — a separate actor/timestamp pair from confirmedBy/confirmedAt,
+  // Manager/Admin-Owner only at the RBAC layer (Step 2). The correction
+  // window between CONFIRMED and LOCKED has no dedicated column here —
+  // every correction is an individually audited event (audit_logs), not a
+  // schema-tracked count.
+  lockedBy    String?   @map("locked_by")
+  lockedAt    DateTime? @map("locked_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // CASCADE on customer/site: a Service Report has no independent existence
+  // outside its customer/site, same convention as Work Order/Quotation.
+  // SET NULL on work_order: losing that link should never take the Service
+  // Report down with it, matching Work Order's own quotation_id precedent.
+  // Every actor FK is SET NULL: losing a user account should never corrupt
+  // Service Report history, the audit log remains the durable actor record.
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site            Site              @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  workOrder       WorkOrder?        @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  reportType      ServiceReportType @relation(fields: [reportTypeCode], references: [code], onDelete: Restrict)
+  uploadedByUser  User?             @relation("ServiceReportUploadedBy", fields: [uploadedBy], references: [id], onDelete: SetNull)
+  verifiedByUser  User?             @relation("ServiceReportVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  confirmedByUser User?             @relation("ServiceReportConfirmedBy", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  lockedByUser    User?             @relation("ServiceReportLockedBy", fields: [lockedBy], references: [id], onDelete: SetNull)
+
+  // Step 1 correction — who performed the work (possibly several people),
+  // deliberately a separate concept from `signoffs` below (who signed/
+  // accepted the report — often the customer, sometimes also the
+  // technician, but a fundamentally different role than "did the work").
+  technicians    ServiceReportTechnician[]
+  equipmentUnits ServiceReportEquipmentUnit[]
+  problems       ServiceReportProblem[]
+  measurements   ServiceReportMeasurement[]
+  narrativeItems ServiceReportNarrativeItem[]
+  signoffs       ServiceReportSignoff[]
+
+  extractionBasicInfo      ExtractionBasicInfo[]
+  extractionEquipmentUnits ExtractionEquipmentUnit[]
+  extractionProblems       ExtractionProblem[]
+  extractionMeasurements   ExtractionMeasurement[]
+  extractionNarrativeItems ExtractionNarrativeItem[]
+  extractionSignoffs       ExtractionSignoff[]
+
+  @@index([customerId])
+  @@index([siteId])
+  @@index([workOrderId])
+  @@index([reportTypeCode])
+  @@index([status])
+  @@map("service_reports")
+}
+
+// Step 1 correction (Recommendation E) — who performed the work, as many
+// rows as there were technicians on the visit. technicianName is always
+// captured (raw, as written/read); userId is an optional later resolution
+// to a real ERP account once a verifier matches the handwritten name to
+// one — same "raw text + optional real-record link, resolved at
+// verification" shape already used for ServiceReportEquipmentUnit.assetId.
+// No corresponding staging table change was needed for this — the existing
+// generic field-value shape on extraction_basic_info already supports a
+// repeating technician group without modification.
+model ServiceReportTechnician {
+  id              String  @id @default(uuid())
+  serviceReportId String  @map("service_report_id")
+  technicianName  String  @map("technician_name") @db.VarChar(160)
+  userId          String? @map("user_id")
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  serviceReport ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  user          User?         @relation("ServiceReportTechnicianUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([serviceReportId])
+  @@index([userId])
+  @@map("service_report_technicians")
+}
+
+// --- Canonical child tables (OD3: the 5 remaining mirrors of the six
+// staging tables — basic_info's mirror is the ServiceReport header above).
+// Written ONLY by the future Confirm transaction (Step 6); nothing in Step
+// 1 populates them. Fields are deliberately free-text/generic rather than
+// constrained enums (e.g. measurement_type, signoff_role) — standardizing
+// that business vocabulary is a content decision not yet made, not a
+// schema limitation; see the Step 1 report. sourceRowIndex is traceability
+// only (mirrors WorkOrderTask.sourceTestingItemId's precedent), pointing at
+// the row_index group on this table's staging counterpart — no DB FK,
+// since one canonical row is assembled from several staging rows sharing
+// one row_index, not a single staging row.
+
+// Step 1 correction (Recommendation C) — equipmentTypeCode reuses Phase 2's
+// existing equipment_types taxonomy directly (it already has FCU,
+// SPLIT_INDOOR/OUTDOOR, etc.) rather than inventing a parallel one, per the
+// explicit instruction not to duplicate existing infrastructure. Required,
+// same reasoning as measurementTypeCode: a classification used for
+// filtering/reporting should never be optional-and-therefore-often-absent.
+// assetId is the optional link that makes real cross-visit service history
+// possible — nullable because not every piece of equipment a technician
+// touches is necessarily already a registered Asset.
+model ServiceReportEquipmentUnit {
+  id                String  @id @default(uuid())
+  serviceReportId   String  @map("service_report_id")
+  equipmentTypeCode String  @map("equipment_type_code") @db.VarChar(30)
+  assetId           String? @map("asset_id")
+  unitTag           String? @map("unit_tag") @db.VarChar(100)
+  description       String  @db.VarChar(255)
+  location          String? @db.VarChar(160)
+  modelNumber       String? @map("model_number") @db.VarChar(100)
+  serialNumber      String? @map("serial_number") @db.VarChar(100)
+  sortOrder         Int     @default(0) @map("sort_order")
+  sourceRowIndex    Int?    @map("source_row_index")
+
+  serviceReport  ServiceReport                @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  equipmentType  EquipmentType                @relation(fields: [equipmentTypeCode], references: [code], onDelete: Restrict)
+  asset          Asset?                       @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  // Step 1 correction — no new column here, just the back-relation Prisma
+  // requires for service_report_measurements.equipment_unit_id.
+  measurements   ServiceReportMeasurement[]
+  // Step 1 correction round 2 (Recommendation G) — no new column here,
+  // just the back-relations Prisma requires for
+  // service_report_problems.equipment_unit_id and
+  // service_report_narrative_items.equipment_unit_id.
+  problems       ServiceReportProblem[]
+  narrativeItems ServiceReportNarrativeItem[]
+
+  @@index([serviceReportId])
+  @@index([equipmentTypeCode])
+  @@index([assetId])
+  @@map("service_report_equipment_units")
+}
+
+// Step 1 correction round 2 (Recommendations G + H) — a real General Service
+// Report showed a defect tied to one specific equipment unit ("AC#2 ...
+// DAMAGE DRAIN PUMP ASSY"), and a fixed multi-select checkbox grid of
+// problem categories (Not Operational, Insufficient Cooling, Noisy
+// Operation, Others, Unit On/Off, Water Leakage, Refrigerant Leakage).
+// equipmentUnitId mirrors the same nullable-FK pattern already on
+// ServiceReportMeasurement (G). problemTypeCode is a controlled, extensible
+// reference (H) — same reference-table pattern as measurement_type/
+// signoff_role/report_type/stage — but nullable, not required: description
+// alone must still be able to capture a finding that doesn't map to any
+// checkbox category ("Others"). Left unseeded in this step, same
+// discipline as every other not-yet-populated taxonomy here.
+model ServiceReportProblem {
+  id              String   @id @default(uuid())
+  serviceReportId String   @map("service_report_id")
+  equipmentUnitId String?  @map("equipment_unit_id")
+  problemTypeCode String?  @map("problem_type_code") @db.VarChar(40)
+  description     String   @db.Text
+  resolved        Boolean?
+  sortOrder       Int      @default(0) @map("sort_order")
+  sourceRowIndex  Int?     @map("source_row_index")
+
+  serviceReport ServiceReport               @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  equipmentUnit ServiceReportEquipmentUnit? @relation(fields: [equipmentUnitId], references: [id], onDelete: SetNull)
+  problemType   ProblemType?                @relation(fields: [problemTypeCode], references: [code], onDelete: Restrict)
+
+  @@index([serviceReportId])
+  @@index([equipmentUnitId])
+  @@index([problemTypeCode])
+  @@map("service_report_problems")
+}
+
+// Step 1 correction round 2 (Recommendation H) — controlled, extensible
+// classification for ServiceReportProblem.problemTypeCode. Same reference-
+// table shape as MeasurementType/SignoffRole/MeasurementStage/
+// ServiceReportType immediately elsewhere in this file. Deliberately left
+// unseeded — the real checkbox categories evidenced by the General Service
+// Report are candidates for a future seed, not seeded now.
+model ProblemType {
+  code      String          @id @db.VarChar(40)
+  label     String          @db.VarChar(120)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  problems ServiceReportProblem[]
+
+  @@index([status])
+  @@map("problem_types")
+}
+
+// Decision 1 (amended) — controlled, centrally-managed classification for
+// measurement_type, expandable later by seeding a row, never a migration.
+// Exact same shape as CapacityUnit/EquipmentType (Phase 2). Deliberately
+// left unseeded in this step — no exhaustive HVAC measurement taxonomy is
+// being invented now; see the Step 1 report.
+model MeasurementType {
+  code      String          @id @db.VarChar(40)
+  label     String          @db.VarChar(120)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  measurements ServiceReportMeasurement[]
+  // Phase 5 Step 3 — the AI provider's non-binding suggested mapping on
+  // staging rows (see ExtractionMeasurement above). Never populated except
+  // by the ocr_worker-credentialed extraction write path.
+  extractionSuggestions ExtractionMeasurement[]
+
+  @@index([status])
+  @@map("measurement_types")
+}
+
+// Step 1 correction (revised Recommendation B) — the controlled, extensible
+// replacement for what would otherwise have been a hardcoded two-value
+// enum ({BEFORE_CLEANING, AFTER_CLEANING}). Business meaning like "before
+// repair" vs. "after repair" or a future Installation/Commissioning stage
+// is preserved exactly, per report type, without ever redesigning
+// ServiceReportMeasurement again — a new stage is a seeded row. Same
+// reference-table shape as MeasurementType immediately above; deliberately
+// left unseeded in this step (see that model's own comment for why).
+model MeasurementStage {
+  code      String          @id @db.VarChar(40)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  measurements ServiceReportMeasurement[]
+
+  @@index([status])
+  @@map("measurement_stages")
+}
+
+// measurement_type is a controlled reference (Decision 1, amended) — a
+// business classification used for filtering/reporting/analytics, not
+// naturally-variable technical narrative, so it must not depend on
+// arbitrary user-entered spelling. Reuses the exact reference-table
+// pattern already established for capacity_units/equipment_types (a code/
+// label/status/sort_order table, extended later by seeding a row, never a
+// migration) rather than a Postgres enum, which would need a migration for
+// every new measurement type. measurement_types is intentionally left
+// unseeded in this step — same "no initial list has been approved yet"
+// precedent as inquiry_types in Phase 3.
+// Step 1 correction (Recommendations A + revised B) — a real sample
+// Maintenance Cleaning report showed every reading organized as
+// (equipment unit x measurement type x before/after-cleaning stage); the
+// original design had no way to express which unit a reading belonged to,
+// or its stage. equipmentUnitId is nullable (a reading isn't always tied
+// to one specific unit) but will be populated for essentially every row on
+// a real PM/repair report. stageCode is a controlled reference — NOT the
+// Postgres enum originally proposed — because the same business meaning
+// (before/after) recurs differently across report types: BEFORE_CLEANING/
+// AFTER_CLEANING for Maintenance, BEFORE_REPAIR/AFTER_REPAIR for General
+// Service/Repair, and Installation/Commissioning will need its own values
+// (e.g. AS_FOUND/FINAL_TEST) that don't exist yet. A reference table lets
+// every future report template introduce its own stage vocabulary by
+// seeding a row, never a migration — exactly the property explicitly
+// requested. Left unseeded in this step, same "no exhaustive taxonomy yet"
+// discipline as measurement_types/signoff_roles.
+model ServiceReportMeasurement {
+  id                  String  @id @default(uuid())
+  serviceReportId     String  @map("service_report_id")
+  equipmentUnitId     String? @map("equipment_unit_id")
+  measurementTypeCode String  @map("measurement_type_code") @db.VarChar(40)
+  stageCode           String? @map("stage_code") @db.VarChar(40)
+  // Kept as raw text, not Decimal — a verified field value is still exactly
+  // what the technician wrote/what OCR read (e.g. "35 psi"), and no
+  // unit/value-parsing feature is designed yet (see the Step 1 report).
+  // This is genuinely variable technical data, not a business
+  // classification, so it stays free text per Decision 1.
+  value               String  @db.VarChar(60)
+  unit                String? @db.VarChar(30)
+  sortOrder           Int     @default(0) @map("sort_order")
+  sourceRowIndex      Int?    @map("source_row_index")
+  // Phase 5 Step 6 (Confirm) provenance addition — approved Decision 1.
+  // measurementTypeCode falls back to the seeded OTHER_UNMAPPED code when
+  // Confirm cannot deterministically resolve a real measurement_types code
+  // (staging's suggestedMeasurementTypeCode was null/unresolvable); when
+  // that happens, the original staging field's own fieldName would
+  // otherwise be lost — sourceRowIndex alone doesn't disambiguate, since
+  // several distinct fields legitimately share one rowIndex (one physical
+  // equipment unit can have many readings). This denormalized copy of
+  // extraction_measurements.field_name is written for every confirmed
+  // measurement (not only unmapped ones), so provenance is uniform and the
+  // canonical viewer can display it directly without a join back to
+  // staging. Nullable and purely additive — never written by anything
+  // before Step 6, no existing row is affected.
+  sourceFieldName     String? @map("source_field_name") @db.VarChar(60)
+
+  serviceReport   ServiceReport               @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  equipmentUnit   ServiceReportEquipmentUnit? @relation(fields: [equipmentUnitId], references: [id], onDelete: SetNull)
+  measurementType MeasurementType             @relation(fields: [measurementTypeCode], references: [code], onDelete: Restrict)
+  stage           MeasurementStage?           @relation(fields: [stageCode], references: [code], onDelete: Restrict)
+
+  @@index([serviceReportId])
+  @@index([equipmentUnitId])
+  @@index([measurementTypeCode])
+  @@index([stageCode])
+  @@map("service_report_measurements")
+}
+
+// Step 1 correction round 2 (Recommendation G) — same nullable equipment-
+// unit link as ServiceReportMeasurement/ServiceReportProblem now carry.
+// Evidenced by unit-specific recommendations on the General Service Report
+// ("NOTE: AC#2 ... NEED REPLACE NEW DRAIN PUMP MOTOR ASSEMBLY") and
+// per-unit conditions on the Installation/Commissioning report. `category`
+// remains free text (Decision-1-adjacent question not raised in this
+// round) — expected values include WORK_DESCRIPTION, FINDING,
+// RECOMMENDATION, REMARK, CUSTOMER_REMARKS, all confirmed by the three
+// real forms reviewed.
+model ServiceReportNarrativeItem {
+  id              String  @id @default(uuid())
+  serviceReportId String  @map("service_report_id")
+  equipmentUnitId String? @map("equipment_unit_id")
+  category        String? @db.VarChar(100)
+  description     String  @db.Text
+  sortOrder       Int     @default(0) @map("sort_order")
+  sourceRowIndex  Int?    @map("source_row_index")
+
+  serviceReport ServiceReport               @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  equipmentUnit ServiceReportEquipmentUnit? @relation(fields: [equipmentUnitId], references: [id], onDelete: SetNull)
+
+  @@index([serviceReportId])
+  @@index([equipmentUnitId])
+  @@map("service_report_narrative_items")
+}
+
+// Decision 1 (amended) — same reference-table pattern and rationale as
+// MeasurementType above, for signoff_role. Left unseeded in this step.
+model SignoffRole {
+  code      String          @id @db.VarChar(40)
+  label     String          @db.VarChar(80)
+  sortOrder Int             @default(0) @map("sort_order")
+  status    ReferenceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  signoffs ServiceReportSignoff[]
+
+  @@index([status])
+  @@map("signoff_roles")
+}
+
+// signoff_role_code is a controlled reference (Decision 1, amended) — same
+// reasoning and same reference-table pattern as measurement_type above.
+// signoff_roles is intentionally left unseeded in this step.
+model ServiceReportSignoff {
+  id              String    @id @default(uuid())
+  serviceReportId String    @map("service_report_id")
+  signoffRoleCode String    @map("signoff_role_code") @db.VarChar(40)
+  signatoryName   String?   @map("signatory_name") @db.VarChar(160)
+  signed          Boolean   @default(false)
+  signedDate      DateTime? @map("signed_date") @db.Date
+  sortOrder       Int       @default(0) @map("sort_order")
+  sourceRowIndex  Int?      @map("source_row_index")
+
+  serviceReport ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  signoffRole   SignoffRole   @relation(fields: [signoffRoleCode], references: [code], onDelete: Restrict)
+
+  @@index([serviceReportId])
+  @@index([signoffRoleCode])
+  @@map("service_report_signoffs")
+}
+
+// --- Extraction staging tables — the six names and the ocr_worker grant
+// shape are fixed by the Phase 1 policy record
+// (docs/architecture/ocr-worker-db-isolation.md); everything else about
+// their internal shape is new Step 1 design. All six share one identical
+// generic field-value shape (same "generic line, optional breakdown"
+// pattern already used for quotation_line_items/work_order_actual_costs)
+// rather than six differently-structured tables — one row is one extracted
+// field, scoped to row_index for repeating groups (basic_info is
+// non-repeating, so its rows are always row_index 0). This is also what
+// implements OD4's dual-value requirement: ai_value/ai_confidence are
+// written once, by the OCR worker, and never touched again; verified_value/
+// verified_by/verified_at are written only by a human via the future
+// verification endpoint (Step 5), and only app_runtime — never ocr_worker —
+// ever writes those three columns (enforced at the DB grant level, Step 1's
+// infra/sql addition).
+
+model ExtractionBasicInfo {
+  id              String                @id @default(uuid())
+  serviceReportId String                @map("service_report_id")
+  rowIndex        Int                   @default(0) @map("row_index")
+  fieldName       String                @map("field_name") @db.VarChar(60)
+  aiValue         String?               @map("ai_value") @db.Text
+  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  // Phase 5 Step 5 additions — see ExtractionReviewStatus and the header
+  // comment above the enum. requiresHumanVerification is AI-computed
+  // (refreshed by the extraction pipeline like aiValue/aiConfidence, never
+  // touched by verification); reviewStatus is human-set only.
+  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus              ExtractionReviewStatus? @map("review_status")
+  verifiedValue   String?               @map("verified_value") @db.Text
+  verifiedBy      String?               @map("verified_by")
+  verifiedAt      DateTime?             @map("verified_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser User?         @relation("ExtractionBasicInfoVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([serviceReportId, rowIndex, fieldName])
+  @@index([serviceReportId])
+  @@map("extraction_basic_info")
+}
+
+model ExtractionEquipmentUnit {
+  id              String                @id @default(uuid())
+  serviceReportId String                @map("service_report_id")
+  rowIndex        Int                   @default(0) @map("row_index")
+  fieldName       String                @map("field_name") @db.VarChar(60)
+  aiValue         String?               @map("ai_value") @db.Text
+  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus              ExtractionReviewStatus? @map("review_status")
+  verifiedValue   String?               @map("verified_value") @db.Text
+  verifiedBy      String?               @map("verified_by")
+  verifiedAt      DateTime?             @map("verified_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser User?         @relation("ExtractionEquipmentUnitVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([serviceReportId, rowIndex, fieldName])
+  @@index([serviceReportId])
+  @@map("extraction_equipment_units")
+}
+
+model ExtractionProblem {
+  id              String                @id @default(uuid())
+  serviceReportId String                @map("service_report_id")
+  rowIndex        Int                   @default(0) @map("row_index")
+  fieldName       String                @map("field_name") @db.VarChar(60)
+  aiValue         String?               @map("ai_value") @db.Text
+  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus              ExtractionReviewStatus? @map("review_status")
+  verifiedValue   String?               @map("verified_value") @db.Text
+  verifiedBy      String?               @map("verified_by")
+  verifiedAt      DateTime?             @map("verified_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser User?         @relation("ExtractionProblemVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([serviceReportId, rowIndex, fieldName])
+  @@index([serviceReportId])
+  @@map("extraction_problems")
+}
+
+// Step 1 correction — the one staging table that deviates from the other
+// five's identical shape, deliberately: `stage` here is a plain nullable
+// TEXT column, NOT a foreign key. Staging always holds raw, unverified OCR
+// output (same reasoning as measurement_type never being a real FK on this
+// side either) — a human resolves "before clean" scrawled in a margin to a
+// real measurement_stages.code only at Confirm time. row_index continues
+// to mean "which equipment unit this reading belongs to" (aligned with
+// extraction_equipment_units' own row_index for the same service report);
+// the uniqueness constraint widens to include stage so the same field
+// (e.g. "low_side_pressure") can appear twice per equipment unit — once
+// before, once after — without colliding.
+// Phase 5 Step 3 (queue processor increment) — two columns added on top of
+// the Step 1 shape, per the approved provider design (Phase 5 Approved
+// Baseline §04a, Decision 2): ai_unit preserves the raw extracted unit
+// separately from ai_value (never converted — same "never parse/convert a
+// unit" rule as the canonical side), and suggested_measurement_type_code is
+// the provider's non-binding taxonomy suggestion. Both are AI-generated
+// staging data only — a real FK to measurement_types so an invented code is
+// impossible at the database level (mirrors the existing problem_type_code
+// pattern on service_report_problems), but nullable and RESTRICT, never
+// forcing a value: an unresolved suggestion stays NULL rather than being
+// coerced to a guess, and this can never become canonical on its own — only
+// a human verifier (Step 5+) reads it as a hint.
+model ExtractionMeasurement {
+  id                            String                @id @default(uuid())
+  serviceReportId               String                @map("service_report_id")
+  rowIndex                      Int                   @default(0) @map("row_index")
+  fieldName                     String                @map("field_name") @db.VarChar(60)
+  stage                         String?               @db.VarChar(60)
+  aiValue                       String?               @map("ai_value") @db.Text
+  aiUnit                        String?               @map("ai_unit") @db.VarChar(60)
+  aiConfidence                  ExtractionConfidence? @map("ai_confidence")
+  suggestedMeasurementTypeCode  String?               @map("suggested_measurement_type_code") @db.VarChar(40)
+  requiresHumanVerification     Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus                  ExtractionReviewStatus? @map("review_status")
+  verifiedValue                 String?               @map("verified_value") @db.Text
+  verifiedBy                    String?               @map("verified_by")
+  verifiedAt                    DateTime?             @map("verified_at")
+  createdAt                     DateTime              @default(now()) @map("created_at")
+
+  serviceReport            ServiceReport    @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser            User?           @relation("ExtractionMeasurementVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  suggestedMeasurementType  MeasurementType? @relation(fields: [suggestedMeasurementTypeCode], references: [code], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([serviceReportId, rowIndex, fieldName, stage])
+  @@index([serviceReportId])
+  @@index([suggestedMeasurementTypeCode])
+  @@map("extraction_measurements")
+}
+
+model ExtractionNarrativeItem {
+  id              String                @id @default(uuid())
+  serviceReportId String                @map("service_report_id")
+  rowIndex        Int                   @default(0) @map("row_index")
+  fieldName       String                @map("field_name") @db.VarChar(60)
+  aiValue         String?               @map("ai_value") @db.Text
+  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus              ExtractionReviewStatus? @map("review_status")
+  verifiedValue   String?               @map("verified_value") @db.Text
+  verifiedBy      String?               @map("verified_by")
+  verifiedAt      DateTime?             @map("verified_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser User?         @relation("ExtractionNarrativeItemVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([serviceReportId, rowIndex, fieldName])
+  @@index([serviceReportId])
+  @@map("extraction_narrative_items")
+}
+
+model ExtractionSignoff {
+  id              String                @id @default(uuid())
+  serviceReportId String                @map("service_report_id")
+  rowIndex        Int                   @default(0) @map("row_index")
+  fieldName       String                @map("field_name") @db.VarChar(60)
+  aiValue         String?               @map("ai_value") @db.Text
+  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  reviewStatus              ExtractionReviewStatus? @map("review_status")
+  verifiedValue   String?               @map("verified_value") @db.Text
+  verifiedBy      String?               @map("verified_by")
+  verifiedAt      DateTime?             @map("verified_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+  verifiedByUser User?         @relation("ExtractionSignoffVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([serviceReportId, rowIndex, fieldName])
+  @@index([serviceReportId])
+  @@map("extraction_signoffs")
+}

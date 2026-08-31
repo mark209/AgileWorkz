@@ -1,0 +1,6 @@
+{
+  "name": "@agileworks/config",
+  "version": "0.1.0",
+  "private": true,
+  "files": ["tsconfig.base.json", "eslint-base.cjs"]
+}

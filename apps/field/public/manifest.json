@@ -1,0 +1,10 @@
+{
+  "name": "AgileWorks Field",
+  "short_name": "AW Field",
+  "description": "AgileWorks HVAC ERP — technician field app",
+  "start_url": "/login",
+  "display": "standalone",
+  "background_color": "#f3f6f5",
+  "theme_color": "#0e7a68",
+  "icons": []
+}
