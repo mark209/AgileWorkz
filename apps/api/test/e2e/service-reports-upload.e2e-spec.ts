@@ -76,10 +76,11 @@ describe("Service Report upload API (live)", () => {
   }
 
   function pngBuffer() {
-    // Minimal valid-looking bytes are unnecessary — the API never decodes
-    // the file, only stores and forwards it; a short buffer with a
-    // plausible mimetype is sufficient to exercise every code path.
-    return Buffer.from("fake png bytes for e2e testing");
+    // Phase 7 P0 — the API now verifies the file's actual leading bytes
+    // against the claimed mimetype (matchesFileSignature), so every test
+    // in this file that isn't specifically exercising that check needs
+    // real signature bytes, not an arbitrary short buffer.
+    return Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
   }
 
   it("uploads a Service Report end-to-end: DB row, storage object, PENDING_EXTRACTION, and both audit entries", async () => {
@@ -143,6 +144,83 @@ describe("Service Report upload API (live)", () => {
     expect(res.status).toBe(415);
     expect(res.body.message).toMatch(/Unsupported file type/);
   });
+
+  // Phase 7 P0 — magic-byte verification, live against the real HTTP/
+  // Multer/service stack (the unit-level proof lives in
+  // service-reports.service.spec.ts and file-signature.util.spec.ts;
+  // this proves it end-to-end, including that no DB row or storage
+  // object is created for either failure mode).
+
+  it.each([
+    ["application/pdf", "report.pdf", Buffer.from("255044462d312e340a", "hex")],
+    ["image/jpeg", "report.jpg", Buffer.from("ffd8ffe000104a46494600", "hex")],
+    ["image/png", "report.png", Buffer.from("89504e470d0a1a0a0000000d49484452", "hex")],
+    ["image/webp", "report.webp", Buffer.from("524946460000000057454250", "hex")],
+  ])("accepts a real, valid %s file", async (mimetype, filename, realBytes) => {
+    const { customer, site } = await createCustomerSite(`validsig-${filename}`);
+
+    const res = await request(app.getHttpServer())
+      .post(`/customers/${customer.id}/service-reports`)
+      .set("Authorization", technician.authHeader)
+      .field("siteId", site.id)
+      .field("reportTypeCode", "MAINTENANCE_CLEANING")
+      .field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", realBytes, { filename, contentType: mimetype });
+
+    expect(res.status).toBe(201);
+    await storage.deleteObject((await prisma.serviceReport.findUniqueOrThrow({ where: { id: res.body.id } })).documentFileKey).catch(() => undefined);
+  });
+
+  it("rejects a spoofed MIME type — real PNG bytes uploaded as image/jpeg — with 415, no DB row, no storage object", async () => {
+    const { customer, site } = await createCustomerSite("spoofedmime");
+    const realPngBytes = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+
+    const res = await request(app.getHttpServer())
+      .post(`/customers/${customer.id}/service-reports`)
+      .set("Authorization", technician.authHeader)
+      .field("siteId", site.id)
+      .field("reportTypeCode", "MAINTENANCE_CLEANING")
+      .field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", realPngBytes, { filename: "report.jpg", contentType: "image/jpeg" });
+
+    expect(res.status).toBe(415);
+    expect(res.body.message).toMatch(/does not match the claimed type/);
+    expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
+  });
+
+  it("rejects a file with no recognizable signature at all (corrupted/invalid content) with 415", async () => {
+    const { customer, site } = await createCustomerSite("invalidsig");
+
+    const res = await request(app.getHttpServer())
+      .post(`/customers/${customer.id}/service-reports`)
+      .set("Authorization", technician.authHeader)
+      .field("siteId", site.id)
+      .field("reportTypeCode", "MAINTENANCE_CLEANING")
+      .field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", Buffer.from("this file has an allowed extension but is not really a PDF"), {
+        filename: "report.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(415);
+    expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
+  });
+
+  it("rejects a file exceeding the 25MB size limit with 413, before the signature check ever runs", async () => {
+    const { customer, site } = await createCustomerSite("oversized");
+    const oversized = Buffer.alloc(26 * 1024 * 1024, 0); // 26MB of zero bytes — well over MAX_UPLOAD_BYTES
+
+    const res = await request(app.getHttpServer())
+      .post(`/customers/${customer.id}/service-reports`)
+      .set("Authorization", technician.authHeader)
+      .field("siteId", site.id)
+      .field("reportTypeCode", "MAINTENANCE_CLEANING")
+      .field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", oversized, { filename: "report.png", contentType: "image/png" });
+
+    expect(res.status).toBe(413);
+    expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
+  }, 30_000);
 
   it("rejects an upload from a user with no service_reports.upload permission (403)", async () => {
     const { authHeader } = await userWithPermissions("nouploadperm", [["customers", "read"]]);

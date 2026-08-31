@@ -28,6 +28,7 @@ import { NumberingService } from "../../common/numbering/numbering.service";
 import { STORAGE_PROVIDER, StorageProvider } from "../../common/storage/storage-provider.interface";
 import { ExtractionQueueService } from "../../common/extraction/service-report-extraction.processor";
 import { UploadServiceReportDto } from "./dto/upload-service-report.dto";
+import { matchesFileSignature } from "../../common/file-signature.util";
 
 const STORAGE_KEY_PREFIX = "service-reports";
 
@@ -233,6 +234,19 @@ export class ServiceReportsService {
     if (!ALLOWED_UPLOAD_MIME_TYPES.has(file.mimetype)) {
       throw new UnsupportedMediaTypeException(
         `Unsupported file type: ${file.mimetype}. Allowed types: ${[...ALLOWED_UPLOAD_MIME_TYPES].join(", ")}`,
+      );
+    }
+    // Phase 7 P0 — the allowlist check above only ever verified the
+    // client-supplied Content-Type header, which a caller fully controls
+    // and could spoof. This verifies the file's own leading bytes actually
+    // match what was claimed, before any DB lookup or storage write —
+    // same fail-fast placement as the header check itself. Never widens
+    // what's accepted, only narrows it further; a mismatch is reported the
+    // same way an unsupported type already is (415), not a new error
+    // shape a caller has to special-case.
+    if (!matchesFileSignature(file.buffer, file.mimetype)) {
+      throw new UnsupportedMediaTypeException(
+        `File content does not match the claimed type (${file.mimetype}). The file may be corrupted or mislabeled.`,
       );
     }
 

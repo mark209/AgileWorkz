@@ -69,7 +69,9 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
   }
 
   function pngBuffer() {
-    return Buffer.from("fake png bytes for idempotency e2e testing");
+    // Phase 7 P0 — real leading bytes, since upload() now also verifies
+    // file content against the claimed mimetype, not just the header.
+    return Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
   }
 
   function uploadRequest(app_: INestApplication, customerId: string, siteId: string, authHeader: string, idempotencyKey?: string) {

@@ -18,14 +18,29 @@ import { mockOf } from "./test-utils";
 
 const actor = { userId: "actor-1", ipAddress: "127.0.0.1", userAgent: "jest" };
 
+// Phase 7 P0 — real leading bytes per allowed type, since upload() now
+// verifies file content against the claimed mimetype (matchesFileSignature),
+// not just the header. Keyed by mimetype so makeFile({ mimetype: "..." })
+// automatically gets a buffer that actually passes the new check, without
+// every existing call site needing to also specify a buffer — only tests
+// that deliberately exercise a mismatch pass their own `buffer` override.
+const VALID_SIGNATURE_BYTES: Record<string, Buffer> = {
+  "application/pdf": Buffer.from("255044462d312e340a", "hex"), // "%PDF-1.4\n"
+  "image/jpeg": Buffer.from("ffd8ffe000104a46494600", "hex"),
+  "image/png": Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"),
+  "image/webp": Buffer.from("524946460000000057454250", "hex"), // "RIFF"+size+"WEBP"
+};
+
 function makeFile(overrides: Partial<Express.Multer.File> = {}): Express.Multer.File {
+  const mimetype = overrides.mimetype ?? "image/jpeg";
+  const defaultBuffer = VALID_SIGNATURE_BYTES[mimetype] ?? Buffer.from("test content");
   return {
     fieldname: "file",
     originalname: "report.jpg",
     encoding: "7bit",
-    mimetype: "image/jpeg",
-    buffer: Buffer.from("test content"),
-    size: 12,
+    mimetype,
+    buffer: defaultBuffer,
+    size: defaultBuffer.length,
     ...overrides,
   } as Express.Multer.File;
 }
@@ -118,6 +133,27 @@ describe("ServiceReportsService.upload", () => {
 
     await expect(service.upload("cust-1", file, baseDto, actor)).resolves.toBeDefined();
     expect(storage.putObject).toHaveBeenCalledWith(expect.objectContaining({ contentType: mimetype }));
+  });
+
+  // Phase 7 P0 — magic-byte verification. The MIME-allowlist check above
+  // only ever trusted the client-supplied Content-Type header; these prove
+  // the file's actual bytes are also checked, before any DB lookup or
+  // storage write (same fail-fast placement as every other upload guard).
+  it("rejects a spoofed MIME type — real PNG bytes claiming to be a JPEG — with 415, before any DB lookup or storage write", async () => {
+    const { service, prisma, storage } = buildHarness();
+    const file = makeFile({ mimetype: "image/jpeg", buffer: Buffer.from("89504e470d0a1a0a0000000d49484452", "hex") });
+
+    await expect(service.upload("cust-1", file, baseDto, actor)).rejects.toThrow(UnsupportedMediaTypeException);
+    expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("rejects a file whose bytes match no real signature at all (invalid/corrupted content)", async () => {
+    const { service, storage } = buildHarness();
+    const file = makeFile({ mimetype: "application/pdf", buffer: Buffer.from("this is plain text, not a PDF") });
+
+    await expect(service.upload("cust-1", file, baseDto, actor)).rejects.toThrow(UnsupportedMediaTypeException);
+    expect(storage.putObject).not.toHaveBeenCalled();
   });
 
   it("rejects when the customer doesn't exist", async () => {
