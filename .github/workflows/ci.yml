@@ -1,0 +1,163 @@
+name: CI
+
+# Phase 7 Wave 1 (F12.1) — the minimum pipeline: typecheck, lint, unit
+# tests, e2e tests, and production builds for all three apps, on every
+# push and pull request. Runs against fresh Postgres/Redis service
+# containers — no MinIO, since STORAGE_PROVIDER defaults to "local" and
+# the backend suite never needs S3 in CI. Deliberately does NOT replicate
+# the three-role (app_runtime / app_migrator / ocr_worker) privilege
+# separation described in docs/architecture/ocr-worker-db-isolation.md —
+# CI's Postgres is a disposable, single-purpose container, so one
+# superuser connection string is used for all three DB env vars. That
+# separation remains a real production requirement (see the README and
+# infra/sql/*.sql), just out of scope for "minimum" CI.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "11"
+
+jobs:
+  backend:
+    name: Backend (apps/api)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agileworks_erp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agileworks_erp?schema=public
+      MIGRATE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agileworks_erp?schema=public
+      OCR_WORKER_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agileworks_erp?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-only-access-secret-do-not-use-in-prod-000000
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-do-not-use-in-prod-00000
+      STORAGE_PROVIDER: local
+      STORAGE_LOCAL_ROOT: ./storage-local
+      EXTRACTION_PROVIDER: stub
+      SEED_ADMIN_EMAIL: ci-admin@example.test
+      SEED_ADMIN_PASSWORD: ci-only-password-not-a-real-credential
+      SEED_ADMIN_NAME: CI Admin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm prisma:generate
+
+      - name: Apply migrations
+        run: pnpm prisma:migrate:deploy
+
+      - name: Seed reference data
+        run: pnpm prisma:seed
+
+      - name: Typecheck
+        run: pnpm --filter @agileworks/api typecheck
+
+      - name: Lint
+        run: pnpm --filter @agileworks/api lint
+
+      - name: Unit tests
+        run: pnpm --filter @agileworks/api test
+
+      - name: Production build
+        run: pnpm --filter @agileworks/api build
+
+      - name: E2E tests
+        run: pnpm --filter @agileworks/api test:e2e
+
+  web:
+    name: apps/web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @agileworks/web typecheck
+
+      - name: Lint
+        run: pnpm --filter @agileworks/web lint
+
+      - name: Unit/component tests
+        run: pnpm --filter @agileworks/web test
+
+      - name: Production build
+        run: pnpm --filter @agileworks/web build
+
+  field:
+    name: apps/field
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @agileworks/field typecheck
+
+      - name: Lint
+        run: pnpm --filter @agileworks/field lint
+
+      - name: Unit/component tests
+        run: pnpm --filter @agileworks/field test
+
+      - name: Production build
+        run: pnpm --filter @agileworks/field build
