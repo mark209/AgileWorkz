@@ -4,39 +4,49 @@ import * as dotenv from "dotenv";
 
 // Runs via `tsx prisma/seed.ts` directly, not through the Prisma CLI — tsx
 // does not auto-load .env the way Prisma's own CLI commands do, so without
-// this, DATABASE_URL and SEED_ADMIN_* would all be undefined.
+// this, DATABASE_URL and SEED_ADMIN_* would all be undefined in local dev.
 //
-// dotenv.config() never throws on a missing/wrong path — it silently no-ops
-// — so a resolution mistake here would surface only much later as a
-// confusing Prisma error with no indication .env was ever involved. Try two
-// candidate locations (relative to this file, and relative to wherever the
-// process was launched from — cwd and __dirname can disagree across
-// platforms/shells) and fail loudly, immediately, and specifically if
-// neither one actually loaded DATABASE_URL — before Prisma is ever touched.
-const candidatePaths = [
-  path.resolve(__dirname, "..", ".env"), // relative to prisma/, i.e. repo root
-  path.resolve(process.cwd(), ".env"), // relative to the shell's working directory
-];
+// A hosting platform (e.g. Render) injects DATABASE_URL and the SEED_ADMIN_*
+// variables directly into process.env — there is no physical .env file on
+// disk there, and there never should be. Check process.env FIRST; only fall
+// back to loading a local .env file when DATABASE_URL isn't already present,
+// which is exactly the local-dev case tsx needs help with.
+if (!process.env.DATABASE_URL) {
+  // dotenv.config() never throws on a missing/wrong path — it silently no-ops
+  // — so a resolution mistake here would surface only much later as a
+  // confusing Prisma error with no indication .env was ever involved. Try two
+  // candidate locations (relative to this file, and relative to wherever the
+  // process was launched from — cwd and __dirname can disagree across
+  // platforms/shells) and fail loudly, immediately, and specifically if
+  // neither one actually loaded DATABASE_URL — before Prisma is ever touched.
+  const candidatePaths = [
+    path.resolve(__dirname, "..", ".env"), // relative to prisma/, i.e. repo root
+    path.resolve(process.cwd(), ".env"), // relative to the shell's working directory
+  ];
 
-let loadedFrom: string | undefined;
-for (const candidate of candidatePaths) {
-  if (fs.existsSync(candidate)) {
-    dotenv.config({ path: candidate });
-    if (process.env.DATABASE_URL) {
-      loadedFrom = candidate;
-      break;
+  let loadedFrom: string | undefined;
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      dotenv.config({ path: candidate });
+      if (process.env.DATABASE_URL) {
+        loadedFrom = candidate;
+        break;
+      }
     }
   }
-}
 
-if (!loadedFrom) {
-  throw new Error(
-    "Could not load DATABASE_URL from .env. Tried:\n" +
-      candidatePaths.map((p) => `  - ${p} (exists: ${fs.existsSync(p)})`).join("\n") +
-      "\nCreate .env at the repo root (copy .env.example) and set DATABASE_URL, or run this script from the repo root.",
-  );
+  if (!loadedFrom) {
+    throw new Error(
+      "DATABASE_URL is not set in the environment, and could not be loaded from .env. Tried:\n" +
+        candidatePaths.map((p) => `  - ${p} (exists: ${fs.existsSync(p)})`).join("\n") +
+        "\nEither set DATABASE_URL directly in the environment (e.g. on a hosting platform), " +
+        "or create .env at the repo root (copy .env.example) and set DATABASE_URL, or run this script from the repo root.",
+    );
+  }
+  console.log(`Loaded environment from: ${loadedFrom}`);
+} else {
+  console.log("DATABASE_URL already present in process.env — using it directly, no .env file needed.");
 }
-console.log(`Loaded environment from: ${loadedFrom}`);
 
 import { PrismaClient, ActorType } from "@prisma/client";
 import * as argon2 from "argon2";
