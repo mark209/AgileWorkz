@@ -45,12 +45,28 @@ days are deleted automatically) — this job never deletes anything itself.
 | `RCLONE_CONFIG_R2_REGION` | no | `auto` |
 | `RCLONE_CONFIG_R2_ACCESS_KEY_ID` | **yes** | The `agileworks-erp-r2-backup` token's Access Key ID (scoped to only the `agileworks-erp-backups` bucket) |
 | `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY` | **yes** | That same token's Secret Access Key |
+| `RCLONE_CONFIG_R2_NO_CHECK_BUCKET` | no | `true` |
 | `HEARTBEAT_URL` | **yes** (capability URL) | The healthchecks.io ping URL for the `agileworks-erp-backup` check |
 
 **Every value above is set directly in Render's environment-variable
 store, never committed, never displayed in chat.** This repository holds
 only the two files that read these variable *names* — `Dockerfile` and
 `backup.sh` — never a value.
+
+**Why `RCLONE_CONFIG_R2_NO_CHECK_BUCKET` is required:** rclone's S3 backend
+defaults to verifying the destination bucket exists before every upload,
+and it does this via an S3 `CreateBucket` call. Cloudflare R2 rejects that
+call outright for any token scoped to object-level operations only —
+regardless of whether the bucket already exists and is owned by that same
+account — which is exactly what our least-privilege
+`agileworks-erp-r2-backup` token is (Object Read & Write on only the
+`agileworks-erp-backups` bucket, deliberately never bucket-creation or
+account-level rights). Setting this to `true` tells rclone to skip that
+check and go straight to the object operation, which is also simply the
+*correct* behavior here independent of the R2 quirk: this job should never
+be able to create a bucket, and if the bucket were ever genuinely missing,
+the resulting failure would still surface loudly via the upload itself
+failing, not a silent auto-create.
 
 ## Schedule
 
