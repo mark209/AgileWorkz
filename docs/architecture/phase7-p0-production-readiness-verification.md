@@ -48,7 +48,7 @@ the API service.
 | 9 | Application secrets use the hosting provider's environment/secret mechanism | **PASS** | All secrets (`DATABASE_URL`, `OCR_WORKER_DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `REDIS_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`) are Render environment variables (encrypted at rest, AES-128 minimum; TLS 1.2+ in transit). The Vertex AI service-account key is a Render **Secret File** (mounted at a path; `GOOGLE_APPLICATION_CREDENTIALS` points to it). No secret is committed to Git or hardcoded. |
 | 10 | F7.1 Idempotency-Key length/charset validation (controlled 4xx, not 500) | **PASS (in deployed code)** | Committed `07a6e34`; unit + live e2e tests. Ships in the deployed API image. |
 | 11 | PostgreSQL / Redis / object storage not exposed directly to end users | **PASS** | End users reach only `agileworks-erp-web` / `agileworks-erp-field` (Next.js) over HTTPS, which call the API over HTTPS. The three data stores have no public route: Postgres is internal-only + IP-restricted, Redis is authenticated `rediss://` reachable only by the API, R2 is private with signed-URL access only. |
-| 12 | Tested backup/restore procedure preserved | **PARTIAL — procedure intact, production execution pending** | The `pg_dump`/`pg_restore` + object-storage mirror procedure ([phase7-p0-deployment-and-operations.md](./phase7-p0-deployment-and-operations.md) §7) was restore-tested against dev data during Phase 7 P0 and confirmed compatible with Render Postgres. It has **not yet been run against the production instance**, and no recurring schedule exists yet. See Open Items. |
+| 12 | Tested backup/restore procedure preserved | **PASS** | Weekly Render Cron Job (`0 18 * * 6` UTC) runs `pg_dump --format=directory` as the least-privilege `app_backup` role, uploads to a dedicated private Cloudflare R2 bucket, independently verifies the upload, and pings a healthchecks.io heartbeat — [infra/backup/](../../infra/backup/). First live production run on **2026-09-13** completed successfully end-to-end (backup, upload, verification, heartbeat). The resulting object was then restore-tested into an isolated, disposable local PostgreSQL 18 container — full record below. |
 | 13 | `prisma/seed.ts` usable in the Render environment | **PASS** | Env-loading bootstrap fixed to check `process.env.DATABASE_URL` before requiring a physical `.env` file (committed `2af7fe3`, isolated-logic tested). Production seed subsequently run by the operator; Admin/Owner login verified working through both `web` and `field`. |
 
 ---
@@ -63,11 +63,54 @@ the API service.
 
 ---
 
+## Backup & restore verification record (2026-09-13)
+
+The full backup → restore → validate cycle has now been exercised once,
+end to end, against a real production backup.
+
+### Production backup run
+
+| Check | Result |
+|---|---|
+| Render Cron Job run | PASS — completed successfully |
+| `pg_dump` | PASS |
+| Upload to R2 (`agileworks-erp-backups/pg/`) | PASS |
+| Independent object-existence/size verification (by the job itself) | PASS |
+| Healthchecks.io heartbeat | PASS — received |
+| Backup object | `pg_agileworks_erp_2026-09-13T11-52-32Z.dir.tar.gz`, 36,644 bytes |
+
+### Isolated restore test
+
+Performed the same day, entirely outside production: the backup object was
+downloaded from the Cloudflare R2 dashboard (browser session, no R2 API
+credential used locally), extracted, and restored into a disposable local
+Docker container (`postgres:18-alpine`, bound to `127.0.0.1:55432` only,
+database `restore_test`) — never the production database, never a
+container reachable from any network. Cleaned up after validation; no
+trace remains on disk or in `docker ps -a`.
+
+| Check | Result |
+|---|---|
+| Downloaded archive integrity (size, SHA-256, `gzip -t`) | PASS |
+| Valid `pg_dump` directory-format archive (`toc.dat` present, `pg_restore --list` parses cleanly) | PASS — 465 TOC entries, 52 `TABLE DATA` entries |
+| `pg_restore -Fd --no-owner --no-privileges --single-transaction` | PASS — exit code 0, zero warnings/errors |
+| Restored table count | 52 (51 `schema.prisma` models + `_prisma_migrations`, which is Prisma-internal, not a schema model — expected, not a discrepancy) |
+| Representative row counts | `users`=1, `customers`=0, `work_orders`=0, `audit_logs`=4 — consistent with pilot-stage data volume |
+| `system_settings` column structure | PASS — all 7 columns restored intact, including the `value_type` enum column |
+| `_prisma_migrations` restored | PASS — 17 records; latest `20260831021556_f7_1_service_report_upload_idempotency` |
+| Migration-state match vs. `prisma/migrations/` on disk | PASS — all 17 migrations match exactly, same names, same order, none rolled back |
+| Overall result | **PASS — zero warnings or errors at any step** |
+
+This confirms the backup this pilot relies on is not merely "uploaded" but
+is actually restorable into a working, schema-correct, migration-consistent
+database.
+
+---
+
 ## Open items (not blocking pilot infrastructure, tracked)
 
 | Item | Type | Recommended action | Deadline |
 |---|---|---|---|
-| **Production backup execution + schedule** | Deployment configuration | (a) Confirm Render's native PITR (3-day window on the current workspace plan) and 7-day logical-backup retention are active on `agileworks-erp-postgres`. (b) Run the tested `pg_dump` procedure against the production instance once and restore-test it into a throwaway target to confirm it works there. (c) Schedule it (Render Cron Job) writing to an R2 backup prefix for retention beyond Render's own window. | Before real customer data is entered |
 | **OCR successor-model qualification** | Model migration/validation | Run the two-tier qualification test ([pre-provisioning gate review](./phase7-p0-pre-provisioning-gate-review.md) §1) — Vertex AI Model Garden console check for an `asia-southeast1`-available GA successor, then the existing 21-document Phase 5 corpus through both `gemini-2.5-flash` and the candidate via the existing acceptance harness, against the approved `PILOT_ACCEPTANCE_TARGETS`. Do not change `VERTEX_AI_MODEL_ID` until it passes. | Before Gemini 2.5 Flash retirement (earliest 2026-10-16) |
 | **Deploy commit `2af7fe3` to the API service** | Deployment step | Auto-Deploy is Off; trigger a manual deploy so the running API carries the `prisma/seed.ts` fix and any other changes since `1201b98`. Non-urgent (seed already run), but keeps deployed == `main`. | Housekeeping |
 | **Synthetic end-to-end pipeline test** | Verification | Upload one non-real, non-customer test Service Report and confirm it flows upload → OCR extraction → staging → verify → confirm. Exercises magic-byte validation (item 2), the Vertex AI credential, and BullMQ in production. Incurs a small real Vertex AI charge. | Recommended before pilot users onboard |
