@@ -221,56 +221,57 @@ model User {
   // No role_id column — membership lives entirely in UserRole.
   // No deletedAt — users are disabled via status, never deleted.
 
-  userRoles                        UserRole[]                @relation("UserToUserRoles")
-  rolesAssignedByMe                UserRole[]                @relation("UserRoleAssignedBy")
-  systemSettingEdits               SystemSetting[]           @relation("SystemSettingUpdatedBy")
-  auditLogEntries                  AuditLog[]                @relation("AuditLogActor")
-  customerAccounts                 Customer[]                @relation("CustomerAccountManager")
-  uploadedDocuments                CustomerDocument[]        @relation("CustomerDocumentUploadedBy")
+  userRoles                          UserRole[]                          @relation("UserToUserRoles")
+  rolesAssignedByMe                  UserRole[]                          @relation("UserRoleAssignedBy")
+  systemSettingEdits                 SystemSetting[]                     @relation("SystemSettingUpdatedBy")
+  auditLogEntries                    AuditLog[]                          @relation("AuditLogActor")
+  customerAccounts                   Customer[]                          @relation("CustomerAccountManager")
+  uploadedDocuments                  CustomerDocument[]                  @relation("CustomerDocumentUploadedBy")
   // Phase 3 — no new column on `users`, just the two back-relations Prisma
   // requires for quotation_revisions.created_by/approved_by (see §02).
-  quotationRevisionsCreated        QuotationRevision[]       @relation("QuotationRevisionCreatedBy")
-  quotationRevisionsApproved       QuotationRevision[]       @relation("QuotationRevisionApprovedBy")
+  quotationRevisionsCreated          QuotationRevision[]                 @relation("QuotationRevisionCreatedBy")
+  quotationRevisionsApproved         QuotationRevision[]                 @relation("QuotationRevisionApprovedBy")
   // Phase 3 Step 3 — no new column on `users`, just the back-relation Prisma
   // requires for inquiries.created_by.
-  inquiriesCreated                 Inquiry[]                 @relation("InquiryCreatedBy")
+  inquiriesCreated                   Inquiry[]                           @relation("InquiryCreatedBy")
   // Phase 4 Step 1 — no new column on `users`, just the back-relations
   // Prisma requires for every actor-tracking FK on work_orders and its
   // child tables. One relation name per distinct FK, per Prisma's own
   // requirement whenever more than one FK on the same model points at the
   // same target — same pattern already used above for quotation_revisions.
-  workOrdersCreated                WorkOrder[]               @relation("WorkOrderCreatedBy")
-  workOrdersStarted                WorkOrder[]               @relation("WorkOrderStartedBy")
-  workOrdersCompleted              WorkOrder[]               @relation("WorkOrderCompletedBy")
-  workOrdersClosed                 WorkOrder[]               @relation("WorkOrderClosedBy")
-  workOrderCancellationsRequested  WorkOrder[]               @relation("WorkOrderCancellationRequestedBy")
-  workOrdersCancelled              WorkOrder[]               @relation("WorkOrderCancelledBy")
-  workOrderAssignmentsAsTechnician WorkOrderAssignment[]     @relation("WorkOrderAssignmentTechnician")
-  workOrderAssignmentsGranted      WorkOrderAssignment[]     @relation("WorkOrderAssignmentAssignedBy")
-  workOrderAssignmentsEnded        WorkOrderAssignment[]     @relation("WorkOrderAssignmentUnassignedBy")
-  workOrderActualCostsRecorded     WorkOrderActualCost[]     @relation("WorkOrderActualCostRecordedBy")
+  workOrdersCreated                  WorkOrder[]                         @relation("WorkOrderCreatedBy")
+  workOrdersStarted                  WorkOrder[]                         @relation("WorkOrderStartedBy")
+  workOrdersFieldCompleted           WorkOrder[]                         @relation("WorkOrderFieldCompletedBy")
+  workOrdersCompleted                WorkOrder[]                         @relation("WorkOrderCompletedBy")
+  workOrdersClosed                   WorkOrder[]                         @relation("WorkOrderClosedBy")
+  workOrderCancellationsRequested    WorkOrder[]                         @relation("WorkOrderCancellationRequestedBy")
+  workOrdersCancelled                WorkOrder[]                         @relation("WorkOrderCancelledBy")
+  workOrderAssignmentsAsTechnician   WorkOrderAssignment[]               @relation("WorkOrderAssignmentTechnician")
+  workOrderAssignmentsGranted        WorkOrderAssignment[]               @relation("WorkOrderAssignmentAssignedBy")
+  workOrderAssignmentsEnded          WorkOrderAssignment[]               @relation("WorkOrderAssignmentUnassignedBy")
+  workOrderActualCostsRecorded       WorkOrderActualCost[]               @relation("WorkOrderActualCostRecordedBy")
   // Phase 5 Step 1 — no new column on `users`, just the back-relations
   // Prisma requires for every actor-tracking FK on service_reports and the
   // six extraction_* staging tables. Same one-relation-name-per-FK
   // discipline as Phase 4 Step 1 above.
-  serviceReportsUploaded           ServiceReport[]           @relation("ServiceReportUploadedBy")
-  serviceReportsVerified           ServiceReport[]           @relation("ServiceReportVerifiedBy")
-  serviceReportsConfirmed          ServiceReport[]           @relation("ServiceReportConfirmedBy")
-  serviceReportsLocked             ServiceReport[]           @relation("ServiceReportLockedBy")
+  serviceReportsUploaded             ServiceReport[]                     @relation("ServiceReportUploadedBy")
+  serviceReportsVerified             ServiceReport[]                     @relation("ServiceReportVerifiedBy")
+  serviceReportsConfirmed            ServiceReport[]                     @relation("ServiceReportConfirmedBy")
+  serviceReportsLocked               ServiceReport[]                     @relation("ServiceReportLockedBy")
   // Phase 7 (F7.1) — one row per upload attempt this user made with an
   // Idempotency-Key header; see ServiceReportUploadIdempotencyKey.
   serviceReportUploadIdempotencyKeys ServiceReportUploadIdempotencyKey[] @relation("ServiceReportUploadIdempotencyKeyUploadedBy")
-  extractionBasicInfoVerified      ExtractionBasicInfo[]     @relation("ExtractionBasicInfoVerifiedBy")
-  extractionEquipmentUnitsVerified ExtractionEquipmentUnit[] @relation("ExtractionEquipmentUnitVerifiedBy")
-  extractionProblemsVerified       ExtractionProblem[]       @relation("ExtractionProblemVerifiedBy")
-  extractionMeasurementsVerified   ExtractionMeasurement[]   @relation("ExtractionMeasurementVerifiedBy")
-  extractionNarrativeItemsVerified ExtractionNarrativeItem[] @relation("ExtractionNarrativeItemVerifiedBy")
-  extractionSignoffsVerified       ExtractionSignoff[]       @relation("ExtractionSignoffVerifiedBy")
+  extractionBasicInfoVerified        ExtractionBasicInfo[]               @relation("ExtractionBasicInfoVerifiedBy")
+  extractionEquipmentUnitsVerified   ExtractionEquipmentUnit[]           @relation("ExtractionEquipmentUnitVerifiedBy")
+  extractionProblemsVerified         ExtractionProblem[]                 @relation("ExtractionProblemVerifiedBy")
+  extractionMeasurementsVerified     ExtractionMeasurement[]             @relation("ExtractionMeasurementVerifiedBy")
+  extractionNarrativeItemsVerified   ExtractionNarrativeItem[]           @relation("ExtractionNarrativeItemVerifiedBy")
+  extractionSignoffsVerified         ExtractionSignoff[]                 @relation("ExtractionSignoffVerifiedBy")
   // Phase 5 Step 1 correction — no new column on `users`, just the back-
   // relation Prisma requires for service_report_technicians.user_id
   // (Recommendation E: optional resolution of a handwritten technician name
   // to a real ERP account).
-  serviceReportTechnicianLinks     ServiceReportTechnician[] @relation("ServiceReportTechnicianUser")
+  serviceReportTechnicianLinks       ServiceReportTechnician[]           @relation("ServiceReportTechnicianUser")
 
   @@index([status])
   @@map("users")
@@ -1150,6 +1151,15 @@ model WorkOrder {
   // these, distinct from staff-driven completion.
   startedAt                   DateTime? @map("started_at")
   startedBy                   String?   @map("started_by")
+  // RBAC correction — a narrow, own-assignment-scoped signal distinct from
+  // startedAt/By and completedAt/By: the assigned technician's own claim
+  // that the field portion is done and ready for office review. Deliberately
+  // does NOT change `status` — it stays IN_PROGRESS until someone holding
+  // work_orders.complete (Office Staff/Manager/Admin-Owner) reviews and
+  // calls the existing complete action. Final administrative closure is
+  // untouched by this field.
+  fieldCompletedAt            DateTime? @map("field_completed_at")
+  fieldCompletedBy            String?   @map("field_completed_by")
   completedAt                 DateTime? @map("completed_at")
   completedBy                 String?   @map("completed_by")
   // D2 — the final administrative sign-off, distinct from completedAt.
@@ -1182,6 +1192,7 @@ model WorkOrder {
   quotationRevision           QuotationRevision? @relation(fields: [quotationRevisionId], references: [id], onDelete: SetNull)
   createdByUser               User?              @relation("WorkOrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   startedByUser               User?              @relation("WorkOrderStartedBy", fields: [startedBy], references: [id], onDelete: SetNull)
+  fieldCompletedByUser        User?              @relation("WorkOrderFieldCompletedBy", fields: [fieldCompletedBy], references: [id], onDelete: SetNull)
   completedByUser             User?              @relation("WorkOrderCompletedBy", fields: [completedBy], references: [id], onDelete: SetNull)
   closedByUser                User?              @relation("WorkOrderClosedBy", fields: [closedBy], references: [id], onDelete: SetNull)
   cancellationRequestedByUser User?              @relation("WorkOrderCancellationRequestedBy", fields: [cancellationRequestedBy], references: [id], onDelete: SetNull)
@@ -1534,9 +1545,9 @@ model ServiceReport {
 // the same rate as service_reports itself — see the design doc for why a
 // purge job isn't justified at this scale.
 model ServiceReportUploadIdempotencyKey {
-  id             String               @id @default(uuid())
-  idempotencyKey String               @map("idempotency_key") @db.VarChar(100)
-  uploadedBy     String               @map("uploaded_by")
+  id              String               @id @default(uuid())
+  idempotencyKey  String               @map("idempotency_key") @db.VarChar(100)
+  uploadedBy      String               @map("uploaded_by")
   // IN_PROGRESS: this request currently owns the claim and is doing the
   // real upload work. COMPLETED: the upload succeeded — serviceReportId is
   // set, and any retry with this same key must return that same report,
@@ -1549,7 +1560,7 @@ model ServiceReportUploadIdempotencyKey {
   createdAt       DateTime             @default(now()) @map("created_at")
   updatedAt       DateTime             @updatedAt @map("updated_at")
 
-  uploadedByUser User          @relation("ServiceReportUploadIdempotencyKeyUploadedBy", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  uploadedByUser User           @relation("ServiceReportUploadIdempotencyKeyUploadedBy", fields: [uploadedBy], references: [id], onDelete: Restrict)
   serviceReport  ServiceReport? @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
 
   @@unique([uploadedBy, idempotencyKey])
@@ -1704,7 +1715,7 @@ model MeasurementType {
   createdAt DateTime        @default(now()) @map("created_at")
   updatedAt DateTime        @updatedAt @map("updated_at")
 
-  measurements ServiceReportMeasurement[]
+  measurements          ServiceReportMeasurement[]
   // Phase 5 Step 3 — the AI provider's non-binding suggested mapping on
   // staging rows (see ExtractionMeasurement above). Never populated except
   // by the ocr_worker-credentialed extraction write path.
@@ -1884,22 +1895,22 @@ model ServiceReportSignoff {
 // infra/sql addition).
 
 model ExtractionBasicInfo {
-  id              String                @id @default(uuid())
-  serviceReportId String                @map("service_report_id")
-  rowIndex        Int                   @default(0) @map("row_index")
-  fieldName       String                @map("field_name") @db.VarChar(60)
-  aiValue         String?               @map("ai_value") @db.Text
-  aiConfidence    ExtractionConfidence? @map("ai_confidence")
+  id                        String                  @id @default(uuid())
+  serviceReportId           String                  @map("service_report_id")
+  rowIndex                  Int                     @default(0) @map("row_index")
+  fieldName                 String                  @map("field_name") @db.VarChar(60)
+  aiValue                   String?                 @map("ai_value") @db.Text
+  aiConfidence              ExtractionConfidence?   @map("ai_confidence")
   // Phase 5 Step 5 additions — see ExtractionReviewStatus and the header
   // comment above the enum. requiresHumanVerification is AI-computed
   // (refreshed by the extraction pipeline like aiValue/aiConfidence, never
   // touched by verification); reviewStatus is human-set only.
-  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  requiresHumanVerification Boolean                 @default(false) @map("requires_human_verification")
   reviewStatus              ExtractionReviewStatus? @map("review_status")
-  verifiedValue   String?               @map("verified_value") @db.Text
-  verifiedBy      String?               @map("verified_by")
-  verifiedAt      DateTime?             @map("verified_at")
-  createdAt       DateTime              @default(now()) @map("created_at")
+  verifiedValue             String?                 @map("verified_value") @db.Text
+  verifiedBy                String?                 @map("verified_by")
+  verifiedAt                DateTime?               @map("verified_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
 
   serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
   verifiedByUser User?         @relation("ExtractionBasicInfoVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
@@ -1910,18 +1921,18 @@ model ExtractionBasicInfo {
 }
 
 model ExtractionEquipmentUnit {
-  id              String                @id @default(uuid())
-  serviceReportId String                @map("service_report_id")
-  rowIndex        Int                   @default(0) @map("row_index")
-  fieldName       String                @map("field_name") @db.VarChar(60)
-  aiValue         String?               @map("ai_value") @db.Text
-  aiConfidence    ExtractionConfidence? @map("ai_confidence")
-  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  id                        String                  @id @default(uuid())
+  serviceReportId           String                  @map("service_report_id")
+  rowIndex                  Int                     @default(0) @map("row_index")
+  fieldName                 String                  @map("field_name") @db.VarChar(60)
+  aiValue                   String?                 @map("ai_value") @db.Text
+  aiConfidence              ExtractionConfidence?   @map("ai_confidence")
+  requiresHumanVerification Boolean                 @default(false) @map("requires_human_verification")
   reviewStatus              ExtractionReviewStatus? @map("review_status")
-  verifiedValue   String?               @map("verified_value") @db.Text
-  verifiedBy      String?               @map("verified_by")
-  verifiedAt      DateTime?             @map("verified_at")
-  createdAt       DateTime              @default(now()) @map("created_at")
+  verifiedValue             String?                 @map("verified_value") @db.Text
+  verifiedBy                String?                 @map("verified_by")
+  verifiedAt                DateTime?               @map("verified_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
 
   serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
   verifiedByUser User?         @relation("ExtractionEquipmentUnitVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
@@ -1932,18 +1943,18 @@ model ExtractionEquipmentUnit {
 }
 
 model ExtractionProblem {
-  id              String                @id @default(uuid())
-  serviceReportId String                @map("service_report_id")
-  rowIndex        Int                   @default(0) @map("row_index")
-  fieldName       String                @map("field_name") @db.VarChar(60)
-  aiValue         String?               @map("ai_value") @db.Text
-  aiConfidence    ExtractionConfidence? @map("ai_confidence")
-  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  id                        String                  @id @default(uuid())
+  serviceReportId           String                  @map("service_report_id")
+  rowIndex                  Int                     @default(0) @map("row_index")
+  fieldName                 String                  @map("field_name") @db.VarChar(60)
+  aiValue                   String?                 @map("ai_value") @db.Text
+  aiConfidence              ExtractionConfidence?   @map("ai_confidence")
+  requiresHumanVerification Boolean                 @default(false) @map("requires_human_verification")
   reviewStatus              ExtractionReviewStatus? @map("review_status")
-  verifiedValue   String?               @map("verified_value") @db.Text
-  verifiedBy      String?               @map("verified_by")
-  verifiedAt      DateTime?             @map("verified_at")
-  createdAt       DateTime              @default(now()) @map("created_at")
+  verifiedValue             String?                 @map("verified_value") @db.Text
+  verifiedBy                String?                 @map("verified_by")
+  verifiedAt                DateTime?               @map("verified_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
 
   serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
   verifiedByUser User?         @relation("ExtractionProblemVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
@@ -1977,25 +1988,25 @@ model ExtractionProblem {
 // coerced to a guess, and this can never become canonical on its own — only
 // a human verifier (Step 5+) reads it as a hint.
 model ExtractionMeasurement {
-  id                            String                @id @default(uuid())
-  serviceReportId               String                @map("service_report_id")
-  rowIndex                      Int                   @default(0) @map("row_index")
-  fieldName                     String                @map("field_name") @db.VarChar(60)
-  stage                         String?               @db.VarChar(60)
-  aiValue                       String?               @map("ai_value") @db.Text
-  aiUnit                        String?               @map("ai_unit") @db.VarChar(60)
-  aiConfidence                  ExtractionConfidence? @map("ai_confidence")
-  suggestedMeasurementTypeCode  String?               @map("suggested_measurement_type_code") @db.VarChar(40)
-  requiresHumanVerification     Boolean                @default(false) @map("requires_human_verification")
-  reviewStatus                  ExtractionReviewStatus? @map("review_status")
-  verifiedValue                 String?               @map("verified_value") @db.Text
-  verifiedBy                    String?               @map("verified_by")
-  verifiedAt                    DateTime?             @map("verified_at")
-  createdAt                     DateTime              @default(now()) @map("created_at")
+  id                           String                  @id @default(uuid())
+  serviceReportId              String                  @map("service_report_id")
+  rowIndex                     Int                     @default(0) @map("row_index")
+  fieldName                    String                  @map("field_name") @db.VarChar(60)
+  stage                        String?                 @db.VarChar(60)
+  aiValue                      String?                 @map("ai_value") @db.Text
+  aiUnit                       String?                 @map("ai_unit") @db.VarChar(60)
+  aiConfidence                 ExtractionConfidence?   @map("ai_confidence")
+  suggestedMeasurementTypeCode String?                 @map("suggested_measurement_type_code") @db.VarChar(40)
+  requiresHumanVerification    Boolean                 @default(false) @map("requires_human_verification")
+  reviewStatus                 ExtractionReviewStatus? @map("review_status")
+  verifiedValue                String?                 @map("verified_value") @db.Text
+  verifiedBy                   String?                 @map("verified_by")
+  verifiedAt                   DateTime?               @map("verified_at")
+  createdAt                    DateTime                @default(now()) @map("created_at")
 
   serviceReport            ServiceReport    @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
-  verifiedByUser            User?           @relation("ExtractionMeasurementVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
-  suggestedMeasurementType  MeasurementType? @relation(fields: [suggestedMeasurementTypeCode], references: [code], onDelete: Restrict, onUpdate: Cascade)
+  verifiedByUser           User?            @relation("ExtractionMeasurementVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  suggestedMeasurementType MeasurementType? @relation(fields: [suggestedMeasurementTypeCode], references: [code], onDelete: Restrict, onUpdate: Cascade)
 
   @@unique([serviceReportId, rowIndex, fieldName, stage])
   @@index([serviceReportId])
@@ -2004,18 +2015,18 @@ model ExtractionMeasurement {
 }
 
 model ExtractionNarrativeItem {
-  id              String                @id @default(uuid())
-  serviceReportId String                @map("service_report_id")
-  rowIndex        Int                   @default(0) @map("row_index")
-  fieldName       String                @map("field_name") @db.VarChar(60)
-  aiValue         String?               @map("ai_value") @db.Text
-  aiConfidence    ExtractionConfidence? @map("ai_confidence")
-  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  id                        String                  @id @default(uuid())
+  serviceReportId           String                  @map("service_report_id")
+  rowIndex                  Int                     @default(0) @map("row_index")
+  fieldName                 String                  @map("field_name") @db.VarChar(60)
+  aiValue                   String?                 @map("ai_value") @db.Text
+  aiConfidence              ExtractionConfidence?   @map("ai_confidence")
+  requiresHumanVerification Boolean                 @default(false) @map("requires_human_verification")
   reviewStatus              ExtractionReviewStatus? @map("review_status")
-  verifiedValue   String?               @map("verified_value") @db.Text
-  verifiedBy      String?               @map("verified_by")
-  verifiedAt      DateTime?             @map("verified_at")
-  createdAt       DateTime              @default(now()) @map("created_at")
+  verifiedValue             String?                 @map("verified_value") @db.Text
+  verifiedBy                String?                 @map("verified_by")
+  verifiedAt                DateTime?               @map("verified_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
 
   serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
   verifiedByUser User?         @relation("ExtractionNarrativeItemVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
@@ -2026,18 +2037,18 @@ model ExtractionNarrativeItem {
 }
 
 model ExtractionSignoff {
-  id              String                @id @default(uuid())
-  serviceReportId String                @map("service_report_id")
-  rowIndex        Int                   @default(0) @map("row_index")
-  fieldName       String                @map("field_name") @db.VarChar(60)
-  aiValue         String?               @map("ai_value") @db.Text
-  aiConfidence    ExtractionConfidence? @map("ai_confidence")
-  requiresHumanVerification Boolean                @default(false) @map("requires_human_verification")
+  id                        String                  @id @default(uuid())
+  serviceReportId           String                  @map("service_report_id")
+  rowIndex                  Int                     @default(0) @map("row_index")
+  fieldName                 String                  @map("field_name") @db.VarChar(60)
+  aiValue                   String?                 @map("ai_value") @db.Text
+  aiConfidence              ExtractionConfidence?   @map("ai_confidence")
+  requiresHumanVerification Boolean                 @default(false) @map("requires_human_verification")
   reviewStatus              ExtractionReviewStatus? @map("review_status")
-  verifiedValue   String?               @map("verified_value") @db.Text
-  verifiedBy      String?               @map("verified_by")
-  verifiedAt      DateTime?             @map("verified_at")
-  createdAt       DateTime              @default(now()) @map("created_at")
+  verifiedValue             String?                 @map("verified_value") @db.Text
+  verifiedBy                String?                 @map("verified_by")
+  verifiedAt                DateTime?               @map("verified_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
 
   serviceReport  ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
   verifiedByUser User?         @relation("ExtractionSignoffVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)

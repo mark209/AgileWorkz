@@ -222,6 +222,71 @@ export class WorkOrdersService {
     return after;
   }
 
+  // PATCH /work-orders/:id/field-complete — work_orders.field_complete_own,
+  // Technician only (RBAC correction). Same two-layered enforcement shape as
+  // startOwn: the permission grant is necessary but not sufficient — the
+  // caller must ALSO have an ACTIVE row in work_order_assignments for this
+  // exact Work Order. Deliberately does NOT change `status` — it stays
+  // IN_PROGRESS. This is the technician's own "field work done, ready for
+  // review" signal, distinct from the office/management-only complete()
+  // below, which alone is authoritative and alone changes status to
+  // COMPLETED. Idempotent: a second call (e.g. a crew's other actively-
+  // assigned technician, or a retry over flaky field connectivity) is a
+  // no-op that returns the existing record rather than erroring — only a
+  // genuinely wrong state (not IN_PROGRESS, e.g. someone already closed or
+  // cancelled it) is rejected.
+  async fieldCompleteOwn(id: string, actor: ActorContext) {
+    const before = await this.plainFindOrThrow(id);
+
+    const activeAssignment = await this.prisma.workOrderAssignment.findFirst({
+      where: { workOrderId: id, technicianId: actor.userId, unassignedAt: null },
+    });
+    if (!activeAssignment) {
+      throw new ForbiddenException("You are not currently assigned to this Work Order");
+    }
+
+    if (before.status !== WorkOrderStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        `Only an IN_PROGRESS Work Order's field portion can be marked complete — this Work Order is ${before.status}`,
+      );
+    }
+
+    if (before.fieldCompletedAt) {
+      return before;
+    }
+
+    // wroteNow — not `before`'s pre-transaction snapshot — is the sole
+    // source of truth for whether THIS call is the one that actually
+    // performed the write. Under a genuine race, two concurrent callers can
+    // both see fieldCompletedAt === null in `before`, but the `WHERE
+    // fieldCompletedAt: null` guard inside updateMany is atomic at the
+    // database level: only one of them can ever get guarded.count === 1.
+    // Deciding "should I audit-log?" from `before` instead (as an earlier
+    // version of this method did) let both racing callers see the other's
+    // completed `after` state and both write an audit entry — this is what
+    // that looked like and why it's wrong.
+    const { after, wroteNow } = await this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.workOrder.updateMany({
+        where: { id, status: WorkOrderStatus.IN_PROGRESS, fieldCompletedAt: null },
+        data: { fieldCompletedAt: new Date(), fieldCompletedBy: actor.userId },
+      });
+      const current = await tx.workOrder.findUniqueOrThrow({ where: { id } });
+      // guarded.count === 0 means another actively-assigned technician (or
+      // this same one, retrying) already set it a moment ago — treat as the
+      // same idempotent success, not a conflict: the end state
+      // (fieldCompletedAt set, status unchanged) is identical either way.
+      return { after: current, wroteNow: guarded.count > 0 };
+    });
+
+    if (wroteNow) {
+      await this.writeTransitionAudit(after, actor, "work_order_field_completed", { fieldCompletedAt: null }, {
+        fieldCompletedAt: after.fieldCompletedAt,
+        fieldCompletedBy: after.fieldCompletedBy,
+      });
+    }
+    return after;
+  }
+
   // PATCH /work-orders/:id/complete — work_orders.complete (Office Staff+,
   // §07). IN_PROGRESS -> COMPLETED only — field/technical execution
   // finished, deliberately NOT the same as CLOSED (§04/D2).

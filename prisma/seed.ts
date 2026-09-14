@@ -109,9 +109,9 @@ const PHASE2_PERMISSIONS: Array<{ module: string; action: string; description: s
 
 // Office Staff gets create/read/update but never deactivate on the five
 // business entities, upload/read but never delete on documents, and
-// read-only on the three reference tables — Admin/Owner and Manager get
-// every Phase 2 permission; Technician gets none yet (approved Decision 2 —
-// deferred to Phase 4's work-order-scoped access).
+// read-only on the three reference tables — Admin/Owner gets every Phase 2
+// permission; Technician gets none yet (approved Decision 2 — deferred to
+// Phase 4's work-order-scoped access).
 const OFFICE_STAFF_PHASE2_GRANTS = [
   "customers.create", "customers.read", "customers.update",
   "contacts.create", "contacts.read", "contacts.update",
@@ -119,6 +119,27 @@ const OFFICE_STAFF_PHASE2_GRANTS = [
   "assets.create", "assets.read", "assets.update",
   "equipment_systems.create", "equipment_systems.read", "equipment_systems.update",
   "customer_documents.upload", "customer_documents.read",
+  "capacity_units.read",
+  "equipment_types.read",
+  "equipment_system_types.read",
+] as const;
+
+// RBAC correction (post-Phase-7 pilot review): Manager is NOT simply
+// Admin/Owner minus system administration. Routine creation/maintenance of
+// customer/site/equipment master data belongs to Office Staff; Manager
+// retains only the read access needed for service-management context (e.g.
+// deciding scheduling/assignment, understanding a Work Order's site/
+// equipment). Manager never held customer_documents.upload/delete under
+// this correction, and reference-table .manage (capacity_units/
+// equipment_types/equipment_system_types) moves to Admin/Owner-only —
+// company/reference configuration, not service operations.
+const MANAGER_PHASE2_GRANTS = [
+  "customers.read",
+  "contacts.read",
+  "sites.read",
+  "assets.read",
+  "equipment_systems.read",
+  "customer_documents.read",
   "capacity_units.read",
   "equipment_types.read",
   "equipment_system_types.read",
@@ -152,11 +173,23 @@ const PHASE3_PERMISSIONS: Array<{ module: string; action: string; description: s
 // Office Staff gets full create/read/update on quotations but never
 // approve/reject (that's the Manager threshold-gate action per §09/§11), and
 // read-only on the two reference tables — matches the approved RBAC table
-// exactly. Admin/Owner and Manager both get every Phase 3 permission,
-// including approve/reject, same "full set together" pattern as Phase 2.
-// Technician gets nothing yet, same deferred-access decision as Phase 2.
+// exactly. Admin/Owner gets every Phase 3 permission. Technician gets
+// nothing yet, same deferred-access decision as Phase 2.
 const OFFICE_STAFF_PHASE3_GRANTS = [
   "quotations.create", "quotations.read", "quotations.update",
+  "trades.read",
+  "quotation_templates.read",
+  "inquiry_sources.read",
+  "inquiry_types.read",
+] as const;
+
+// RBAC correction: Manager keeps quotation approve/reject (its actual job —
+// the current single-global-threshold gate, pending the separately-approved
+// tiered approval policy) plus read access for context, but loses
+// create/update — quotation preparation belongs to Office Staff — and loses
+// .manage on every Phase 3 reference table, same reasoning as Phase 2 above.
+const MANAGER_PHASE3_GRANTS = [
+  "quotations.read", "quotations.approve", "quotations.reject",
   "trades.read",
   "quotation_templates.read",
   "inquiry_sources.read",
@@ -253,6 +286,11 @@ const PHASE3_INQUIRIES_PERMISSIONS: Array<{ module: string; action: string; desc
   { module: "inquiries", action: "close", description: "Close an OPEN inquiry (lost lead, not converted)" },
 ];
 
+// RBAC correction: Manager keeps read-only visibility (e.g. tracing a Work
+// Order back to its originating inquiry) — routine inquiry creation/
+// maintenance/closing belongs to Office Staff, same reasoning as Phase 2/3.
+const MANAGER_INQUIRIES_GRANTS = ["inquiries.read"] as const;
+
 // Step 3 correction — approved seed list, SMS and Viber kept as separate,
 // independently reportable channels per your explicit instruction.
 // inquiry_types is NOT seeded here: no initial list has been approved yet,
@@ -344,6 +382,7 @@ const PHASE4_PERMISSIONS: Array<{ module: string; action: string; description: s
   { module: "work_orders", action: "update", description: "Edit a Work Order's fields" },
   { module: "work_orders", action: "assign", description: "Assign, reassign, or unassign technicians on a Work Order" },
   { module: "work_orders", action: "start_own", description: "Move the caller's own assigned Work Order from SCHEDULED to IN_PROGRESS (Technician, backend-verified active assignment required)" },
+  { module: "work_orders", action: "field_complete_own", description: "Mark the caller's actively-assigned Work Order field portion done, ready for office review (Technician, backend-verified). Status unchanged — office/management retains complete/close authority." },
   { module: "work_orders", action: "complete", description: "Mark a Work Order COMPLETED (field/technical execution finished)" },
   { module: "work_orders", action: "close", description: "Mark a Work Order CLOSED — final management sign-off after required records and applicable actual costs are reviewed" },
   { module: "work_orders", action: "request_cancel", description: "Request cancellation of a Work Order (does not itself change status)" },
@@ -368,9 +407,13 @@ const OFFICE_STAFF_PHASE4_GRANTS = [
   "work_orders.complete", "work_orders.request_cancel", "work_orders.generate_maintenance_visits",
 ] as const;
 
-// Technician: only the two ownership-scoped actions — no unscoped create,
+// Technician: the three ownership-scoped actions — no unscoped create,
 // read, update, assign, complete, close, or cancel of any kind (§07 table).
-const TECHNICIAN_PHASE4_GRANTS = ["work_orders.read_own", "work_orders.start_own"] as const;
+// field_complete_own (RBAC correction) lets a Technician signal their own
+// assigned job's field portion is done without granting general
+// update/complete/close/cancel — status stays IN_PROGRESS; the real
+// complete/close authority remains Office Staff/Manager/Admin-Owner only.
+const TECHNICIAN_PHASE4_GRANTS = ["work_orders.read_own", "work_orders.start_own", "work_orders.field_complete_own"] as const;
 
 // D9 — Work Order numbering uses the existing 5-digit numbering engine
 // unchanged (WO-YYYY-MM-NNNNN), same configurable-prefix pattern as
@@ -620,16 +663,23 @@ async function main() {
     phase2Permissions.set(`${p.module}.${p.action}`, permission);
   }
 
-  console.log("Granting Admin/Owner and Manager all Phase 2 permissions...");
-  for (const roleName of ["Admin/Owner", "Manager"] as const) {
-    const role = roles.get(roleName)!;
-    for (const permission of phase2Permissions.values()) {
-      await prisma.rolePermission.upsert({
-        where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
-        update: {},
-        create: { roleId: role.id, permissionId: permission.id },
-      });
-    }
+  console.log("Granting Admin/Owner all Phase 2 permissions...");
+  for (const permission of phase2Permissions.values()) {
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: adminOwner.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: adminOwner.id, permissionId: permission.id },
+    });
+  }
+
+  console.log("Granting Manager its reduced Phase 2 permission set (RBAC correction — read-only; routine record maintenance belongs to Office Staff)...");
+  for (const key of MANAGER_PHASE2_GRANTS) {
+    const permission = phase2Permissions.get(key)!;
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: manager.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: manager.id, permissionId: permission.id },
+    });
   }
 
   console.log("Granting Office Staff its reduced Phase 2 permission set (no deactivate, no delete, no reference-table manage)...");
@@ -669,16 +719,23 @@ async function main() {
     phase3Permissions.set(`${p.module}.${p.action}`, permission);
   }
 
-  console.log("Granting Admin/Owner and Manager all Phase 3 permissions...");
-  for (const roleName of ["Admin/Owner", "Manager"] as const) {
-    const role = roles.get(roleName)!;
-    for (const permission of phase3Permissions.values()) {
-      await prisma.rolePermission.upsert({
-        where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
-        update: {},
-        create: { roleId: role.id, permissionId: permission.id },
-      });
-    }
+  console.log("Granting Admin/Owner all Phase 3 permissions...");
+  for (const permission of phase3Permissions.values()) {
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: adminOwner.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: adminOwner.id, permissionId: permission.id },
+    });
+  }
+
+  console.log("Granting Manager its reduced Phase 3 permission set (RBAC correction — read + approve/reject retained; create/update and reference-table manage removed)...");
+  for (const key of MANAGER_PHASE3_GRANTS) {
+    const permission = phase3Permissions.get(key)!;
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: manager.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: manager.id, permissionId: permission.id },
+    });
   }
 
   console.log("Granting Office Staff its reduced Phase 3 permission set (no approve/reject, no reference-table manage)...");
@@ -704,8 +761,8 @@ async function main() {
     inquiriesPermissions.set(`${p.module}.${p.action}`, permission);
   }
 
-  console.log("Granting Admin/Owner, Manager, and Office Staff all Inquiries permissions (full/full/full per §11)...");
-  for (const roleName of ["Admin/Owner", "Manager", "Office Staff"] as const) {
+  console.log("Granting Admin/Owner and Office Staff all Inquiries permissions (full/full per §11)...");
+  for (const roleName of ["Admin/Owner", "Office Staff"] as const) {
     const role = roles.get(roleName)!;
     for (const permission of inquiriesPermissions.values()) {
       await prisma.rolePermission.upsert({
@@ -714,6 +771,16 @@ async function main() {
         create: { roleId: role.id, permissionId: permission.id },
       });
     }
+  }
+
+  console.log("Granting Manager its reduced Inquiries permission set (RBAC correction — read-only; routine inquiry handling belongs to Office Staff)...");
+  for (const key of MANAGER_INQUIRIES_GRANTS) {
+    const permission = inquiriesPermissions.get(key)!;
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: manager.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: manager.id, permissionId: permission.id },
+    });
   }
 
   console.log("Technician: intentionally granted nothing for Inquiries (same deferred-access decision as elsewhere in Phase 2/3).");
@@ -752,7 +819,7 @@ async function main() {
     });
   }
 
-  console.log("Granting Technician its first-ever permission set: read_own and start_own only (D4/D6)...");
+  console.log("Granting Technician its Phase 4 permission set: read_own, start_own, and field_complete_own (D4/D6, RBAC correction)...");
   const technician = roles.get("Technician")!;
   for (const key of TECHNICIAN_PHASE4_GRANTS) {
     const permission = phase4Permissions.get(key)!;

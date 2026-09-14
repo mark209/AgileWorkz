@@ -92,6 +92,16 @@ export class WorkOrdersController {
     return this.workOrdersService.startOwn(id, actorFrom(req));
   }
 
+  // Technician's own "field work done, ready for review" signal (RBAC
+  // correction). work_orders.field_complete_own — Technician only. Never
+  // changes status; office/management still calls the real complete() below
+  // to actually close out the job.
+  @Permissions({ module: "work_orders", action: "field_complete_own" })
+  @Patch(":id/field-complete")
+  async fieldComplete(@Param("id") id: string, @Req() req: AuthedRequest) {
+    return this.workOrdersService.fieldCompleteOwn(id, actorFrom(req));
+  }
+
   // IN_PROGRESS -> COMPLETED. work_orders.complete (Office Staff+, §07) —
   // deliberately distinct from close (§04/D2).
   @Permissions({ module: "work_orders", action: "complete" })
