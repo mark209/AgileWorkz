@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   ActorType,
   InquiryStatus,
   NumberSeries,
   Prisma,
+  QuotationRevision,
   QuotationRevisionStatus,
   QuotationTermTemplate,
   QuotationType,
@@ -13,10 +14,11 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NumberingService } from "../../common/numbering/numbering.service";
+import { PermissionsService } from "../identity/permissions.service";
 import { ActorContext } from "../identity/users.service";
 import { changedKeysOf, pickDefined } from "../../common/diff-fields.util";
 import { assertRevisionEditable } from "./revision-lock.util";
-import { isOverApprovalThreshold } from "./quotation-approval-threshold.util";
+import { requiresOwnerApproval } from "./quotation-approval-threshold.util";
 import { QuotationPricingService } from "./pricing/quotation-pricing.service";
 import { round2 } from "./pricing/revision-pricing.util";
 import { CreateQuotationDto } from "./dto/create-quotation.dto";
@@ -41,10 +43,12 @@ const DEFAULT_TAX_TREATMENT_FALLBACK = TaxTreatment.VAT_INCLUSIVE;
 const DEFAULT_VAT_RATE_FALLBACK = "12";
 
 // Step 7 — same live-system_settings-with-fallback pattern as
-// resolveVatRatePercent. Fallbacks match the actual seeded Phase 1 values,
-// used only if the setting row is somehow missing.
-const DEFAULT_APPROVAL_THRESHOLD_PHP_FALLBACK = "50000";
-const DEFAULT_DISCOUNT_THRESHOLD_PCT_FALLBACK = "10";
+// resolveVatRatePercent. Fallback matches the actual seeded system_settings
+// value, used only if the setting row is somehow missing. Two-level
+// approval correction: this is now the Owner-approval threshold (amount
+// only — discount percentage was removed as an approval-routing input
+// entirely, per the approved business rule).
+const DEFAULT_APPROVAL_THRESHOLD_PHP_FALLBACK = "200000";
 
 // The exact literal seeded onto the placeholder QuotationTermTemplate (see
 // seed.ts DEFAULT_QUOTATION_TERM_TEMPLATE_BODY). Deliberately a simple
@@ -78,6 +82,7 @@ export class QuotationsService {
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
     private readonly pricing: QuotationPricingService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   async findByIdOrThrow(id: string) {
@@ -361,11 +366,15 @@ export class QuotationsService {
   // ---------------------------------------------------------------------
   // Step 7 — Approval / Submission / Rejection / Send / Decision Workflow.
   //
-  // State machine (approved plan §09/§10, reaffirmed in the Step 7 review):
-  //   DRAFT --submit--> APPROVED (auto, under both thresholds)
-  //   DRAFT --submit--> PENDING_APPROVAL (over either threshold)
-  //   PENDING_APPROVAL --approve--> APPROVED
-  //   PENDING_APPROVAL --reject--> REJECTED (terminal)
+  // State machine (two-level approval correction — no automatic approval
+  // under any circumstance; approval routing is amount-only, discount
+  // percentage plays no part):
+  //   DRAFT --submit--> PENDING_APPROVAL (always)
+  //   PENDING_APPROVAL --Manager approves, amount<=200k--> APPROVED
+  //   PENDING_APPROVAL --Manager approves, amount>200k--> PENDING_OWNER_APPROVAL
+  //   PENDING_APPROVAL --Manager rejects--> REJECTED (terminal — never reaches Owner)
+  //   PENDING_OWNER_APPROVAL --Owner approves--> APPROVED
+  //   PENDING_OWNER_APPROVAL --Owner rejects--> REJECTED (terminal)
   //   APPROVED --send--> SENT
   //   SENT --decision(ACCEPTED)--> ACCEPTED (terminal)
   //   SENT --decision(DECLINED)--> DECLINED (terminal)
@@ -384,14 +393,12 @@ export class QuotationsService {
   // ---------------------------------------------------------------------
 
   // PATCH .../revisions/:revisionId/submit — quotations.update.
-  // C7: blocks submission with zero line items. Threshold comparison per
-  // the Rev 7 blueprint's original wording: "<= threshold = standard,
-  // above = requires approval" — so `<=` on both dimensions auto-approves,
-  // `>` on either requires PENDING_APPROVAL. C2: auto-approval sets
-  // approvedAt (a true "when did this become approved" fact) but leaves
-  // approvedBy null (no human approved it) and does NOT write a separate
-  // revision_approved audit event — the revision_submitted payload below
-  // is the complete, sufficient record of the auto-approval decision.
+  // C7: blocks submission with zero line items. Two-level approval
+  // correction: NO automatic approval under any circumstance — every
+  // submission lands in PENDING_APPROVAL (Manager's queue), regardless of
+  // amount. Whether Manager's subsequent approval alone finalizes it, or
+  // only advances it to PENDING_OWNER_APPROVAL, is decided later, in
+  // approveRevision — not here.
   async submitRevision(revisionId: string, actor: ActorContext) {
     const before = await this.findRevisionByIdOrThrow(revisionId);
     if (before.status !== QuotationRevisionStatus.DRAFT) {
@@ -409,41 +416,23 @@ export class QuotationsService {
       );
     }
 
-    const { after, autoApproved, approvalThresholdPhp, discountThresholdPct } = await this.prisma.$transaction(
-      async (tx) => {
-        const approvalThresholdPhp = await this.resolveApprovalThresholdPhp(tx);
-        const discountThresholdPct = await this.resolveDiscountThresholdPct(tx);
-
-        const overThreshold = isOverApprovalThreshold(
-          before.totalAmount,
-          before.discountPercent,
-          approvalThresholdPhp,
-          discountThresholdPct,
+    const after = await this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.quotationRevision.updateMany({
+        where: { id: revisionId, status: QuotationRevisionStatus.DRAFT },
+        data: { submittedAt: new Date(), status: QuotationRevisionStatus.PENDING_APPROVAL },
+      });
+      if (guarded.count === 0) {
+        throw new ConflictException(
+          "This revision is no longer DRAFT — it may have just been submitted by someone else",
         );
-        const autoApproved = !overThreshold;
-        const resultingStatus = autoApproved
-          ? QuotationRevisionStatus.APPROVED
-          : QuotationRevisionStatus.PENDING_APPROVAL;
+      }
 
-        const guarded = await tx.quotationRevision.updateMany({
-          where: { id: revisionId, status: QuotationRevisionStatus.DRAFT },
-          data: {
-            submittedAt: new Date(),
-            status: resultingStatus,
-            approvedAt: autoApproved ? new Date() : undefined,
-          },
-        });
-        if (guarded.count === 0) {
-          throw new ConflictException(
-            "This revision is no longer DRAFT — it may have just been submitted by someone else",
-          );
-        }
-
-        await tx.quotation.update({ where: { id: before.quotationId }, data: { status: resultingStatus } });
-        const after = await tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
-        return { after, autoApproved, approvalThresholdPhp, discountThresholdPct };
-      },
-    );
+      await tx.quotation.update({
+        where: { id: before.quotationId },
+        data: { status: QuotationRevisionStatus.PENDING_APPROVAL },
+      });
+      return tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
+    });
 
     await this.audit.write({
       actorType: ActorType.USER,
@@ -452,13 +441,92 @@ export class QuotationsService {
       entityType: "quotation_revision",
       entityId: revisionId,
       beforeData: { status: before.status },
+      afterData: { status: after.status, totalAmount: after.totalAmount.toString() },
+      ipAddress: actor.ipAddress,
+      userAgent: actor.userAgent,
+    });
+
+    return after;
+  }
+
+  // PATCH .../revisions/:revisionId/approve — two-level approval
+  // correction. The controller's static quotations.approve permission
+  // (Admin/Owner, Manager) is necessary but not sufficient — which action
+  // is actually valid, and which permission it actually requires, depends
+  // on the revision's CURRENT status, decided here, the same "guard
+  // necessary but not sufficient, enforced against the database" shape
+  // already used by WorkOrdersService.getForActor/fieldCompleteOwn:
+  //   - PENDING_APPROVAL: Manager's Level-1 action. quotations.approve
+  //     alone is sufficient (Manager and Admin/Owner both hold it).
+  //     amount<=200k finalizes straight to APPROVED; amount>200k only
+  //     advances to PENDING_OWNER_APPROVAL — Manager's approval alone
+  //     never finally approves a >200k revision.
+  //   - PENDING_OWNER_APPROVAL: Owner's Level-2 action. Requires the
+  //     additional quotations.approve_final permission (Admin/Owner only)
+  //     — checked manually here, not by the controller's guard, so a
+  //     Manager-only caller who reaches this method (holding the base
+  //     quotations.approve) is still rejected server-side, not merely
+  //     hidden in the UI.
+  // approvedBy/approvedAt (kept, V1 compatibility) are populated only by
+  // whichever action actually finalizes the revision — Manager's for
+  // <=200k, Owner's for >200k — never by an intermediate Level-1 action on
+  // a >200k revision.
+  async approveRevision(revisionId: string, actor: ActorContext) {
+    const before = await this.findRevisionByIdOrThrow(revisionId);
+
+    if (before.status === QuotationRevisionStatus.PENDING_APPROVAL) {
+      return this.approveManagerLevel(before, actor);
+    }
+    if (before.status === QuotationRevisionStatus.PENDING_OWNER_APPROVAL) {
+      return this.approveOwnerLevel(before, actor);
+    }
+    throw new BadRequestException(
+      `Only a PENDING_APPROVAL or PENDING_OWNER_APPROVAL revision can be approved — this revision is ${before.status}`,
+    );
+  }
+
+  private async approveManagerLevel(before: QuotationRevision, actor: ActorContext) {
+    const revisionId = before.id;
+
+    const { after, approvalThresholdPhp, finalApproval } = await this.prisma.$transaction(async (tx) => {
+      const approvalThresholdPhp = await this.resolveApprovalThresholdPhp(tx);
+      const finalApproval = !requiresOwnerApproval(before.totalAmount, approvalThresholdPhp);
+      const resultingStatus = finalApproval
+        ? QuotationRevisionStatus.APPROVED
+        : QuotationRevisionStatus.PENDING_OWNER_APPROVAL;
+
+      const guarded = await tx.quotationRevision.updateMany({
+        where: { id: revisionId, status: QuotationRevisionStatus.PENDING_APPROVAL },
+        data: {
+          managerApprovedBy: actor.userId,
+          managerApprovedAt: new Date(),
+          status: resultingStatus,
+          ...(finalApproval ? { approvedBy: actor.userId, approvedAt: new Date() } : {}),
+        },
+      });
+      if (guarded.count === 0) {
+        throw new ConflictException(
+          "This revision is no longer PENDING_APPROVAL — it may have just been actioned by someone else",
+        );
+      }
+
+      await tx.quotation.update({ where: { id: before.quotationId }, data: { status: resultingStatus } });
+      const after = await tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
+      return { after, approvalThresholdPhp, finalApproval };
+    });
+
+    await this.audit.write({
+      actorType: ActorType.USER,
+      actorUserId: actor.userId,
+      action: "revision_manager_approved",
+      entityType: "quotation_revision",
+      entityId: revisionId,
+      beforeData: { status: before.status },
       afterData: {
         status: after.status,
-        autoApproved,
         totalAmount: after.totalAmount.toString(),
-        discountPercent: after.discountPercent.toString(),
         approvalThresholdPhp,
-        discountThresholdPct,
+        finalApproval,
       },
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
@@ -467,31 +535,29 @@ export class QuotationsService {
     return after;
   }
 
-  // PATCH .../revisions/:revisionId/approve — quotations.approve
-  // (Admin/Owner, Manager only). Only valid from PENDING_APPROVAL — the
-  // explicit, human-judgment resolution of the approval gate, distinct from
-  // submitRevision's own auto-approve path above. C1: approvedBy IS
-  // populated here, since this is exactly the explicit human action that
-  // column name describes.
-  async approveRevision(revisionId: string, actor: ActorContext) {
-    const before = await this.findRevisionByIdOrThrow(revisionId);
-    if (before.status !== QuotationRevisionStatus.PENDING_APPROVAL) {
-      throw new BadRequestException(
-        `Only a PENDING_APPROVAL revision can be approved — this revision is ${before.status}`,
-      );
+  private async approveOwnerLevel(before: QuotationRevision, actor: ActorContext) {
+    const revisionId = before.id;
+
+    const granted = await this.permissions.getEffectivePermissions(actor.userId);
+    const hasFinalApproval = granted.some((p) => p.module === "quotations" && p.action === "approve_final");
+    if (!hasFinalApproval) {
+      throw new ForbiddenException("Missing required permission: quotations.approve_final");
     }
 
-    const { after, approvalThresholdPhp, discountThresholdPct } = await this.prisma.$transaction(async (tx) => {
-      const approvalThresholdPhp = await this.resolveApprovalThresholdPhp(tx);
-      const discountThresholdPct = await this.resolveDiscountThresholdPct(tx);
-
+    const after = await this.prisma.$transaction(async (tx) => {
       const guarded = await tx.quotationRevision.updateMany({
-        where: { id: revisionId, status: QuotationRevisionStatus.PENDING_APPROVAL },
-        data: { approvedBy: actor.userId, approvedAt: new Date(), status: QuotationRevisionStatus.APPROVED },
+        where: { id: revisionId, status: QuotationRevisionStatus.PENDING_OWNER_APPROVAL },
+        data: {
+          ownerApprovedBy: actor.userId,
+          ownerApprovedAt: new Date(),
+          approvedBy: actor.userId,
+          approvedAt: new Date(),
+          status: QuotationRevisionStatus.APPROVED,
+        },
       });
       if (guarded.count === 0) {
         throw new ConflictException(
-          "This revision is no longer PENDING_APPROVAL — it may have just been actioned by someone else",
+          "This revision is no longer PENDING_OWNER_APPROVAL — it may have just been actioned by someone else",
         );
       }
 
@@ -499,24 +565,17 @@ export class QuotationsService {
         where: { id: before.quotationId },
         data: { status: QuotationRevisionStatus.APPROVED },
       });
-      const after = await tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
-      return { after, approvalThresholdPhp, discountThresholdPct };
+      return tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
     });
 
     await this.audit.write({
       actorType: ActorType.USER,
       actorUserId: actor.userId,
-      action: "revision_approved",
+      action: "revision_owner_approved",
       entityType: "quotation_revision",
       entityId: revisionId,
       beforeData: { status: before.status },
-      afterData: {
-        status: after.status,
-        totalAmount: after.totalAmount.toString(),
-        discountPercent: after.discountPercent.toString(),
-        approvalThresholdPhp,
-        discountThresholdPct,
-      },
+      afterData: { status: after.status, totalAmount: after.totalAmount.toString(), finalApproval: true },
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
     });
@@ -524,35 +583,46 @@ export class QuotationsService {
     return after;
   }
 
-  // PATCH .../revisions/:revisionId/reject — quotations.reject (Admin/Owner,
-  // Manager only). REJECTED = internally rejected during the AgileWorks
-  // approval workflow, before the customer ever saw it — distinct from
-  // DECLINED, the customer's own decision after SENT (recordRevisionDecision
-  // below). Reason is mandatory (C6). C1: approvedBy/approvedAt are
-  // deliberately left untouched — nobody approved this revision; the
-  // rejecting actor is recoverable from this audit entry.
+  // PATCH .../revisions/:revisionId/reject — two-level approval correction.
+  // Same "which action is actually valid depends on current status" shape
+  // as approveRevision above. REJECTED = internally rejected during the
+  // AgileWorks approval workflow, before the customer ever saw it —
+  // distinct from DECLINED, the customer's own decision after SENT
+  // (recordRevisionDecision below). Reason is mandatory (C6). Terminal
+  // either way: a Manager rejection never reaches Owner; an Owner
+  // rejection stays rejected. approvedBy/approvedAt are deliberately left
+  // untouched in both cases — nobody approved this revision; the rejecting
+  // actor and stage are recoverable from the audit entry below.
   async rejectRevision(revisionId: string, dto: RejectRevisionDto, actor: ActorContext) {
     if (!dto.reason?.trim()) {
       throw new BadRequestException("A reason is required to reject a revision");
     }
     const before = await this.findRevisionByIdOrThrow(revisionId);
-    if (before.status !== QuotationRevisionStatus.PENDING_APPROVAL) {
+
+    let stage: "manager" | "owner";
+    if (before.status === QuotationRevisionStatus.PENDING_APPROVAL) {
+      stage = "manager";
+    } else if (before.status === QuotationRevisionStatus.PENDING_OWNER_APPROVAL) {
+      stage = "owner";
+      const granted = await this.permissions.getEffectivePermissions(actor.userId);
+      const hasFinalReject = granted.some((p) => p.module === "quotations" && p.action === "reject_final");
+      if (!hasFinalReject) {
+        throw new ForbiddenException("Missing required permission: quotations.reject_final");
+      }
+    } else {
       throw new BadRequestException(
-        `Only a PENDING_APPROVAL revision can be rejected — this revision is ${before.status}`,
+        `Only a PENDING_APPROVAL or PENDING_OWNER_APPROVAL revision can be rejected — this revision is ${before.status}`,
       );
     }
 
-    const { after, approvalThresholdPhp, discountThresholdPct } = await this.prisma.$transaction(async (tx) => {
-      const approvalThresholdPhp = await this.resolveApprovalThresholdPhp(tx);
-      const discountThresholdPct = await this.resolveDiscountThresholdPct(tx);
-
+    const after = await this.prisma.$transaction(async (tx) => {
       const guarded = await tx.quotationRevision.updateMany({
-        where: { id: revisionId, status: QuotationRevisionStatus.PENDING_APPROVAL },
+        where: { id: revisionId, status: before.status },
         data: { rejectedAt: new Date(), status: QuotationRevisionStatus.REJECTED },
       });
       if (guarded.count === 0) {
         throw new ConflictException(
-          "This revision is no longer PENDING_APPROVAL — it may have just been actioned by someone else",
+          `This revision is no longer ${before.status} — it may have just been actioned by someone else`,
         );
       }
 
@@ -560,8 +630,7 @@ export class QuotationsService {
         where: { id: before.quotationId },
         data: { status: QuotationRevisionStatus.REJECTED },
       });
-      const after = await tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
-      return { after, approvalThresholdPhp, discountThresholdPct };
+      return tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } });
     });
 
     await this.audit.write({
@@ -571,13 +640,7 @@ export class QuotationsService {
       entityType: "quotation_revision",
       entityId: revisionId,
       beforeData: { status: before.status },
-      afterData: {
-        status: after.status,
-        totalAmount: after.totalAmount.toString(),
-        discountPercent: after.discountPercent.toString(),
-        approvalThresholdPhp,
-        discountThresholdPct,
-      },
+      afterData: { status: after.status, totalAmount: after.totalAmount.toString(), stage },
       reason: dto.reason,
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
@@ -747,11 +810,6 @@ export class QuotationsService {
   private async resolveApprovalThresholdPhp(tx: Prisma.TransactionClient): Promise<string> {
     const setting = await tx.systemSetting.findUnique({ where: { key: "quotation_approval_threshold_php" } });
     return setting?.value ?? DEFAULT_APPROVAL_THRESHOLD_PHP_FALLBACK;
-  }
-
-  private async resolveDiscountThresholdPct(tx: Prisma.TransactionClient): Promise<string> {
-    const setting = await tx.systemSetting.findUnique({ where: { key: "quotation_discount_threshold_pct" } });
-    return setting?.value ?? DEFAULT_DISCOUNT_THRESHOLD_PCT_FALLBACK;
   }
 
   // Direct creation — POST /customers/:id/quotations.

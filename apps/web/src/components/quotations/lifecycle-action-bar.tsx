@@ -63,6 +63,14 @@ export function LifecycleActionBar({
 
   const canApprove = hasPermission("quotations", "approve");
   const canReject = hasPermission("quotations", "reject");
+  // Two-level approval correction — the Owner-only Level 2 actions. Holding
+  // the base approve/reject permission (which Owner also has, via
+  // Admin/Owner's full grant) is NOT sufficient here — a Manager-only user
+  // must not see these buttons at all, since the server itself would 403
+  // them if they tried. This mirrors the server's own enforcement, it does
+  // not replace it (D4 — the server remains the sole real enforcer).
+  const canApproveFinal = hasPermission("quotations", "approve_final");
+  const canRejectFinal = hasPermission("quotations", "reject_final");
   const canUpdate = hasPermission("quotations", "update");
   const canCreate = hasPermission("quotations", "create");
 
@@ -118,6 +126,10 @@ export function LifecycleActionBar({
   }
 
   if (revision.status === "PENDING_APPROVAL") {
+    // Level 1 (Manager). The server decides, from totalAmount, whether this
+    // approval finalizes the revision (<=200k) or only advances it to
+    // PENDING_OWNER_APPROVAL (>200k) — the button and call are the same
+    // either way, no client-side amount branching needed.
     if (canApprove) {
       buttons.push(
         <Button key="approve" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
@@ -129,6 +141,27 @@ export function LifecycleActionBar({
       buttons.push(
         <Button key="reject" variant="destructive" onClick={() => setDialog("reject")} disabled={submitting}>
           Reject
+        </Button>,
+      );
+    }
+  }
+
+  if (revision.status === "PENDING_OWNER_APPROVAL") {
+    // Level 2 (Owner) — gated on the separate _final permissions, never on
+    // canApprove/canReject, so a Manager-only user (who holds the base
+    // permission but not this one) sees no button here at all, matching
+    // what the server would 403 if they tried anyway.
+    if (canApproveFinal) {
+      buttons.push(
+        <Button key="approve-final" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
+          Final Approve (Owner)
+        </Button>,
+      );
+    }
+    if (canRejectFinal) {
+      buttons.push(
+        <Button key="reject-final" variant="destructive" onClick={() => setDialog("reject")} disabled={submitting}>
+          Final Reject (Owner)
         </Button>,
       );
     }

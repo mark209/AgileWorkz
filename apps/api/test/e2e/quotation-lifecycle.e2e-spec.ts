@@ -6,14 +6,27 @@ import { PrismaService } from "../../src/prisma/prisma.service";
 
 /**
  * Live E2E — Phase 3 Step 7, Approval / Submission / Rejection / Send /
- * Decision Workflow. Covers the full state machine (DRAFT -> {APPROVED |
- * PENDING_APPROVAL} -> ... -> {ACCEPTED | DECLINED | EXPIRED}), every
- * allowed and forbidden transition, RBAC per action, auto-approval
- * threshold boundaries (B1/C1-C7 decisions), zero-line submission blocking
- * (C7), placeholder T&C send-blocking, required/optional reasons (C6),
- * early manual expiry (C5), terminal-state immutability (ACCEPTED
- * especially), audit payload shape, quotation.status mirroring, and
- * concurrent transition attempts.
+ * Decision Workflow, updated for the two-level approval correction. Covers
+ * the full state machine (DRAFT -> PENDING_APPROVAL -> {APPROVED |
+ * PENDING_OWNER_APPROVAL -> APPROVED} -> ... -> {ACCEPTED | DECLINED |
+ * EXPIRED}), every allowed and forbidden transition, RBAC per action, zero-
+ * line submission blocking (C7), placeholder T&C send-blocking, required/
+ * optional reasons (C6), early manual expiry (C5), terminal-state
+ * immutability (ACCEPTED especially), audit payload shape, quotation.status
+ * mirroring, and concurrent transition attempts.
+ *
+ * NO automatic approval exists anywhere in this workflow anymore — every
+ * submission lands in PENDING_APPROVAL regardless of amount, and every
+ * approval requires an explicit action by someone holding the right
+ * permission for the right stage. The two-level (Manager -> Owner) path
+ * itself, discount-percentage's removal from approval routing, and the
+ * exact ₱200,000 boundary are covered in their own dedicated file,
+ * quotation-two-level-approval.e2e-spec.ts — this file's amounts (1000,
+ * 1500, etc.) are all deliberately well under the default threshold, so
+ * every approval here is Manager-only, single-level, same as before this
+ * correction, to keep this file's assertions about the rest of the
+ * lifecycle (send/decision/expire/RBAC/concurrency) independent of the
+ * two-level mechanics.
  */
 describe("Quotations — Step 7 approval/decision workflow (live)", () => {
   let app: INestApplication;
@@ -117,17 +130,36 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
     return (await request(app.getHttpServer()).get(`/quotations/${q}`).set("Authorization", managerHeader)).body;
   }
 
+  /** Submits (DRAFT -> PENDING_APPROVAL) then Manager-approves (-> APPROVED, single-level since these amounts are all well under the default threshold). */
+  async function submitAndApprove(q: string, r: string, header = managerHeader) {
+    const submitRes = await request(app.getHttpServer()).patch(submitUrl(q, r)).set("Authorization", header);
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.status).toBe("PENDING_APPROVAL");
+    const approveRes = await request(app.getHttpServer()).patch(approveUrl(q, r)).set("Authorization", managerHeader);
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.status).toBe("APPROVED");
+    return approveRes.body;
+  }
+
   // --- Happy paths -------------------------------------------------------
 
-  it("auto-approves a DRAFT under both thresholds on submit, then sends and records ACCEPTED — quotation.status mirrors at every step", async () => {
-    const { quotationId, revisionId } = await createReadyQuotation("auto-approve-accept", 1000);
+  it("submits to PENDING_APPROVAL (never auto-approves), Manager approves it, then sends and records ACCEPTED — quotation.status mirrors at every step", async () => {
+    const { quotationId, revisionId } = await createReadyQuotation("submit-approve-accept", 1000);
 
     const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
     expect(submitRes.status).toBe(200);
-    expect(submitRes.body.status).toBe("APPROVED");
+    expect(submitRes.body.status).toBe("PENDING_APPROVAL");
     expect(submitRes.body.submittedAt).not.toBeNull();
-    expect(submitRes.body.approvedAt).not.toBeNull();
-    expect(submitRes.body.approvedBy).toBeNull(); // C2 — auto-approval never sets approvedBy
+    expect(submitRes.body.approvedAt).toBeNull(); // no automatic approval, ever
+    expect((await getQuotation(quotationId)).status).toBe("PENDING_APPROVAL");
+
+    const approveRes = await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.status).toBe("APPROVED");
+    expect(approveRes.body.approvedAt).not.toBeNull();
+    expect(approveRes.body.approvedBy).not.toBeNull(); // explicit human approval always sets this
+    expect(approveRes.body.managerApprovedAt).not.toBeNull();
+    expect(approveRes.body.ownerApprovedAt).toBeNull(); // single-level, Owner never involved
     expect((await getQuotation(quotationId)).status).toBe("APPROVED");
 
     const sendRes = await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
@@ -144,62 +176,51 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
     expect(decisionRes.body.customerDecisionAt).not.toBeNull();
     expect((await getQuotation(quotationId)).status).toBe("ACCEPTED");
 
-    // C2 — no revision_approved audit event exists for an auto-approved submission.
-    const approvedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_approved", entityId: revisionId } });
-    expect(approvedAudit).toBeNull();
-
     const submittedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_submitted", entityId: revisionId } });
     expect(submittedAudit).not.toBeNull();
-    expect((submittedAudit!.afterData as Record<string, unknown>).autoApproved).toBe(true);
-    expect((submittedAudit!.afterData as Record<string, unknown>).approvalThresholdPhp).toBeDefined();
-    expect((submittedAudit!.afterData as Record<string, unknown>).discountThresholdPct).toBeDefined();
+    expect((submittedAudit!.afterData as Record<string, unknown>).status).toBe("PENDING_APPROVAL");
+
+    const managerApprovedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_manager_approved", entityId: revisionId } });
+    expect(managerApprovedAudit).not.toBeNull();
+    expect((managerApprovedAudit!.afterData as Record<string, unknown>).finalApproval).toBe(true);
+
+    // No revision_owner_approved event exists for a single-level approval.
+    const ownerApprovedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_owner_approved", entityId: revisionId } });
+    expect(ownerApprovedAudit).toBeNull();
   });
 
-  it("routes an over-threshold DRAFT to PENDING_APPROVAL on submit, then approve -> send -> DECLINED", async () => {
-    await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "1000" } });
-    try {
-      const { quotationId, revisionId } = await createReadyQuotation("over-threshold-approve", 1500);
+  it("Office Staff cannot approve their own submitted quotation — zero approval authority regardless of amount", async () => {
+    const { quotationId, revisionId } = await createReadyQuotation("office-no-approval-authority", 1000);
+    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", officeHeader);
 
-      const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
-      expect(submitRes.status).toBe(200);
-      expect(submitRes.body.status).toBe("PENDING_APPROVAL");
-      expect(submitRes.body.approvedAt).toBeNull();
-      expect((await getQuotation(quotationId)).status).toBe("PENDING_APPROVAL");
+    const officeApproveDenied = await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", officeHeader);
+    expect(officeApproveDenied.status).toBe(403);
+    const officeRejectDenied = await request(app.getHttpServer()).patch(rejectUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ reason: "x" });
+    expect(officeRejectDenied.status).toBe(403);
 
-      // Office Staff (quotations.update only) may not approve.
-      const officeDenied = await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", officeHeader);
-      expect(officeDenied.status).toBe(403);
-
-      const approveRes = await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader);
-      expect(approveRes.status).toBe(200);
-      expect(approveRes.body.status).toBe("APPROVED");
-      expect(approveRes.body.approvedBy).not.toBeNull(); // C1 — explicit human approve DOES set approvedBy
-
-      const approvedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_approved", entityId: revisionId } });
-      expect(approvedAudit).not.toBeNull();
-
-      await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
-
-      const decisionRes = await request(app.getHttpServer())
-        .patch(decisionUrl(quotationId, revisionId))
-        .set("Authorization", managerHeader)
-        .send({ decision: "DECLINED", reason: "Customer chose a competitor" });
-      expect(decisionRes.status).toBe(200);
-      expect(decisionRes.body.status).toBe("DECLINED");
-
-      const decisionAudit = await prisma.auditLog.findFirst({ where: { action: "revision_decision_recorded", entityId: revisionId } });
-      expect(decisionAudit?.reason).toBe("Customer chose a competitor");
-    } finally {
-      await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "50000" } });
-    }
+    expect((await getRevision(quotationId, revisionId)).status).toBe("PENDING_APPROVAL"); // unchanged
   });
 
-  it("routes an over-discount-threshold DRAFT to PENDING_APPROVAL, then rejects it (reason mandatory) — REJECTED, not DECLINED", async () => {
-    const { quotationId, revisionId } = await createReadyQuotation("discount-threshold-reject", 10000);
+  it("a large discount percentage does not affect approval routing — only totalAmount matters (discount removed as a trigger)", async () => {
+    const { quotationId, revisionId } = await createReadyQuotation("discount-does-not-matter", 10000);
     await request(app.getHttpServer())
       .patch(revisionUrl(quotationId, revisionId))
       .set("Authorization", managerHeader)
-      .send({ discountPercent: 10.5 }); // over the seeded 10% threshold
+      .send({ discountPercent: 50 }); // deliberately large — was well over the old 10% discount gate
+
+    const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.status).toBe("PENDING_APPROVAL"); // same as any other submission, not routed differently
+
+    // Manager alone finalizes it straight to APPROVED — totalAmount (well
+    // under the threshold) is all that matters, discount is irrelevant.
+    const approveRes = await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.status).toBe("APPROVED");
+  });
+
+  it("rejects a PENDING_APPROVAL revision (reason mandatory) — REJECTED, not DECLINED, terminal", async () => {
+    const { quotationId, revisionId } = await createReadyQuotation("manager-reject", 10000);
 
     const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
     expect(submitRes.status).toBe(200);
@@ -219,40 +240,12 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
       .send({ reason: "Pricing not competitive for this scope" });
     expect(rejectRes.status).toBe(200);
     expect(rejectRes.body.status).toBe("REJECTED");
-    expect(rejectRes.body.approvedBy).toBeNull(); // C1 — reject never sets approvedBy
+    expect(rejectRes.body.approvedBy).toBeNull(); // reject never sets approvedBy
     expect((await getQuotation(quotationId)).status).toBe("REJECTED");
 
     const rejectedAudit = await prisma.auditLog.findFirst({ where: { action: "revision_rejected", entityId: revisionId } });
     expect(rejectedAudit?.reason).toBe("Pricing not competitive for this scope");
-  });
-
-  // --- Threshold boundaries (exactly-at vs. one-unit-over) ---------------
-
-  it("submit threshold boundary: totalAmount exactly at the threshold auto-approves; one centavo over requires approval", async () => {
-    await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "1000" } });
-    try {
-      const atThreshold = await createReadyQuotation("boundary-at", 1000);
-      const atRes = await request(app.getHttpServer()).patch(submitUrl(atThreshold.quotationId, atThreshold.revisionId)).set("Authorization", managerHeader);
-      expect(atRes.body.status).toBe("APPROVED");
-
-      const overThreshold = await createReadyQuotation("boundary-over", 1000.01);
-      const overRes = await request(app.getHttpServer()).patch(submitUrl(overThreshold.quotationId, overThreshold.revisionId)).set("Authorization", managerHeader);
-      expect(overRes.body.status).toBe("PENDING_APPROVAL");
-    } finally {
-      await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "50000" } });
-    }
-  });
-
-  it("submit threshold boundary: discountPercent exactly at the threshold auto-approves; fractionally over requires approval", async () => {
-    const atThreshold = await createReadyQuotation("discount-boundary-at", 10000);
-    await request(app.getHttpServer()).patch(revisionUrl(atThreshold.quotationId, atThreshold.revisionId)).set("Authorization", managerHeader).send({ discountPercent: 10 });
-    const atRes = await request(app.getHttpServer()).patch(submitUrl(atThreshold.quotationId, atThreshold.revisionId)).set("Authorization", managerHeader);
-    expect(atRes.body.status).toBe("APPROVED");
-
-    const overThreshold = await createReadyQuotation("discount-boundary-over", 10000);
-    await request(app.getHttpServer()).patch(revisionUrl(overThreshold.quotationId, overThreshold.revisionId)).set("Authorization", managerHeader).send({ discountPercent: 10.5 });
-    const overRes = await request(app.getHttpServer()).patch(submitUrl(overThreshold.quotationId, overThreshold.revisionId)).set("Authorization", managerHeader);
-    expect(overRes.body.status).toBe("PENDING_APPROVAL");
+    expect((rejectedAudit!.afterData as Record<string, unknown>).stage).toBe("manager");
   });
 
   // --- C7: zero-line-item submission block --------------------------------
@@ -283,9 +276,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
       .set("Authorization", managerHeader)
       .send({ description: "Line", quantity: 1, unit: "lot", unitPriceBeforeVat: 500, taxTreatment: "VAT_EXEMPT" });
 
-    const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
-    expect(submitRes.status).toBe(200); // internal submission is not blocked
-    expect(submitRes.body.status).toBe("APPROVED");
+    await submitAndApprove(quotationId, revisionId); // internal submit+approve is not blocked
 
     const sendRes = await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
     expect(sendRes.status).toBe(400);
@@ -296,7 +287,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
   it("allows manual expiry from SENT before validUntil has passed, and requires a reason", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("early-expire", 1000, { validUntil: "2027-01-01" });
-    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    await submitAndApprove(quotationId, revisionId);
     await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
 
     const noReason = await request(app.getHttpServer()).patch(expireUrl(quotationId, revisionId)).set("Authorization", managerHeader).send({});
@@ -319,7 +310,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
   it("ACCEPTED is a hard dead-end: no Step 7 transition and no new revision can act on it again", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("accepted-dead-end", 1000);
-    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    await submitAndApprove(quotationId, revisionId);
     await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
     const acceptRes = await request(app.getHttpServer())
       .patch(decisionUrl(quotationId, revisionId))
@@ -357,8 +348,18 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
     ]);
     for (const res of wrongFromDraft) expect(res.status).toBe(400);
 
-    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader); // -> APPROVED (auto)
-    // Now APPROVED — submit/approve/reject/decision/expire are all wrong.
+    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader); // -> PENDING_APPROVAL
+    // Now PENDING_APPROVAL — submit/send/decision/expire are all wrong (approve/reject ARE valid from here, tested elsewhere).
+    const wrongFromPendingApproval = await Promise.all([
+      request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader),
+      request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader),
+      request(app.getHttpServer()).patch(decisionUrl(quotationId, revisionId)).set("Authorization", managerHeader).send({ decision: "ACCEPTED" }),
+      request(app.getHttpServer()).patch(expireUrl(quotationId, revisionId)).set("Authorization", managerHeader).send({ reason: "x" }),
+    ]);
+    for (const res of wrongFromPendingApproval) expect(res.status).toBe(400);
+
+    await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader); // -> APPROVED
+    // Now APPROVED — submit/approve/reject/decision/expire are all wrong (send IS valid, tested elsewhere).
     const wrongFromApproved = await Promise.all([
       request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader),
       request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader),
@@ -371,11 +372,13 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
   // --- RBAC on submit/send/decision/expire (quotations.update) -------------
 
-  it("Office Staff (quotations.update only) can submit/send/record-decision/expire; Technician (no grants) is denied", async () => {
+  it("Office Staff (quotations.update only) can submit/send/record-decision/expire once Manager approves; Technician (no grants) is denied submit", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("office-rbac", 1000);
-    // Re-create under Office Staff's own auth so update-permission checks apply consistently.
     const submitRes = await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", officeHeader);
     expect(submitRes.status).toBe(200);
+    // Office Staff has zero approval authority — Manager must approve before Office Staff can proceed to send.
+    await request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+
     const sendRes = await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", officeHeader);
     expect(sendRes.status).toBe(200);
     const decisionRes = await request(app.getHttpServer())
@@ -396,7 +399,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
   it("only one of two concurrent decision requests on the same SENT revision succeeds — the other gets 409", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("concurrent-decision", 1000);
-    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+    await submitAndApprove(quotationId, revisionId);
     await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
 
     const [a, b] = await Promise.all([
@@ -425,5 +428,20 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
     const submittedAudits = await prisma.auditLog.findMany({ where: { action: "revision_submitted", entityId: revisionId } });
     expect(submittedAudits).toHaveLength(1);
+  });
+
+  it("only one of two concurrent Manager-approve requests on the same PENDING_APPROVAL revision succeeds — the other gets 409", async () => {
+    const { quotationId, revisionId } = await createReadyQuotation("concurrent-approve", 1000);
+    await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
+
+    const [a, b] = await Promise.all([
+      request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader),
+      request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const approvedAudits = await prisma.auditLog.findMany({ where: { action: "revision_manager_approved", entityId: revisionId } });
+    expect(approvedAudits).toHaveLength(1);
   });
 });

@@ -126,6 +126,15 @@ enum QuotationType {
 enum QuotationRevisionStatus {
   DRAFT
   PENDING_APPROVAL
+  // Two-level approval correction — reached only after Manager's Level-1
+  // approval on a revision whose totalAmount exceeds the Owner-approval
+  // threshold. Distinct from PENDING_APPROVAL (which now means "awaiting
+  // Manager") so the atomic updateMany(where: {status: EXPECTED}) guard
+  // pattern used by every transition in this codebase can safely gate the
+  // Owner-only action to exactly this state — the same reason WorkOrder
+  // uses distinct named statuses rather than inferring stage from which
+  // timestamp is set.
+  PENDING_OWNER_APPROVAL
   APPROVED
   REJECTED
   SENT
@@ -230,6 +239,8 @@ model User {
   // Phase 3 — no new column on `users`, just the two back-relations Prisma
   // requires for quotation_revisions.created_by/approved_by (see §02).
   quotationRevisionsCreated          QuotationRevision[]                 @relation("QuotationRevisionCreatedBy")
+  quotationRevisionsManagerApproved  QuotationRevision[]                 @relation("QuotationRevisionManagerApprovedBy")
+  quotationRevisionsOwnerApproved    QuotationRevision[]                 @relation("QuotationRevisionOwnerApprovedBy")
   quotationRevisionsApproved         QuotationRevision[]                 @relation("QuotationRevisionApprovedBy")
   // Phase 3 Step 3 — no new column on `users`, just the back-relation Prisma
   // requires for inquiries.created_by.
@@ -800,6 +811,20 @@ model QuotationRevision {
   validUntil          DateTime?               @map("valid_until") @db.Date
   createdBy           String?                 @map("created_by")
   submittedAt         DateTime?               @map("submitted_at")
+  // Two-level approval correction — the specific Manager (Level 1) and
+  // Owner (Level 2) approval events, kept distinct so both can be recorded
+  // independently and the PDF's electronic-approval section can show
+  // exactly which levels actually occurred. Which field is populated IS
+  // the approver's role at approval time — no separate role column needed,
+  // and no ambiguity from a role that might change on the user later.
+  // approvedBy/approvedAt below are UNCHANGED in meaning: still "who/when
+  // this revision became APPROVED" — populated by Manager's action for a
+  // <=200k revision, or by Owner's action for a >200k one. Kept for V1
+  // compatibility rather than removed, per the approved plan.
+  managerApprovedBy   String?                 @map("manager_approved_by")
+  managerApprovedAt   DateTime?               @map("manager_approved_at")
+  ownerApprovedBy     String?                 @map("owner_approved_by")
+  ownerApprovedAt     DateTime?               @map("owner_approved_at")
   approvedBy          String?                 @map("approved_by")
   approvedAt          DateTime?               @map("approved_at")
   rejectedAt          DateTime?               @map("rejected_at")
@@ -817,6 +842,8 @@ model QuotationRevision {
 
   quotation                 Quotation                           @relation(fields: [quotationId], references: [id], onDelete: Cascade)
   createdByUser             User?                               @relation("QuotationRevisionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  managerApprovedByUser     User?                               @relation("QuotationRevisionManagerApprovedBy", fields: [managerApprovedBy], references: [id], onDelete: SetNull)
+  ownerApprovedByUser       User?                               @relation("QuotationRevisionOwnerApprovedBy", fields: [ownerApprovedBy], references: [id], onDelete: SetNull)
   approvedByUser            User?                               @relation("QuotationRevisionApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
   sections                  QuotationSection[]
   lineItems                 QuotationLineItem[]

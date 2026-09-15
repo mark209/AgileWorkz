@@ -87,6 +87,17 @@ describe("Work Order Assignments — Step 4 (live)", () => {
     return { header, userId: user.id };
   }
 
+  // Two-level approval correction: submit no longer auto-approves under any
+  // circumstance — the Step 3 regression test below needs an explicit
+  // Manager approval to reach ACCEPTED. Office Staff has zero approval
+  // authority, so this is a separate, minimally-scoped actor.
+  async function managerAccessHeader() {
+    const perm = await fixtures.ensurePermission("quotations", "approve");
+    const role = await fixtures.createRole("wo4-mgr", [perm.id]);
+    const user = await fixtures.createUser("wo4-mgr", UserStatus.ACTIVE, [role.id]);
+    return loginHeader(user.email, user.password);
+  }
+
   async function createCustomerAndSite(suffix: string) {
     const customer = await fixtures.createCustomer(suffix);
     const site = await fixtures.createSite(customer.id, suffix);
@@ -303,6 +314,8 @@ describe("Work Order Assignments — Step 4 (live)", () => {
       .set("Authorization", officeHeader)
       .send({ termsAndConditions: "HAND-EDITED TERMS — not the placeholder." });
     await request(app.getHttpServer()).patch(`/quotations/${quotationId}/revisions/${revisionId}/submit`).set("Authorization", officeHeader);
+    const managerHeader = await managerAccessHeader();
+    await request(app.getHttpServer()).patch(`/quotations/${quotationId}/revisions/${revisionId}/approve`).set("Authorization", managerHeader);
     await request(app.getHttpServer()).patch(`/quotations/${quotationId}/revisions/${revisionId}/send`).set("Authorization", officeHeader);
     await request(app.getHttpServer())
       .patch(`/quotations/${quotationId}/revisions/${revisionId}/decision`)

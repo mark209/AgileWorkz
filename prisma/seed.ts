@@ -160,8 +160,18 @@ const PHASE3_PERMISSIONS: Array<{ module: string; action: string; description: s
   { module: "quotations", action: "create", description: "Create a new quotation (header + Revision 0)" },
   { module: "quotations", action: "read", description: "View quotations and their revisions" },
   { module: "quotations", action: "update", description: "Edit a DRAFT revision's content — sections, line items, terms, amounts" },
-  { module: "quotations", action: "approve", description: "Approve a revision pending threshold-gated approval" },
-  { module: "quotations", action: "reject", description: "Reject a revision pending threshold-gated approval" },
+  { module: "quotations", action: "approve", description: "Approve a PENDING_APPROVAL revision — Level 1 (Manager). Finalizes it if <=200k; advances to PENDING_OWNER_APPROVAL if >200k" },
+  { module: "quotations", action: "reject", description: "Reject a PENDING_APPROVAL revision — Level 1 (Manager), terminal, never reaches Owner" },
+  {
+    module: "quotations",
+    action: "approve_final",
+    description: "Approve a PENDING_OWNER_APPROVAL revision — Level 2 (Owner), final. Only reachable after Manager's Level 1 approval",
+  },
+  {
+    module: "quotations",
+    action: "reject_final",
+    description: "Reject a PENDING_OWNER_APPROVAL revision — Level 2 (Owner), terminal",
+  },
 
   { module: "trades", action: "read", description: "View the list of trades/disciplines" },
   { module: "trades", action: "manage", description: "Add or deactivate a trade" },
@@ -348,16 +358,17 @@ const EQUIPMENT_SYSTEM_TYPES: Array<{ code: string; label: string; sortOrder: nu
 const SYSTEM_SETTINGS: Array<{ key: string; value: string; valueType: "NUMBER"; description: string }> = [
   {
     key: "quotation_approval_threshold_php",
-    value: "50000",
+    value: "200000",
     valueType: "NUMBER",
-    description: "Quotations at or below this amount (PHP) use standard approval; above it requires Manager approval.",
+    description:
+      "Two-level approval correction: revisions at or below this amount (PHP) need Manager approval only; above it need Manager (Level 1) then Owner (Level 2) approval, sequentially. Amount-only — discount percentage plays no part in approval routing.",
   },
-  {
-    key: "quotation_discount_threshold_pct",
-    value: "10",
-    valueType: "NUMBER",
-    description: "Any quotation discount above this percentage requires Manager approval, regardless of total.",
-  },
+  // quotation_discount_threshold_pct — deliberately NOT seeded here anymore.
+  // Two-level approval correction: discount percentage no longer affects
+  // who approves a quotation; only the total amount does. The existing row
+  // (if already present in a given database) is left untouched rather than
+  // deleted, per the approved instruction not to remove data merely for
+  // cleanliness — it is simply unread by any code path now.
   {
     key: "document_retention_years",
     value: "7",

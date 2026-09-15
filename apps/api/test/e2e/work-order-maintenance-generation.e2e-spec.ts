@@ -24,6 +24,7 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
   let prisma: PrismaService;
   let fixtures: E2eFixtures;
   let officeHeader: string; // work_orders.create/read/generate_maintenance_visits + quotations.create/read/update
+  let managerHeader: string; // quotations.approve only — two-level approval correction requires an explicit Manager approval; Office Staff has zero approval authority
   let techHeader: string; // no work_orders grants relevant to this suite
 
   const NON_PLACEHOLDER_TERMS = "HAND-EDITED TERMS — real content, deliberately not the placeholder.";
@@ -32,6 +33,7 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
     ({ app, prisma } = await bootstrapTestApp());
     fixtures = new E2eFixtures(prisma);
     officeHeader = await officeAccessHeader();
+    managerHeader = await managerAccessHeader();
     techHeader = await technicianHeader();
   });
 
@@ -58,6 +60,13 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
     );
     const role = await fixtures.createRole("wo6-office", perms.map((p) => p.id));
     const user = await fixtures.createUser("wo6-office", UserStatus.ACTIVE, [role.id]);
+    return loginHeader(user.email, user.password);
+  }
+
+  async function managerAccessHeader() {
+    const perm = await fixtures.ensurePermission("quotations", "approve");
+    const role = await fixtures.createRole("wo6-mgr", [perm.id]);
+    const user = await fixtures.createUser("wo6-mgr", UserStatus.ACTIVE, [role.id]);
     return loginHeader(user.email, user.password);
   }
 
@@ -109,6 +118,11 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
       .set("Authorization", officeHeader)
       .send({ termsAndConditions: NON_PLACEHOLDER_TERMS });
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/submit`).set("Authorization", officeHeader);
+    // Two-level approval correction: submit no longer auto-approves under
+    // any circumstance — an explicit Manager approval is required before
+    // SEND is reachable. This fixture's amount is always well under the
+    // Owner-approval threshold, so Manager's approval alone finalizes it.
+    await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/approve`).set("Authorization", managerHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/send`).set("Authorization", officeHeader);
     const decisionRes = await request(app.getHttpServer())
       .patch(`${revisionUrl(quotationId, revisionId)}/decision`)
@@ -172,6 +186,7 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
     await request(app.getHttpServer()).post(`${revisionUrl(qId, rId)}/testing-commissioning-items`).set("Authorization", officeHeader).send({ description: "Excluded item", included: false, sortOrder: 1 });
     await request(app.getHttpServer()).patch(revisionUrl(qId, rId)).set("Authorization", officeHeader).send({ termsAndConditions: NON_PLACEHOLDER_TERMS });
     await request(app.getHttpServer()).patch(`${revisionUrl(qId, rId)}/submit`).set("Authorization", officeHeader);
+    await request(app.getHttpServer()).patch(`${revisionUrl(qId, rId)}/approve`).set("Authorization", managerHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(qId, rId)}/send`).set("Authorization", officeHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(qId, rId)}/decision`).set("Authorization", officeHeader).send({ decision: "ACCEPTED" });
 
@@ -243,6 +258,11 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
     await request(app.getHttpServer()).post(linesUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ description: "Line", quantity: 1, unit: "visit", unitPriceBeforeVat: 1000, taxTreatment: "VAT_EXEMPT" });
     await request(app.getHttpServer()).patch(revisionUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ termsAndConditions: NON_PLACEHOLDER_TERMS });
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/submit`).set("Authorization", officeHeader);
+    // Two-level approval correction: submit no longer auto-approves under
+    // any circumstance — an explicit Manager approval is required before
+    // SEND is reachable. This fixture's amount is always well under the
+    // Owner-approval threshold, so Manager's approval alone finalizes it.
+    await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/approve`).set("Authorization", managerHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/send`).set("Authorization", officeHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/decision`).set("Authorization", officeHeader).send({ decision: "ACCEPTED" });
 

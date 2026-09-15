@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import { Request } from "express";
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
+import { Request, Response } from "express";
 import { QuotationRevisionStatus } from "@prisma/client";
 import { QuotationsService } from "./quotations.service";
 import { WorkOrdersService } from "../work-orders/work-orders.service";
+import { QuotationPdfService } from "./pdf/quotation-pdf.service";
 import { UpdateRevisionContentDto } from "./dto/update-revision-content.dto";
 import { RejectRevisionDto } from "./dto/reject-revision.dto";
 import { RecordDecisionDto } from "./dto/record-decision.dto";
@@ -25,6 +26,7 @@ export class QuotationsController {
   constructor(
     private readonly quotationsService: QuotationsService,
     private readonly workOrdersService: WorkOrdersService,
+    private readonly quotationPdfService: QuotationPdfService,
   ) {}
 
   // Phase 6 (Dashboard) — global, cross-customer listing, optionally
@@ -144,6 +146,22 @@ export class QuotationsController {
   ) {
     await this.quotationsService.findRevisionOrThrow(id, revisionId);
     return this.quotationsService.expireRevision(revisionId, dto, actorFrom(req));
+  }
+
+  // Two-level approval correction — same visibility as viewing the
+  // quotation itself (quotations.read), draft or final: the PDF's own
+  // DRAFT watermark / electronic-approval-section logic is what
+  // distinguishes an unapproved export from a final one, not a separate
+  // permission gate. @Res() bypasses Nest's normal JSON response pipeline
+  // (same pattern already used by LocalStorageController.serve for a
+  // binary response) — this handler sends the response itself.
+  @Permissions({ module: "quotations", action: "read" })
+  @Get(":id/revisions/:revisionId/pdf")
+  async getPdf(@Param("id") id: string, @Param("revisionId") revisionId: string, @Res() res: Response) {
+    const buffer = await this.quotationPdfService.generate(id, revisionId);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="quotation-${id}-rev-${revisionId}.pdf"`);
+    res.send(buffer);
   }
 
   // Phase 4 Step 3 — Path A. work_orders.create (§07), not quotations.*: the

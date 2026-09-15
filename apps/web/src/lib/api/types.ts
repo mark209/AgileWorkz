@@ -154,6 +154,7 @@ export type QuotationType = "REPAIR" | "PREVENTIVE_MAINTENANCE" | "SUPPLY_INSTAL
 export type QuotationRevisionStatus =
   | "DRAFT"
   | "PENDING_APPROVAL"
+  | "PENDING_OWNER_APPROVAL"
   | "APPROVED"
   | "REJECTED"
   | "SENT"
@@ -259,6 +260,15 @@ export interface QuotationRevision {
   validUntil: string | null;
   createdBy: string | null;
   submittedAt: string | null;
+  // Two-level approval correction — Manager's Level-1 event (always
+  // populated once Manager acts) and Owner's Level-2 event (populated only
+  // for a >200k revision, once Owner acts). approvedBy/approvedAt below
+  // are unchanged in meaning: whichever action actually finalized the
+  // revision — Manager's for <=200k, Owner's for >200k.
+  managerApprovedBy: string | null;
+  managerApprovedAt: string | null;
+  ownerApprovedBy: string | null;
+  ownerApprovedAt: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
   rejectedAt: string | null;

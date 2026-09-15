@@ -22,6 +22,7 @@ describe("Work Orders — Step 3 creation (live)", () => {
   let prisma: PrismaService;
   let fixtures: E2eFixtures;
   let officeHeader: string; // work_orders.create + read
+  let managerHeader: string; // quotations.approve only — two-level approval correction requires an explicit Manager approval
   let techHeader: string; // no work_orders grants at all in Step 3
 
   const WORK_ORDER_NUMBER_PATTERN = /^WO-(\d{4})-(\d{2})-(\d{5})$/;
@@ -31,6 +32,7 @@ describe("Work Orders — Step 3 creation (live)", () => {
     ({ app, prisma } = await bootstrapTestApp());
     fixtures = new E2eFixtures(prisma);
     officeHeader = await officeAccessHeader();
+    managerHeader = await managerAccessHeader();
     techHeader = await technicianHeader();
   });
 
@@ -45,9 +47,10 @@ describe("Work Orders — Step 3 creation (live)", () => {
   }
 
   // work_orders.create/read plus everything Step 7 needs to drive a
-  // revision to ACCEPTED (quotations.create/update, same as the Phase 3
-  // quotation-lifecycle spec's managerHeader — approve/reject are never
-  // needed here since every fixture stays under the auto-approval threshold).
+  // revision to ACCEPTED (quotations.create/update). Two-level approval
+  // correction: submit no longer auto-approves under any circumstance, so
+  // acceptRevision() below also needs an explicit Manager approval — see
+  // managerAccessHeader.
   async function officeAccessHeader() {
     const perms = await Promise.all(
       [
@@ -60,6 +63,13 @@ describe("Work Orders — Step 3 creation (live)", () => {
     );
     const role = await fixtures.createRole("wo-step3-office", perms.map((p) => p.id));
     const user = await fixtures.createUser("wo-step3-office", UserStatus.ACTIVE, [role.id]);
+    return loginHeader(user.email, user.password);
+  }
+
+  async function managerAccessHeader() {
+    const perm = await fixtures.ensurePermission("quotations", "approve");
+    const role = await fixtures.createRole("wo-step3-mgr", [perm.id]);
+    const user = await fixtures.createUser("wo-step3-mgr", UserStatus.ACTIVE, [role.id]);
     return loginHeader(user.email, user.password);
   }
 
@@ -81,13 +91,14 @@ describe("Work Orders — Step 3 creation (live)", () => {
   const revisionUrl = (q: string, r: string) => `/quotations/${q}/revisions/${r}`;
   const convertUrl = (q: string, r: string) => `${revisionUrl(q, r)}/convert-to-work-orders`;
 
-  /** Drives a fresh Revision 0 through submit -> send -> ACCEPTED (stays under both auto-approval thresholds). */
+  /** Drives a fresh Revision 0 through submit -> Manager-approve -> send -> ACCEPTED (fixture amounts always stay under the Owner-approval threshold, so Manager's approval alone finalizes it). */
   async function acceptRevision(quotationId: string, revisionId: string) {
     await request(app.getHttpServer())
       .patch(revisionUrl(quotationId, revisionId))
       .set("Authorization", officeHeader)
       .send({ termsAndConditions: NON_PLACEHOLDER_TERMS });
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/submit`).set("Authorization", officeHeader);
+    await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/approve`).set("Authorization", managerHeader);
     await request(app.getHttpServer()).patch(`${revisionUrl(quotationId, revisionId)}/send`).set("Authorization", officeHeader);
     const res = await request(app.getHttpServer())
       .patch(`${revisionUrl(quotationId, revisionId)}/decision`)

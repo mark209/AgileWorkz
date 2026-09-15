@@ -10,9 +10,11 @@ import { QuotationMaintenanceDetailsController } from "./quotation-maintenance-d
 import { QuotationTestingCommissioningItemsService } from "./quotation-testing-commissioning-items.service";
 import { QuotationTestingCommissioningItemsController } from "./quotation-testing-commissioning-items.controller";
 import { QuotationPricingService } from "./pricing/quotation-pricing.service";
+import { QuotationPdfService } from "./pdf/quotation-pdf.service";
 import { AuditModule } from "../audit/audit.module";
 import { NumberingModule } from "../../common/numbering/numbering.module";
 import { WorkOrdersModule } from "../work-orders/work-orders.module";
+import { IdentityModule } from "../identity/identity.module";
 
 // Step 5. Deliberately does NOT import CustomersModule (which owns
 // InquiriesController/InquiriesService) — QuotationsService talks to the
@@ -31,8 +33,15 @@ import { WorkOrdersModule } from "../work-orders/work-orders.module";
 // its own natural URL (§05: "spawning a Work Order is explicitly the one
 // thing an ACCEPTED revision is for"). WorkOrdersModule never imports this
 // module back (see its own module comment), so this stays one-directional.
+//
+// Two-level approval correction — IdentityModule is imported so
+// QuotationsService can inject PermissionsService directly, the same
+// reason and same pattern WorkOrdersModule already imports IdentityModule
+// for (WorkOrdersService.getForActor/fieldCompleteOwn's manual permission
+// checks). IdentityModule imports only PassportModule/JwtModule/
+// AuditModule — no circular dependency risk.
 @Module({
-  imports: [AuditModule, NumberingModule, WorkOrdersModule],
+  imports: [AuditModule, NumberingModule, WorkOrdersModule, IdentityModule],
   controllers: [
     QuotationsController,
     QuotationSectionsController,
@@ -47,6 +56,7 @@ import { WorkOrdersModule } from "../work-orders/work-orders.module";
     QuotationMaintenanceDetailsService,
     QuotationTestingCommissioningItemsService,
     QuotationPricingService,
+    QuotationPdfService,
   ],
   exports: [QuotationsService],
 })
