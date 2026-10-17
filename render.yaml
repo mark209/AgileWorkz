@@ -1,4 +1,12 @@
 services:
+  - type: keyvalue
+    name: agileworkz-queue
+    region: singapore
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+    persistenceMode: off
+
   - type: web
     name: agileworkz-api
     runtime: node
@@ -24,7 +32,10 @@ services:
       - key: JWT_REFRESH_SECRET
         generateValue: true
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: agileworkz-queue
+          property: connectionString
       - key: STORAGE_PROVIDER
         value: s3
       - key: S3_ENDPOINT
