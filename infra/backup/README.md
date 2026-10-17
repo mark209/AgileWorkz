@@ -1,18 +1,19 @@
 # Off-platform PostgreSQL backup — Render Cron Job
 
-**Draft for review — not yet committed, not yet deployed.** See
+The original job was designed for Render PostgreSQL. This version targets
+Supabase PostgreSQL; validate it with a manual run and isolated restore before
+relying on its schedule. See
 [`docs/architecture/phase7-p0-offplatform-backup-design.md`](../../docs/architecture/phase7-p0-offplatform-backup-design.md)
 for the full design review and rationale behind every decision below.
 
-This job complements — never replaces — Render's own native PostgreSQL
-protection (point-in-time recovery and daily logical backups), which stays
-exactly as configured. It adds two things Render's native backups don't:
-retention beyond 7 days, and a copy stored off Render entirely.
+This job creates an off-platform copy of the ERP's `public` schema. It does
+not replace any Supabase-managed backup or recovery capability.
 
 ## What it does
 
 Once a week, this job:
-1. Runs `pg_dump --format=directory` against production, authenticated as
+1. Runs `pg_dump --schema=public --enable-row-security --format=directory`
+   against production, authenticated as
    the dedicated, read-only `app_backup` role (never the application's own
    `DATABASE_URL`/`app_runtime` credential).
 2. Compresses the dump into one `.dir.tar.gz` archive.
@@ -33,11 +34,12 @@ days are deleted automatically) — this job never deletes anything itself.
 
 | Variable | Secret? | Value / source |
 |---|---|---|
-| `PGHOST` | no | The Render Postgres instance's internal host |
-| `PGPORT` | no | Typically `5432` |
-| `PGDATABASE` | no | `agileworks_erp` |
-| `PGUSER` | no | `app_backup` |
+| `PGHOST` | no | Supabase host for the backup role's session connection |
+| `PGPORT` | no | Supabase session-pooler port, normally `5432` |
+| `PGDATABASE` | no | Supabase database name, normally `postgres` |
+| `PGUSER` | no | The exact Supabase session-pooler username for `app_backup` |
 | `PGPASSWORD` | **yes** | `app_backup`'s password — set once, when this Cron Job is created (see "First-time setup" below) |
+| `PGSSLMODE` | no | `require` for the Supabase connection |
 | `R2_BUCKET` | no | `agileworks-erp-backups` |
 | `RCLONE_CONFIG_R2_TYPE` | no | `s3` |
 | `RCLONE_CONFIG_R2_PROVIDER` | no | `Cloudflare` |
@@ -78,18 +80,15 @@ Sunday 02:00 Asia/Manila** (Manila is a fixed UTC+8, no daylight saving, so
 this offset never needs adjusting). The healthchecks.io monitor is
 configured with the identical schedule and a 1-hour grace period.
 
-## First-time setup (not done yet — for the actual Cron Job creation step)
+## First-time setup in the owner's Render account
 
-1. The `app_backup` role already exists in production, created and
-   verified in prerequisite #1 — but it has **no password yet**, so it
-   cannot connect. When this Cron Job is created on Render, generate a
-   password for it there and, in the same sitting, set it on the role:
+1. The Supabase access script has created the `app_backup` role without
+   login. When this Cron Job is created, generate a password and enable
+   login on that role:
    ```sql
-   ALTER ROLE app_backup PASSWORD '<value generated in Render's secret store>';
+   ALTER ROLE app_backup LOGIN PASSWORD '<generated password>';
    ```
-   The password is generated and used entirely within Render's own
-   environment-variable UI and this one `ALTER ROLE` statement — it is
-   never pasted into any chat.
+   Store the password only in the database and Render's secret settings.
 2. Set every environment variable in the table above on the Cron Job
    service.
 3. Trigger one manual run and confirm: the job logs `Backup complete: ...`,
@@ -118,17 +117,20 @@ up to this job.
    ```bash
    tar xzf agileworks_erp_<timestamp>.dir.tar.gz
    ```
-4. **Restore** into the target — a fresh Render Postgres instance for a
-   real recovery, or a disposable local `postgres:18` container to test
-   the backup itself:
+4. **Restore** into an isolated PostgreSQL database for a rehearsal. Create
+   placeholder `NOLOGIN` roles named `app_runtime`, `ocr_worker`, and
+   `app_backup` there first, because the dump includes RLS policies that name
+   those roles. A real
+   recovery into Supabase needs a fresh target and a separate review of
+   Supabase-managed schemas and extensions:
    ```bash
    pg_restore -Fd --no-owner --no-privileges -d <target_database> agileworks_erp_<timestamp>
    ```
    Add `--single-transaction` for an all-or-nothing test restore.
-5. **Re-apply roles and grants** — deliberately not included in the dump
-   by design:
-   [`infra/sql/provision-roles.sql`](../sql/provision-roles.sql) and
-   [`infra/sql/grant-runtime-privileges.sql`](../sql/grant-runtime-privileges.sql).
+5. **Re-apply roles, grants, and RLS policies** — deliberately not included
+   as cluster-wide role state in the dump. Review the target's existing
+   roles and [`infra/sql/supabase-public-access.sql`](../sql/supabase-public-access.sql)
+   before applying any SQL.
 6. **Repoint** the application's `DATABASE_URL` and
    `OCR_WORKER_DATABASE_URL` at the restored instance, if this is a real
    recovery rather than a test.
@@ -149,11 +151,8 @@ Two independent mechanisms, deliberately not relying on either one alone:
 
 ## Security notes
 
-- `app_backup` can only `SELECT` — verified via PostgreSQL's own catalog
-  privilege functions (`has_table_privilege`, etc.) against all tables,
-  confirmed unable to `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE`/
-  `ALTER`/`DROP` anything, and confirmed to hold no sequence, superuser,
-  createdb, createrole, replication, or RLS-bypass capability.
+- Verify `app_backup` can only `SELECT` with PostgreSQL catalog privilege
+  functions after provisioning. It must have no DML, DDL, or RLS-bypass rights.
 - The R2 token used here is scoped to only the `agileworks-erp-backups`
   bucket — it cannot read, write, or delete anything in the application's
   own `agileworks-erp-documents` bucket, and vice versa.

@@ -1,5 +1,8 @@
 # AgileWorks HVAC ERP
 
+For the Supabase database and owner's Render account migration, see
+[the cutover runbook](docs/architecture/supabase-render-cutover.md).
+
 Custom HVAC service management ERP for AgileWorks Solutions OPC. This repo
 currently contains **Phase 1 only** — the platform foundation (auth, RBAC,
 audit log, system settings) — per the approved Rev 7 architecture blueprint.

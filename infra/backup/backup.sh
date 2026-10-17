@@ -80,9 +80,9 @@ echo "Starting backup: ${DUMP_NAME}"
 # 1. Dump — read-only, app_backup role. libpq picks up PGHOST/PGPORT/
 #    PGDATABASE/PGUSER/PGPASSWORD from the environment automatically; no
 #    connection string is ever built or passed as an argument.
-pg_dump --format=directory --file="$DUMP_DIR" || fail "pg_dump exited non-zero"
+pg_dump --schema=public --enable-row-security --format=directory --file="$DUMP_DIR" || fail "pg_dump exited non-zero"
 
-# 2. Compress into one object (mirrors the shape of Render's own exports).
+# 2. Compress into one object.
 tar czf "$ARCHIVE" -C /tmp "$DUMP_NAME" || fail "tar compression failed"
 
 # 3. Upload. rclone reads all R2 connection details from the
