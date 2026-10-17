@@ -251,6 +251,7 @@ model User {
   // requirement whenever more than one FK on the same model points at the
   // same target — same pattern already used above for quotation_revisions.
   workOrdersCreated                  WorkOrder[]                         @relation("WorkOrderCreatedBy")
+  workOrdersManaged                  WorkOrder[]                         @relation("WorkOrderResponsibleManager")
   workOrdersStarted                  WorkOrder[]                         @relation("WorkOrderStartedBy")
   workOrdersFieldCompleted           WorkOrder[]                         @relation("WorkOrderFieldCompletedBy")
   workOrdersCompleted                WorkOrder[]                         @relation("WorkOrderCompletedBy")
@@ -297,8 +298,26 @@ model Role {
 
   userRoles       UserRole[]
   rolePermissions RolePermission[]
+  registrationRequests RegistrationRequest[]
 
   @@map("roles")
+}
+
+// Applicant details are separate from users until Admin/Owner approves them.
+// Declining removes the request without deleting an established user account.
+model RegistrationRequest {
+  id              String   @id @default(uuid())
+  fullName        String   @map("full_name") @db.VarChar(160)
+  email           String   @unique @db.VarChar(255)
+  phone           String?  @db.VarChar(30)
+  passwordHash    String   @map("password_hash") @db.VarChar(255)
+  requestedRoleId String   @map("requested_role_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  requestedRole Role @relation(fields: [requestedRoleId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt])
+  @@map("registration_requests")
 }
 
 model UserRole {
@@ -819,7 +838,7 @@ model QuotationRevision {
   // and no ambiguity from a role that might change on the user later.
   // approvedBy/approvedAt below are UNCHANGED in meaning: still "who/when
   // this revision became APPROVED" — populated by Manager's action for a
-  // <=200k revision, or by Owner's action for a >200k one. Kept for V1
+  // <=50k revision, or by Owner's action for a >50k one. Kept for V1
   // compatibility rather than removed, per the approved plan.
   managerApprovedBy   String?                 @map("manager_approved_by")
   managerApprovedAt   DateTime?               @map("manager_approved_at")
@@ -1173,6 +1192,7 @@ model WorkOrder {
   actualNetProfitMarginPercent Decimal? @map("actual_net_profit_margin_percent") @db.Decimal(6, 2)
 
   createdBy                   String?   @map("created_by")
+  responsibleManagerId        String?   @map("responsible_manager_id")
   // D6 — the assigned technician's own self-start action (backend-verified
   // against work_order_assignments, not just the permission grant) writes
   // these, distinct from staff-driven completion.
@@ -1218,6 +1238,7 @@ model WorkOrder {
   quotation                   Quotation?         @relation(fields: [quotationId], references: [id], onDelete: SetNull)
   quotationRevision           QuotationRevision? @relation(fields: [quotationRevisionId], references: [id], onDelete: SetNull)
   createdByUser               User?              @relation("WorkOrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  responsibleManager          User?              @relation("WorkOrderResponsibleManager", fields: [responsibleManagerId], references: [id], onDelete: SetNull)
   startedByUser               User?              @relation("WorkOrderStartedBy", fields: [startedBy], references: [id], onDelete: SetNull)
   fieldCompletedByUser        User?              @relation("WorkOrderFieldCompletedBy", fields: [fieldCompletedBy], references: [id], onDelete: SetNull)
   completedByUser             User?              @relation("WorkOrderCompletedBy", fields: [completedBy], references: [id], onDelete: SetNull)
@@ -1239,6 +1260,7 @@ model WorkOrder {
   @@index([quotationRevisionId])
   @@index([status])
   @@index([createdBy])
+  @@index([responsibleManagerId])
   @@map("work_orders")
 }
 

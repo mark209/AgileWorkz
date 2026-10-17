@@ -160,7 +160,7 @@ const PHASE3_PERMISSIONS: Array<{ module: string; action: string; description: s
   { module: "quotations", action: "create", description: "Create a new quotation (header + Revision 0)" },
   { module: "quotations", action: "read", description: "View quotations and their revisions" },
   { module: "quotations", action: "update", description: "Edit a DRAFT revision's content — sections, line items, terms, amounts" },
-  { module: "quotations", action: "approve", description: "Approve a PENDING_APPROVAL revision — Level 1 (Manager). Finalizes it if <=200k; advances to PENDING_OWNER_APPROVAL if >200k" },
+  { module: "quotations", action: "approve", description: "Approve a PENDING_APPROVAL revision — Level 1 (Manager). Finalizes it if <=50k; advances to PENDING_OWNER_APPROVAL if >50k" },
   { module: "quotations", action: "reject", description: "Reject a PENDING_APPROVAL revision — Level 1 (Manager), terminal, never reaches Owner" },
   {
     module: "quotations",
@@ -358,7 +358,7 @@ const EQUIPMENT_SYSTEM_TYPES: Array<{ code: string; label: string; sortOrder: nu
 const SYSTEM_SETTINGS: Array<{ key: string; value: string; valueType: "NUMBER"; description: string }> = [
   {
     key: "quotation_approval_threshold_php",
-    value: "200000",
+    value: "50000",
     valueType: "NUMBER",
     description:
       "Two-level approval correction: revisions at or below this amount (PHP) need Manager approval only; above it need Manager (Level 1) then Owner (Level 2) approval, sequentially. Amount-only — discount percentage plays no part in approval routing.",
@@ -389,6 +389,7 @@ const SYSTEM_SETTINGS: Array<{ key: string; value: string; valueType: "NUMBER"; 
 const PHASE4_PERMISSIONS: Array<{ module: string; action: string; description: string }> = [
   { module: "work_orders", action: "create", description: "Create a new Work Order, from a quotation or standalone" },
   { module: "work_orders", action: "read", description: "View all Work Orders" },
+  { module: "work_orders", action: "read_assigned", description: "View Work Orders explicitly assigned to the responsible Manager" },
   { module: "work_orders", action: "read_own", description: "View only Work Orders the caller is actively assigned to (Technician, backend-filtered)" },
   { module: "work_orders", action: "update", description: "Edit a Work Order's fields" },
   { module: "work_orders", action: "assign", description: "Assign, reassign, or unassign technicians on a Work Order" },
@@ -450,6 +451,7 @@ const PHASE4_SYSTEM_SETTINGS: Array<{ key: string; value: string; valueType: "ST
 const PHASE5_PERMISSIONS: Array<{ module: string; action: string; description: string }> = [
   { module: "service_reports", action: "upload", description: "Upload a Service Report's original document and create its record (Technician: own only, enforced by uploaded_by = caller)" },
   { module: "service_reports", action: "read", description: "View any Service Report, full content" },
+  { module: "service_reports", action: "read_assigned", description: "View reports linked to Work Orders assigned to the responsible Manager" },
   { module: "service_reports", action: "read_own", description: "View only the caller's own uploaded Service Reports, status/processing visibility only (Technician, backend-filtered)" },
   // Phase 5 Step 5 decision: verification authorization is role-based only.
   // An Office Staff/Manager/Admin-Owner holder of this permission may
@@ -810,7 +812,8 @@ async function main() {
   console.log("Granting Admin/Owner and Manager their Phase 4 permission set (all except read_own/start_own)...");
   for (const roleName of ["Admin/Owner", "Manager"] as const) {
     const role = roles.get(roleName)!;
-    for (const key of ADMIN_MANAGER_PHASE4_GRANTS) {
+    for (const originalKey of ADMIN_MANAGER_PHASE4_GRANTS) {
+      const key = roleName === "Manager" && originalKey === "work_orders.read" ? "work_orders.read_assigned" : originalKey;
       const permission = phase4Permissions.get(key)!;
       await prisma.rolePermission.upsert({
         where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
@@ -864,7 +867,8 @@ async function main() {
   console.log("Granting Admin/Owner and Manager their Phase 5 permission set (all five, including lock)...");
   for (const roleName of ["Admin/Owner", "Manager"] as const) {
     const role = roles.get(roleName)!;
-    for (const key of ADMIN_MANAGER_PHASE5_GRANTS) {
+    for (const originalKey of ADMIN_MANAGER_PHASE5_GRANTS) {
+      const key = roleName === "Manager" && originalKey === "service_reports.read" ? "service_reports.read_assigned" : originalKey;
       const permission = phase5Permissions.get(key)!;
       await prisma.rolePermission.upsert({
         where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },

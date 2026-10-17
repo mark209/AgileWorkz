@@ -161,6 +161,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   service_report_upload_idempotency_keys
   TO app_runtime;
 
+-- Pending registrations may be listed, created, or removed only by the API.
+-- No UPDATE grant is needed: approval and decline delete the request after
+-- recording the decision in the existing audit log.
+GRANT SELECT, INSERT, DELETE ON registration_requests TO app_runtime;
+
 -- ocr_worker — the Phase 1 policy record's non-negotiable rule, executed
 -- exactly as specified in docs/architecture/ocr-worker-db-isolation.md:
 -- SELECT, INSERT, UPDATE on exactly these six tables, granted table-by-table

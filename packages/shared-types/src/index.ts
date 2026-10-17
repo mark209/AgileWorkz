@@ -21,6 +21,18 @@ export const DEFAULT_ROLE_NAMES = [
 ] as const;
 export type DefaultRoleName = (typeof DEFAULT_ROLE_NAMES)[number];
 
+export interface RequestableDesignation { id: string; name: string }
+
+export interface RegistrationRequestInput {
+  fullName: string;
+  email: string;
+  phone?: string;
+  password: string;
+  requestedRoleId: string;
+}
+
+export interface RegistrationResponse { message: string }
+
 export interface PermissionRef {
   module: string;
   action: string;
