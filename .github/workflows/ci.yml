@@ -81,6 +81,15 @@ jobs:
       - name: Generate Prisma Client
         run: pnpm prisma:generate
 
+      - name: Create Supabase compatibility roles
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d agileworks_erp -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE ROLE app_runtime NOLOGIN;
+          CREATE ROLE app_backup NOLOGIN;
+          SQL
+
       - name: Apply migrations
         run: pnpm prisma:migrate:deploy
 
