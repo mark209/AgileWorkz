@@ -1,0 +1,99 @@
+services:
+  - type: web
+    name: agileworkz-api
+    runtime: node
+    repo: https://github.com/mark209/AgileWorkz
+    branch: main
+    region: singapore
+    plan: free
+    autoDeployTrigger: "off"
+    buildCommand: pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm --filter @agileworks/api build
+    startCommand: pnpm --filter @agileworks/api start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: OCR_WORKER_DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: REDIS_URL
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: EXTRACTION_PROVIDER
+        value: stub
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: WEB_APP_ORIGIN
+        fromService:
+          type: web
+          name: agileworkz-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: FIELD_APP_ORIGIN
+        fromService:
+          type: web
+          name: agileworkz-field
+          envVarKey: RENDER_EXTERNAL_URL
+
+  - type: web
+    name: agileworkz-web
+    runtime: node
+    repo: https://github.com/mark209/AgileWorkz
+    branch: main
+    region: singapore
+    plan: free
+    autoDeployTrigger: "off"
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @agileworks/web build
+    startCommand: pnpm --filter @agileworks/web start
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: PORT
+        value: "3000"
+      - key: NEXT_PUBLIC_API_BASE_URL
+        fromService:
+          type: web
+          name: agileworkz-api
+          envVarKey: RENDER_EXTERNAL_URL
+
+  - type: web
+    name: agileworkz-field
+    runtime: node
+    repo: https://github.com/mark209/AgileWorkz
+    branch: main
+    region: singapore
+    plan: free
+    autoDeployTrigger: "off"
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @agileworks/field build
+    startCommand: pnpm --filter @agileworks/field start
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: PORT
+        value: "3002"
+      - key: NEXT_PUBLIC_API_BASE_URL
+        fromService:
+          type: web
+          name: agileworkz-api
+          envVarKey: RENDER_EXTERNAL_URL
