@@ -180,9 +180,11 @@ describe("Service Report Human Verification Workflow (live)", () => {
   });
 
   describe("Verification queue list (GET /service-reports)", () => {
-    it("rejects a Technician (no unscoped read permission) from listing the verification queue", async () => {
+    it("limits a Technician's verification queue to their own reports", async () => {
+      const { report } = await createPendingVerificationReport("queue-other-uploader", officeStaff.user.id, []);
       const res = await request(app.getHttpServer()).get("/service-reports").set("Authorization", technician.authHeader);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.body.map((r: { id: string }) => r.id)).not.toContain(report.id);
     });
 
     it("lists PENDING_VERIFICATION reports by default for a user with service_reports.read", async () => {
