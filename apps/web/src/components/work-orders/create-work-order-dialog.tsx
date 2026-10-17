@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { createStandaloneWorkOrder, type Site, type StandaloneReasonType } from "@/lib/api";
+import { createStandaloneWorkOrder, listManagers, type Site, type StandaloneReasonType } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,9 +35,11 @@ const STANDALONE_REASON_TYPE_LABEL: Record<StandaloneReasonType, string> = {
 // without them.
 export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { customerId: string; sites: Site[]; onCreated: () => void }) {
   const router = useRouter();
-  const { accessToken } = useAuth();
+  const { accessToken, user, hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
   const [siteId, setSiteId] = useState("");
+  const [responsibleManagerId, setResponsibleManagerId] = useState("");
+  const [managers, setManagers] = useState<Array<{ id: string; fullName: string }>>([]);
   const [standaloneReason, setStandaloneReason] = useState("");
   const [standaloneReasonType, setStandaloneReasonType] = useState<StandaloneReasonType>("INTERNAL");
   const [estimatedValue, setEstimatedValue] = useState("");
@@ -46,8 +48,13 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (open && accessToken) listManagers(accessToken).then(setManagers).catch(() => setManagers([]));
+  }, [open, accessToken]);
+
   function resetForm() {
     setSiteId("");
+    setResponsibleManagerId("");
     setStandaloneReason("");
     setStandaloneReasonType("INTERNAL");
     setEstimatedValue("");
@@ -64,6 +71,7 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
     try {
       const workOrder = await createStandaloneWorkOrder(accessToken, customerId, {
         siteId,
+        responsibleManagerId: responsibleManagerId || undefined,
         standaloneReason,
         standaloneReasonType,
         estimatedValue: estimatedValue ? Number(estimatedValue) : undefined,
@@ -73,7 +81,11 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
       setOpen(false);
       resetForm();
       onCreated();
-      router.push(`/work-orders/${workOrder.id}`);
+      if (hasPermission("work_orders", "read") || responsibleManagerId === user?.id) {
+        router.push(`/work-orders/${workOrder.id}`);
+      } else {
+        router.push("/work-orders");
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to create work order.");
     } finally {
@@ -103,6 +115,13 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
           </DialogHeader>
 
           <div className="mt-4 space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="wo-manager">Responsible Manager (optional)</Label>
+              <Select id="wo-manager" value={responsibleManagerId} onChange={(e) => setResponsibleManagerId(e.target.value)}>
+                <option value="">Unassigned</option>
+                {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.fullName}</option>)}
+              </Select>
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="wo-site">Site</Label>
               <Select id="wo-site" value={siteId} onChange={(e) => setSiteId(e.target.value)} required>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import {
   listAuditLogs,
@@ -18,10 +19,10 @@ import {
 import { ApiError } from "@/lib/api-client";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
+import { StatusBadge } from "@/components/shared/status-badge";
 
 interface SectionState<T> {
   data: T | null;
@@ -42,23 +43,26 @@ const initialSection = { data: null, error: null };
  * but permission-identical) list endpoint.
  */
 export default function DashboardPage() {
-  const { user, accessToken, hasPermission, isLoading: authLoading, logout } = useAuth();
+  const { user, accessToken, hasPermission, isLoading: authLoading } = useAuth();
   const router = useRouter();
+  const managerView = !!user?.roles.includes("Manager") && !user.roles.includes("Admin/Owner");
+  const officeView = !!user?.roles.includes("Office Staff") && !managerView && !user.roles.includes("Admin/Owner");
+  const technicianView = !!user?.roles.includes("Technician") && !managerView && !officeView && !user.roles.includes("Admin/Owner");
+  const adminView = !!user?.roles.includes("Admin/Owner");
 
   useEffect(() => {
     if (!authLoading && !user) router.replace("/login");
   }, [authLoading, user, router]);
 
   const canReadCustomers = hasPermission("customers", "read");
-  const canReadServiceReports = hasPermission("service_reports", "read");
+  const canReadServiceReports = hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned");
   const canReadQuotations = hasPermission("quotations", "read");
-  // Deliberately the unscoped permission only — Technician's read_own does
-  // NOT unlock this section (approved: "do not broaden Technician
-  // permissions merely to make the Dashboard look fuller"; their own jobs
-  // remain reachable only via GET /work-orders/mine, which has no frontend
-  // page to show them on yet).
-  const canReadWorkOrders = hasPermission("work_orders", "read");
-  const canReadAudit = hasPermission("audit_logs", "read");
+  const canReadWorkOrders = hasPermission("work_orders", "read") || hasPermission("work_orders", "read_assigned") || hasPermission("work_orders", "read_own");
+  const canReadAudit = !managerView && hasPermission("audit_logs", "read");
+  const canApproveQuotations = hasPermission("quotations", "approve");
+  const canApproveFinal = hasPermission("quotations", "approve_final");
+  const canVerifyReports = canReadServiceReports && hasPermission("service_reports", "verify");
+  const canCancelWorkOrders = hasPermission("work_orders", "cancel");
 
   const [customers, setCustomers] = useState<SectionState<Customer[]>>(initialSection);
   const [serviceReports, setServiceReports] = useState<SectionState<ServiceReportListItem[]>>(initialSection);
@@ -68,52 +72,38 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-
+    const requests: Promise<void>[] = [];
     if (canReadCustomers) {
       setCustomers(initialSection);
-      try {
-        setCustomers({ data: await listCustomers(accessToken), error: null });
-      } catch (e) {
-        setCustomers({ data: null, error: e instanceof ApiError ? e.message : "Failed to load customers." });
-      }
+      requests.push(listCustomers(accessToken).then((data) => setCustomers({ data, error: null }))
+        .catch((e) => setCustomers({ data: null, error: e instanceof ApiError ? e.message : "Failed to load customers." })));
     }
 
     if (canReadServiceReports) {
       setServiceReports(initialSection);
-      try {
-        setServiceReports({ data: await listServiceReports(accessToken, "PENDING_VERIFICATION,VERIFIED,CONFIRMED"), error: null });
-      } catch (e) {
-        setServiceReports({ data: null, error: e instanceof ApiError ? e.message : "Failed to load service reports." });
-      }
+      requests.push(listServiceReports(accessToken, "PENDING_VERIFICATION,VERIFIED,CONFIRMED").then((data) => setServiceReports({ data, error: null }))
+        .catch((e) => setServiceReports({ data: null, error: e instanceof ApiError ? e.message : "Failed to load service reports." })));
     }
 
     if (canReadQuotations) {
       setQuotations(initialSection);
-      try {
-        setQuotations({ data: await listQuotations(accessToken, "PENDING_APPROVAL,SENT"), error: null });
-      } catch (e) {
-        setQuotations({ data: null, error: e instanceof ApiError ? e.message : "Failed to load quotations." });
-      }
+      requests.push(listQuotations(accessToken, "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT").then((data) => setQuotations({ data, error: null }))
+        .catch((e) => setQuotations({ data: null, error: e instanceof ApiError ? e.message : "Failed to load quotations." })));
     }
 
     if (canReadWorkOrders) {
       setWorkOrders(initialSection);
-      try {
-        setWorkOrders({ data: await listWorkOrders(accessToken, "SCHEDULED,IN_PROGRESS"), error: null });
-      } catch (e) {
-        setWorkOrders({ data: null, error: e instanceof ApiError ? e.message : "Failed to load work orders." });
-      }
+      requests.push(listWorkOrders(accessToken, managerView || technicianView ? undefined : "SCHEDULED,IN_PROGRESS", managerView).then((data) => setWorkOrders({ data, error: null }))
+        .catch((e) => setWorkOrders({ data: null, error: e instanceof ApiError ? e.message : "Failed to load work orders." })));
     }
 
     if (canReadAudit) {
       setAuditLogs(initialSection);
-      try {
-        setAuditLogs({ data: await listAuditLogs(accessToken, 10), error: null });
-      } catch (e) {
-        setAuditLogs({ data: null, error: e instanceof ApiError ? e.message : "Failed to load recent activity." });
-      }
+      requests.push(listAuditLogs(accessToken, 8).then((data) => setAuditLogs({ data, error: null }))
+        .catch((e) => setAuditLogs({ data: null, error: e instanceof ApiError ? e.message : "Failed to load recent activity." })));
     }
-  }, [accessToken, canReadCustomers, canReadServiceReports, canReadQuotations, canReadWorkOrders, canReadAudit]);
+    await Promise.all(requests);
+  }, [accessToken, canReadCustomers, canReadServiceReports, canReadQuotations, canReadWorkOrders, canReadAudit, managerView, technicianView]);
 
   useEffect(() => {
     load();
@@ -132,24 +122,30 @@ export default function DashboardPage() {
     return render(state.data);
   }
 
+  const attentionItems = [
+    ...(canApproveQuotations ? (quotations.data ?? []).filter((q) => q.status === "PENDING_APPROVAL").map((q) => ({
+      id: q.id, label: `${q.quotationNumber} · Manager review`, href: `/quotations/${q.id}`,
+    })) : []),
+    ...(canApproveFinal ? (quotations.data ?? []).filter((q) => q.status === "PENDING_OWNER_APPROVAL").map((q) => ({
+      id: q.id, label: `${q.quotationNumber} · Owner review`, href: `/quotations/${q.id}`,
+    })) : []),
+    ...(canVerifyReports ? (serviceReports.data ?? []).filter((r) => r.status === "PENDING_VERIFICATION").map((r) => ({
+      id: r.id, label: `${r.serviceReportNumber} · Verify report`, href: `/service-reports/${r.id}/verify`,
+    })) : []),
+    ...(canCancelWorkOrders ? (workOrders.data ?? []).filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).map((w) => ({
+      id: w.id, label: `${w.workOrderNumber} · Cancellation request`, href: `/work-orders/${w.id}`,
+    })) : []),
+  ].slice(0, 6);
+  const attentionLoading = (canApproveQuotations || canApproveFinal) && quotations.data === null && !quotations.error
+    || canVerifyReports && serviceReports.data === null && !serviceReports.error
+    || canCancelWorkOrders && workOrders.data === null && !workOrders.error;
+  const attentionError = (canApproveQuotations || canApproveFinal) && quotations.error
+    || canVerifyReports && serviceReports.error
+    || canCancelWorkOrders && workOrders.error;
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">
-      <PageHeader
-        title={`Welcome, ${user.fullName}`}
-        description={user.roles.join(", ") || "No roles assigned"}
-        actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await logout();
-              router.push("/login");
-            }}
-          >
-            Sign out
-          </Button>
-        }
-      />
+      <PageHeader title={managerView ? "Manager Dashboard" : officeView ? "Office Staff Dashboard" : technicianView ? "Technician Dashboard" : adminView ? "Super Admin Dashboard" : "Dashboard"} description={`Welcome, ${user.fullName}. ${managerView || technicianView ? "Review services assigned to you." : "Review current work and recent changes."}`} actions={managerView && hasPermission("work_orders", "create") ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Choose customer to create Service</Link> : technicianView && canReadWorkOrders ? <Link href="/work-orders" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">View assigned services</Link> : undefined} />
 
       {!hasAnySection && (
         <p className="text-sm text-muted-foreground">
@@ -157,8 +153,64 @@ export default function DashboardPage() {
         </p>
       )}
 
+      {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders || canReadAudit) && (
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+          {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders) && (
+            <Card>
+              <CardHeader><CardTitle>Needs Attention</CardTitle></CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {attentionItems.map((item) => <Link key={item.id} className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={item.href}><span>{item.label}</span><span className="ml-3 font-medium">Open →</span></Link>)}
+                {attentionLoading && <LoadingState label="Loading items needing attention…" />}
+                {attentionError && <ErrorState message="Some items could not be loaded." onRetry={load} />}
+                {!attentionLoading && !attentionError && attentionItems.length === 0 && <p className="text-muted-foreground">No items currently need your attention.</p>}
+              </CardContent>
+            </Card>
+          )}
+          {canReadAudit && (
+            <Card>
+              <CardHeader><CardTitle>Recent Activity</CardTitle></CardHeader>
+              <CardContent>
+                {section(auditLogs, (data) =>
+                  data.length === 0 ? (
+                    <EmptyState title="No recent activity" description="Nothing has been logged yet." />
+                  ) : (
+                    <RecentActivityList entries={data} />
+                  ),
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {(managerView || technicianView) && canReadWorkOrders && (
+        <Card>
+          <CardHeader><CardTitle>My Assigned Services</CardTitle></CardHeader>
+          <CardContent>
+            {section(workOrders, (data) => data.length === 0 ? (
+              <EmptyState title="No assigned services" description="Work Orders explicitly assigned to you will appear here." />
+            ) : (
+              <ul className="space-y-2">
+                {data.slice(0, 5).map((workOrder) => (
+                  <li key={workOrder.id} className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-medium">{workOrder.workOrderNumber}</p>
+                      <p className="text-sm text-muted-foreground">{workOrder.customer.name} · {workOrder.site.label}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={workOrder.status} />
+                      <Link href={`/work-orders/${workOrder.id}`} className="text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View Service</Link>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {(canReadCustomers || canReadServiceReports || canReadQuotations || canReadWorkOrders) && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {canReadCustomers &&
             section(customers, (data) => (
               <KpiCard label="Active Customers" value={data.filter((c) => c.status === "ACTIVE").length} href="/customers" />
@@ -186,6 +238,11 @@ export default function DashboardPage() {
                   href="/quotations?status=PENDING_APPROVAL"
                 />
                 <KpiCard
+                  label="Quotations — Pending Owner Approval"
+                  value={data.filter((q) => q.status === "PENDING_OWNER_APPROVAL").length}
+                  href="/quotations?status=PENDING_OWNER_APPROVAL"
+                />
+                <KpiCard
                   label="Quotations — Awaiting Customer Decision"
                   value={data.filter((q) => q.status === "SENT").length}
                   href="/quotations?status=SENT"
@@ -199,39 +256,23 @@ export default function DashboardPage() {
                 <KpiCard
                   label="Work Orders — Scheduled"
                   value={data.filter((w) => w.status === "SCHEDULED").length}
-                  href="/work-orders?status=SCHEDULED"
+                  href={`/work-orders?status=SCHEDULED${managerView ? "&scope=assigned" : ""}`}
                 />
                 <KpiCard
                   label="Work Orders — In Progress"
                   value={data.filter((w) => w.status === "IN_PROGRESS").length}
-                  href="/work-orders?status=IN_PROGRESS"
+                  href={`/work-orders?status=IN_PROGRESS${managerView ? "&scope=assigned" : ""}`}
                 />
                 <KpiCard
                   label="Work Orders — Cancellation Requested"
                   value={data.filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).length}
-                  href="/work-orders?status=SCHEDULED,IN_PROGRESS"
+                  href={`/work-orders?status=SCHEDULED,IN_PROGRESS${managerView ? "&scope=assigned" : ""}`}
                 />
               </>
             ))}
         </div>
       )}
 
-      {canReadAudit && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {section(auditLogs, (data) =>
-              data.length === 0 ? (
-                <EmptyState title="No recent activity" description="Nothing has been logged yet." />
-              ) : (
-                <RecentActivityList entries={data} />
-              ),
-            )}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

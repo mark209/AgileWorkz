@@ -89,9 +89,11 @@ export function ConvertToQuotationDialog({ inquiry, sites }: { inquiry: Inquiry;
                   </option>
                 ))}
               </Select>
+              <p className="text-xs text-muted-foreground">Choose the service location for this quotation.</p>
+              {sites.length === 0 && <p className="text-xs text-muted-foreground">Add a site on this customer record before converting the inquiry.</p>}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="convert-type">Quotation type</Label>
                 <Select id="convert-type" value={quotationType} onChange={(e) => setQuotationType(e.target.value as QuotationType)}>
@@ -101,6 +103,7 @@ export function ConvertToQuotationDialog({ inquiry, sites }: { inquiry: Inquiry;
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Select the work this quotation covers.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="convert-trade">Primary trade</Label>
@@ -114,6 +117,7 @@ export function ConvertToQuotationDialog({ inquiry, sites }: { inquiry: Inquiry;
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Choose the main trade for the work.</p>
               </div>
             </div>
 

@@ -118,7 +118,7 @@ export function WorkOrderLifecycleActions({ workOrder, onChanged }: { workOrder:
         open={dialog === "close"}
         onOpenChange={(open) => !open && setDialog(null)}
         title="Close this work order?"
-        description="Final administrative sign-off. Do this once records and any applicable actual costs have been reviewed."
+        description="Final administrative sign-off requires a verified Service Report. Review the linked report and any applicable actual costs first."
         reasonMode="none"
         confirmLabel="Close Work Order"
         submitting={submitting}

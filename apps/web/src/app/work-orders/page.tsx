@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { listWorkOrders, type WorkOrder } from "@/lib/api";
@@ -10,6 +11,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 /**
@@ -32,22 +34,25 @@ function WorkOrdersListPageContent() {
   const { accessToken, hasPermission, isLoading: authLoading } = useAuth();
   const searchParams = useSearchParams();
   const status = searchParams.get("status") ?? undefined;
+  const assignedOnly = searchParams.get("scope") === "assigned";
 
   const [workOrders, setWorkOrders] = useState<WorkOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-  const canRead = hasPermission("work_orders", "read");
+  const canRead = hasPermission("work_orders", "read") || hasPermission("work_orders", "read_assigned") || hasPermission("work_orders", "read_own");
+  const assignedScope = assignedOnly || !hasPermission("work_orders", "read");
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
     setError(null);
     setWorkOrders(null);
     try {
-      setWorkOrders(await listWorkOrders(accessToken, status));
+        setWorkOrders(await (assignedOnly ? listWorkOrders(accessToken, status, true) : listWorkOrders(accessToken, status)));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load work orders.");
+      setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Work Orders." : e instanceof ApiError ? e.message : "Failed to load work orders.");
     }
-  }, [accessToken, canRead, status]);
+  }, [accessToken, canRead, status, assignedOnly]);
 
   useEffect(() => {
     load();
@@ -62,22 +67,40 @@ function WorkOrdersListPageContent() {
     );
   }
 
+  const query = search.trim().toLowerCase();
+  const visibleWorkOrders = workOrders?.filter((wo) =>
+    wo.workOrderNumber.toLowerCase().includes(query) ||
+    wo.customer.name.toLowerCase().includes(query) ||
+    wo.site.label.toLowerCase().includes(query),
+  ) ?? [];
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
       <PageHeader
         title="Work Orders"
-        description={status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}
+        description={assignedScope ? "Work Orders assigned to you." : status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}
       />
+
+      <div className="relative mb-4 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input aria-label="Search work orders" placeholder="Search work order, customer, or site" className="pl-8" value={search} onChange={(event) => setSearch(event.target.value)} />
+      </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
       {!workOrders && !error && <LoadingState label="Loading work orders…" />}
       {workOrders && workOrders.length === 0 && (
-        <EmptyState title="No work orders found" description="No work orders match the current filter." />
+        <div className="space-y-3">
+          <EmptyState title={assignedScope ? "No assigned services" : "No work orders found"} description={assignedScope ? "Work Orders assigned to you will appear here." : "No work orders match the current filter."} />
+          {status && <Link href="/work-orders" className="inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
+        </div>
+      )}
+      {workOrders && workOrders.length > 0 && visibleWorkOrders.length === 0 && (
+        <EmptyState title="No matching work orders" description="Try a different search term." />
       )}
 
-      {workOrders && workOrders.length > 0 && (
+      {visibleWorkOrders.length > 0 && (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="overflow-x-auto pt-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -92,9 +115,9 @@ function WorkOrdersListPageContent() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {workOrders.map((wo) => (
+                {visibleWorkOrders.map((wo) => (
                   <TableRow key={wo.id}>
-                    <TableCell className="font-medium">{wo.workOrderNumber}</TableCell>
+                    <TableCell className="font-medium"><Link href={`/work-orders/${wo.id}`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{wo.workOrderNumber}</Link></TableCell>
                     <TableCell>{wo.customer.name}</TableCell>
                     <TableCell>{wo.site.label}</TableCell>
                     <TableCell>{wo.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}</TableCell>

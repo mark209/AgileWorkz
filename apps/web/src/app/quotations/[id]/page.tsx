@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AlertCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
@@ -8,6 +8,7 @@ import { useReferenceData } from "@/lib/use-reference-data";
 import {
   getCustomer,
   getQuotation,
+  getQuotationPdf,
   getQuotationRevision,
   getMaintenanceDetails,
   listAssetsForSite,
@@ -31,6 +32,8 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
+import { Button } from "@/components/ui/button";
 import { QuotationHeaderCard } from "@/components/quotations/quotation-header-card";
 import { RevisionHistoryNav } from "@/components/quotations/revision-history-nav";
 import { RevisionSummaryCard } from "@/components/quotations/revision-summary-card";
@@ -63,6 +66,10 @@ export default function QuotationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pendingRevisionId, setPendingRevisionId] = useState<string | null>(null);
+  const revisionRequest = useRef(0);
 
   const loadQuotation = useCallback(async () => {
     if (!accessToken) return;
@@ -93,6 +100,7 @@ export default function QuotationDetailPage() {
   const loadRevisionDetail = useCallback(
     async (revisionId: string) => {
       if (!accessToken || !quotation) return;
+      const request = ++revisionRequest.current;
       setRevisionError(null);
       try {
         const [rev, secs, lines, testing] = await Promise.all([
@@ -101,16 +109,20 @@ export default function QuotationDetailPage() {
           listLineItems(accessToken, quotation.id, revisionId),
           listTestingItems(accessToken, quotation.id, revisionId),
         ]);
+        if (request !== revisionRequest.current) return;
         setRevision(rev);
         setSections(secs);
         setLineItems(lines);
         setTestingItems(testing);
         if (quotation.quotationType === "PREVENTIVE_MAINTENANCE") {
-          setMaintenanceDetails(await getMaintenanceDetails(accessToken, quotation.id, revisionId));
+          const details = await getMaintenanceDetails(accessToken, quotation.id, revisionId);
+          if (request !== revisionRequest.current) return;
+          setMaintenanceDetails(details);
         } else {
           setMaintenanceDetails(null);
         }
       } catch (e) {
+        if (request !== revisionRequest.current) return;
         setRevisionError(e instanceof ApiError ? e.message : "Failed to load this revision.");
       }
     },
@@ -148,9 +160,31 @@ export default function QuotationDetailPage() {
   // revision. Calling loadRevisionDetail with the known new id directly
   // sidesteps the race entirely.
   async function handleNextRevisionCreated(newRevisionId: string) {
+    revisionRequest.current += 1;
     setViewingRevisionId(newRevisionId);
     await loadQuotation();
     await loadRevisionDetail(newRevisionId);
+  }
+
+  async function downloadPdf() {
+    if (!accessToken || !revision || !quotation) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const pdf = await getQuotationPdf(accessToken, quotation.id, revision.id);
+      const url = URL.createObjectURL(pdf);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${quotation.quotationNumber.replace(/[^a-zA-Z0-9_-]/g, "-")}-rev-${revision.revisionNumber}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      setPdfError(e instanceof ApiError ? e.message : "Could not download the quotation PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
   }
 
   if (!user) return null;
@@ -177,6 +211,22 @@ export default function QuotationDetailPage() {
   const trade = trades.find((t) => t.code === quotation.primaryTradeCode) ?? null;
   const canEdit = !!revision && revision.isCurrent && revision.status === "DRAFT" && hasPermission("quotations", "update");
 
+  function viewRevision(revisionId: string) {
+    if (revisionId === viewingRevisionId) return;
+    revisionRequest.current += 1;
+    setRevision(null);
+    setViewingRevisionId(revisionId);
+  }
+
+  function handleSelectRevision(revisionId: string) {
+    if (revisionId === viewingRevisionId) return;
+    if (canEdit) {
+      setPendingRevisionId(revisionId);
+      return;
+    }
+    viewRevision(revisionId);
+  }
+
   return (
     <main className="container py-8">
       <Breadcrumbs
@@ -189,8 +239,8 @@ export default function QuotationDetailPage() {
       />
       <PageHeader
         title={quotation.quotationNumber}
-        description={revision ? `Revision ${revision.revisionNumber}` : undefined}
-        actions={<StatusBadge status={quotation.status} />}
+        description={revision ? `Revision ${revision.revisionNumber} · ${customer.name}${site ? ` · ${site.label}` : ""}` : customer.name}
+        actions={<StatusBadge status={revision?.status ?? quotation.status} />}
       />
 
       {staleNotice && (
@@ -200,11 +250,27 @@ export default function QuotationDetailPage() {
         </div>
       )}
 
+      <h2 className="mb-3 text-base font-semibold">Customer and Site</h2>
       <QuotationHeaderCard quotation={quotation} customer={customer} site={site} trade={trade} />
 
+      <h2 className="mb-3 text-base font-semibold">History and Document</h2>
       {revisions.length > 0 && viewingRevisionId && (
-        <RevisionHistoryNav revisions={revisions} viewingRevisionId={viewingRevisionId} onSelect={setViewingRevisionId} />
+        <RevisionHistoryNav revisions={revisions} viewingRevisionId={viewingRevisionId} onSelect={handleSelectRevision} />
       )}
+      <ActionConfirmDialog
+        open={pendingRevisionId !== null}
+        onOpenChange={(open) => { if (!open) setPendingRevisionId(null); }}
+        title="Switch revisions?"
+        description="Any unsaved edits in the current draft will be lost. Save them before switching if you need to keep them."
+        reasonMode="none"
+        confirmLabel="Switch revision"
+        submitting={false}
+        error={null}
+        onConfirm={() => {
+          if (pendingRevisionId) viewRevision(pendingRevisionId);
+          setPendingRevisionId(null);
+        }}
+      />
 
       {revisionError && <ErrorState message={revisionError} onRetry={() => viewingRevisionId && loadRevisionDetail(viewingRevisionId)} />}
 
@@ -212,6 +278,19 @@ export default function QuotationDetailPage() {
 
       {!revisionError && revision && (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+            <Button variant="outline" onClick={downloadPdf} disabled={pdfBusy}>
+              {pdfBusy ? "Preparing PDF…" : revision.approvedAt ? "Download quotation PDF" : "Download draft PDF"}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              {revision.approvedAt
+                ? revision.status === "APPROVED"
+                  ? "Send this PDF outside the system. Downloading it does not mark the quotation as sent."
+                  : "Download a copy of this revision. Downloading it does not change its status."
+                : "This draft PDF is for internal review. It is not approved for customer sending."}
+            </p>
+            {pdfError && <p role="alert" className="text-sm text-destructive">{pdfError}</p>}
+          </div>
           {!revision.isCurrent && (
             <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
               This is a historical revision — it is read-only. View the current revision to make changes or take
@@ -224,9 +303,21 @@ export default function QuotationDetailPage() {
               new revision to make further changes.
             </p>
           )}
+          {revision.isCurrent && (
+            <LifecycleActionBar
+              quotationId={quotation.id}
+              revision={revision}
+              lineItemCount={lineItems.length}
+              onChanged={refreshAll}
+              onConflict={handleConflict}
+              onNextRevisionCreated={handleNextRevisionCreated}
+            />
+          )}
 
+          <h2 className="text-base font-semibold">Pricing and Tax Summary</h2>
           <RevisionSummaryCard revision={revision} />
 
+          <h2 className="text-base font-semibold">Scope and Line Items</h2>
           <RevisionFreeTextForm quotationId={quotation.id} revisionId={revision.id} canEdit={canEdit} revision={revision} onChanged={refreshAll} />
 
           <RevisionEditor
@@ -257,17 +348,6 @@ export default function QuotationDetailPage() {
             items={testingItems}
             onChanged={refreshAll}
           />
-
-          {revision.isCurrent && (
-            <LifecycleActionBar
-              quotationId={quotation.id}
-              revision={revision}
-              lineItemCount={lineItems.length}
-              onChanged={refreshAll}
-              onConflict={handleConflict}
-              onNextRevisionCreated={handleNextRevisionCreated}
-            />
-          )}
 
           {revision.isCurrent && revision.status === "ACCEPTED" && (
             <ConvertToWorkOrdersPanel

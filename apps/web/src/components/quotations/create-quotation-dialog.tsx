@@ -73,6 +73,7 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (submitting && !next) return;
         setOpen(next);
         if (!next) resetForm();
       }}
@@ -103,9 +104,11 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
                   </option>
                 ))}
               </Select>
+              <p className="text-xs text-muted-foreground">Choose the service location for this quotation.</p>
+              {sites.length === 0 && <p className="text-xs text-muted-foreground">Add a site on this customer record before creating a quotation.</p>}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="create-qt-type">Quotation type</Label>
                 <Select id="create-qt-type" value={quotationType} onChange={(e) => setQuotationType(e.target.value as QuotationType)}>
@@ -115,6 +118,7 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Select the work this quotation covers.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="create-qt-trade">Primary trade</Label>
@@ -128,10 +132,11 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Choose the main trade for the work.</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="create-qt-ref">Customer reference no. (optional)</Label>
                 <Input id="create-qt-ref" value={customerReferenceNo} onChange={(e) => setCustomerReferenceNo(e.target.value)} />
@@ -142,10 +147,11 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
               </div>
             </div>
 
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </div>
 
           <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" disabled={submitting} onClick={() => { setOpen(false); resetForm(); }}>Cancel</Button>
             <Button type="submit" disabled={submitting || !siteId || !primaryTradeCode}>
               {submitting ? "Creating…" : "Create quotation"}
             </Button>

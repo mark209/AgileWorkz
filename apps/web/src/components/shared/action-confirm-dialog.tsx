@@ -47,6 +47,7 @@ export function ActionConfirmDialog({
   const [reason, setReason] = useState("");
 
   function handleOpenChange(next: boolean) {
+    if (submitting && !next) return;
     onOpenChange(next);
     if (!next) setReason("");
   }
@@ -74,7 +75,7 @@ export function ActionConfirmDialog({
           </div>
         )}
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={submitting}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { MapPin } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
@@ -179,8 +180,8 @@ export default function SiteDetailPage() {
                   </TableHeader>
                   <TableBody>
                     {assets.map((asset) => (
-                      <TableRow key={asset.id} className="cursor-pointer" onClick={() => router.push(`/assets/${asset.id}`)}>
-                        <TableCell className="font-medium">{asset.assetTag}</TableCell>
+                      <TableRow key={asset.id}>
+                        <TableCell className="font-medium"><Link className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={`/assets/${asset.id}`}>{asset.assetTag}</Link></TableCell>
                         <TableCell>
                           {asset.equipmentSystemId ? (equipmentSystemNameById.get(asset.equipmentSystemId) ?? "—") : "—"}
                         </TableCell>

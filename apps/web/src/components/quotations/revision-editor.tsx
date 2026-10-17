@@ -8,6 +8,7 @@ import {
   deleteLineItem,
   deleteSection,
   reorderSections,
+  TAX_TREATMENT_LABEL,
   updateSection,
   type Asset,
   type QuotationLineItem,
@@ -68,7 +69,7 @@ function LineItemsTable({
                 </TableCell>
                 <TableCell>{item.unit}</TableCell>
                 <TableCell>{formatMoney(item.unitPrice)}</TableCell>
-                <TableCell>{item.taxTreatment === "VAT_INCLUSIVE" ? "VAT Inc." : "VAT EX"}</TableCell>
+                <TableCell>{TAX_TREATMENT_LABEL[item.taxTreatment]}</TableCell>
                 <TableCell className="font-medium">{formatMoney(item.lineFinalAmount)}</TableCell>
                 {canEdit && (
                   <TableCell>

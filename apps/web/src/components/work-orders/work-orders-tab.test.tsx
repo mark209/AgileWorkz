@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { Site, WorkOrder } from "@/lib/api/types";
 import { ApiError } from "@/lib/api-client";
 import { WorkOrdersTab } from "./work-orders-tab";
@@ -8,8 +7,7 @@ import { WorkOrdersTab } from "./work-orders-tab";
 const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
 
-const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: pushMock }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 const { listWorkOrdersForCustomerMock } = vi.hoisted(() => ({ listWorkOrdersForCustomerMock: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -93,17 +91,14 @@ describe("WorkOrdersTab", () => {
     expect(await screen.findByText(/no work orders yet/i)).toBeInTheDocument();
   });
 
-  it("lists this customer's work orders and navigates to the detail page on row click", async () => {
+  it("lists this customer's work orders with a keyboard-accessible detail link", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     listWorkOrdersForCustomerMock.mockResolvedValue([workOrder()]);
     render(<WorkOrdersTab customerId="c1" sites={sites} />);
 
-    const row = await screen.findByText("WO-2026-08-00001");
+    const link = await screen.findByRole("link", { name: "WO-2026-08-00001" });
     expect(listWorkOrdersForCustomerMock).toHaveBeenCalledWith("token-1", "c1");
-
-    const user = userEvent.setup();
-    await user.click(row);
-    expect(pushMock).toHaveBeenCalledWith("/work-orders/wo1");
+    expect(link).toHaveAttribute("href", "/work-orders/wo1");
   });
 
   it("surfaces a load error with retry", async () => {

@@ -18,7 +18,7 @@ const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "neutra
   PENDING_APPROVAL: "warning",
   // Two-level approval correction — a distinct "waiting on someone" state
   // from PENDING_APPROVAL, reached only after Manager's Level-1 approval on
-  // a >200k revision. Same amber family, deliberately visually distinct via
+  // a >50k revision. Same amber family, deliberately visually distinct via
   // its own label so Owner-stage waiting is never confused with Manager-
   // stage waiting.
   PENDING_OWNER_APPROVAL: "warning",

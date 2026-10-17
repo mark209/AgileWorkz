@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { convertQuotationToWorkOrders, generateMaintenanceVisits, type QuotationType } from "@/lib/api";
+import { convertQuotationToWorkOrders, generateMaintenanceVisits, listManagers, type QuotationType } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 
 /**
  * Phase 4 Operations Frontend — shown only on an ACCEPTED current revision
@@ -30,8 +31,10 @@ export function ConvertToWorkOrdersPanel({
   onConverted: () => void;
 }) {
   const router = useRouter();
-  const { accessToken, hasPermission } = useAuth();
+  const { accessToken, hasPermission, user } = useAuth();
   const [scheduledDate, setScheduledDate] = useState("");
+  const [responsibleManagerId, setResponsibleManagerId] = useState("");
+  const [managers, setManagers] = useState<Array<{ id: string; fullName: string }>>([]);
   const [startDate, setStartDate] = useState("");
   const [converting, setConverting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -39,6 +42,10 @@ export function ConvertToWorkOrdersPanel({
 
   const canCreate = hasPermission("work_orders", "create");
   const canGenerateVisits = hasPermission("work_orders", "generate_maintenance_visits");
+
+  useEffect(() => {
+    if (accessToken && canCreate) listManagers(accessToken).then(setManagers).catch(() => setManagers([]));
+  }, [accessToken, canCreate]);
 
   if (!canCreate && !canGenerateVisits) return null;
 
@@ -49,9 +56,12 @@ export function ConvertToWorkOrdersPanel({
     try {
       const created = await convertQuotationToWorkOrders(accessToken, quotationId, revisionId, {
         scheduledDate: scheduledDate || undefined,
+        responsibleManagerId: responsibleManagerId || undefined,
       });
       onConverted();
-      if (created.length === 1) router.push(`/work-orders/${created[0].id}`);
+      if (created.length === 1 && (hasPermission("work_orders", "read") || responsibleManagerId === user?.id)) {
+        router.push(`/work-orders/${created[0].id}`);
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to convert to a work order.");
     } finally {
@@ -81,6 +91,13 @@ export function ConvertToWorkOrdersPanel({
       <CardContent className="flex flex-col gap-4">
         {canCreate && (
           <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="convert-manager">Responsible Manager (optional)</Label>
+              <Select id="convert-manager" value={responsibleManagerId} onChange={(e) => setResponsibleManagerId(e.target.value)}>
+                <option value="">Unassigned</option>
+                {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.fullName}</option>)}
+              </Select>
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="convert-scheduled-date">Scheduled date (optional)</Label>
               <Input id="convert-scheduled-date" type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} />

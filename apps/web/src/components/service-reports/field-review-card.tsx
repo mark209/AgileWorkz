@@ -92,6 +92,7 @@ export function FieldReviewCard({ field, disabled, onSubmit }: FieldReviewCardPr
           ) : (
             <div className="flex w-full items-center gap-2">
               <Input
+                aria-label={`Corrected value for ${field.fieldName}`}
                 value={draftValue}
                 onChange={(e) => setDraftValue(e.target.value)}
                 placeholder="Corrected value"

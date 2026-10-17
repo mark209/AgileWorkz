@@ -262,9 +262,9 @@ export interface QuotationRevision {
   submittedAt: string | null;
   // Two-level approval correction — Manager's Level-1 event (always
   // populated once Manager acts) and Owner's Level-2 event (populated only
-  // for a >200k revision, once Owner acts). approvedBy/approvedAt below
+  // for a >50k revision, once Owner acts). approvedBy/approvedAt below
   // are unchanged in meaning: whichever action actually finalized the
-  // revision — Manager's for <=200k, Owner's for >200k.
+  // revision — Manager's for <=50k, Owner's for >50k.
   managerApprovedBy: string | null;
   managerApprovedAt: string | null;
   ownerApprovedBy: string | null;
@@ -349,7 +349,7 @@ export const QUOTATION_TYPE_LABEL: Record<QuotationType, string> = {
 
 export const TAX_TREATMENT_LABEL: Record<TaxTreatment, string> = {
   VAT_INCLUSIVE: "VAT Inclusive",
-  VAT_EXEMPT: "VAT Exempt (EX)",
+  VAT_EXEMPT: "VAT Exempt (VAT EX)",
 };
 
 export const MAINTENANCE_FREQUENCY_LABEL: Record<MaintenanceFrequency, string> = {
@@ -414,6 +414,8 @@ export interface WorkOrderTask {
 
 export interface WorkOrder {
   id: string;
+  responsibleManagerId?: string | null;
+  responsibleManager?: { id: string; fullName: string } | null;
   workOrderNumber: string;
   customerId: string;
   siteId: string;

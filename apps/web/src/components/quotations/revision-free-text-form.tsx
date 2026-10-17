@@ -159,7 +159,7 @@ export function RevisionFreeTextForm({
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-3 border-t pt-4">
+          <div className="grid grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="rf-tax">Default tax treatment</Label>
               <Select id="rf-tax" value={defaultTaxTreatment} onChange={(e) => setDefaultTaxTreatment(e.target.value as TaxTreatment)}>
@@ -169,6 +169,9 @@ export function RevisionFreeTextForm({
                   </option>
                 ))}
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Applies to new line items; each line can be changed separately. For VAT Inclusive, the calculated total includes VAT added to the entered pre-VAT price. VAT Exempt adds no VAT.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-discount-mode">Discount</Label>
@@ -176,6 +179,7 @@ export function RevisionFreeTextForm({
                 <option value="percent">Percent of subtotal</option>
                 <option value="amount">Fixed amount</option>
               </Select>
+              <p className="text-xs text-muted-foreground">Choose whether the discount is a percentage or a fixed amount.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-discount-value">{discountMode === "percent" ? "Discount %" : "Discount (₱)"}</Label>

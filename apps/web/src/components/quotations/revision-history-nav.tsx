@@ -24,8 +24,9 @@ export function RevisionHistoryNav({
           key={r.id}
           type="button"
           onClick={() => onSelect(r.id)}
+          aria-current={r.id === viewingRevisionId ? "step" : undefined}
           className={cn(
-            "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+            "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             r.id === viewingRevisionId ? "border-primary bg-accent" : "hover:bg-muted",
           )}
         >

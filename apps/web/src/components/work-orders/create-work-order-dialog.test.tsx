@@ -39,7 +39,7 @@ const sites: Site[] = [
 describe("CreateWorkOrderDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAuthMock.mockReturnValue({ accessToken: "token-1" });
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, user: { id: "admin-1", roles: ["Admin/Owner"] } });
   });
 
   it("requires a site and reason before the form can submit", async () => {

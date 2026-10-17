@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { listWorkOrdersForCustomer, type Site, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
@@ -18,7 +18,6 @@ import { CreateWorkOrderDialog } from "./create-work-order-dialog";
  * UI itself.
  */
 export function WorkOrdersTab({ customerId, sites }: { customerId: string; sites: Site[] }) {
-  const router = useRouter();
   const { accessToken, hasPermission } = useAuth();
   const [workOrders, setWorkOrders] = useState<WorkOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,8 +63,8 @@ export function WorkOrdersTab({ customerId, sites }: { customerId: string; sites
             </TableHeader>
             <TableBody>
               {workOrders.map((wo) => (
-                <TableRow key={wo.id} className="cursor-pointer" onClick={() => router.push(`/work-orders/${wo.id}`)}>
-                  <TableCell className="font-medium">{wo.workOrderNumber}</TableCell>
+                <TableRow key={wo.id}>
+                  <TableCell className="font-medium"><Link className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={`/work-orders/${wo.id}`}>{wo.workOrderNumber}</Link></TableCell>
                   <TableCell>{wo.site.label}</TableCell>
                   <TableCell>{wo.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}</TableCell>
                   <TableCell>{wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : "—"}</TableCell>

@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WorkOrderLifecycleActions } from "@/components/work-orders/work-order-lifecycle-actions";
 import { WorkOrderAssignmentPanel } from "@/components/work-orders/work-order-assignment-panel";
 import { WorkOrderServiceReportsPanel } from "@/components/work-orders/work-order-service-reports-panel";
+import { ResponsibleManagerPanel } from "@/components/work-orders/responsible-manager-panel";
 
 function fmt(value: string | null): string {
   return value === null || value === "" ? "—" : value;
@@ -26,15 +27,18 @@ export default function WorkOrderDetailPage() {
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canRead = hasPermission("work_orders", "read");
+  const canRead = hasPermission("work_orders", "read") || hasPermission("work_orders", "read_assigned") || hasPermission("work_orders", "read_own");
+  const canManageWorkOrder = ["update", "complete", "close", "request_cancel", "cancel"].some((action) => hasPermission("work_orders", action));
+  const canReadFullReports = hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned");
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
     setError(null);
+    setWorkOrder(null);
     try {
       setWorkOrder(await getWorkOrder(accessToken, params.id));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load work order.");
+      setError(e instanceof ApiError && e.status === 403 ? "Access denied: this Work Order is not assigned to you." : e instanceof ApiError ? e.message : "Failed to load work order.");
     }
   }, [accessToken, canRead, params.id]);
 
@@ -69,6 +73,15 @@ export default function WorkOrderDetailPage() {
             description={`${workOrder.customer.name} — ${workOrder.site.label}`}
             actions={<StatusBadge status={workOrder.status} />}
           />
+
+          {canManageWorkOrder && <Card>
+            <CardHeader>
+              <CardTitle>Available actions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <WorkOrderLifecycleActions workOrder={workOrder} onChanged={load} />
+            </CardContent>
+          </Card>}
 
           <Card>
             <CardHeader>
@@ -123,15 +136,6 @@ export default function WorkOrderDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Actions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <WorkOrderLifecycleActions workOrder={workOrder} onChanged={load} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
               <CardTitle>Technician Assignment</CardTitle>
             </CardHeader>
             <CardContent>
@@ -140,13 +144,18 @@ export default function WorkOrderDetailPage() {
           </Card>
 
           <Card>
+            <CardHeader><CardTitle>Responsible Manager</CardTitle></CardHeader>
+            <CardContent><ResponsibleManagerPanel workOrder={workOrder} onChanged={load} /></CardContent>
+          </Card>
+
+          {canReadFullReports && <Card>
             <CardHeader>
               <CardTitle>Linked Service Reports</CardTitle>
             </CardHeader>
             <CardContent>
               <WorkOrderServiceReportsPanel workOrderId={workOrder.id} />
             </CardContent>
-          </Card>
+          </Card>}
         </>
       )}
     </div>

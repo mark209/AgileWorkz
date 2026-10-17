@@ -86,6 +86,7 @@ export function MaintenanceDetailsPanel({
                   </option>
                 ))}
               </Select>
+              <p className="text-xs text-muted-foreground">How often the service visit takes place.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="md-visits">Scheduled visits</Label>
@@ -100,6 +101,7 @@ export function MaintenanceDetailsPanel({
                   </option>
                 ))}
               </Select>
+              <p className="text-xs text-muted-foreground">How often the customer is billed; this can differ from visit frequency.</p>
             </div>
             {error && <p className="col-span-full text-sm text-destructive">{error}</p>}
             {savedNotice && !error && <p className="col-span-full text-sm text-emerald-700">Saved.</p>}

@@ -29,6 +29,14 @@ import { InternalPanel } from "@/components/shared/internal-panel";
 
 type CostingMode = "direct" | "cost_markup";
 
+function numberError(value: string, label: string, positive = false): string | null {
+  if (value.trim() === "") return `${label} is required.`;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return `Enter a valid ${label.toLowerCase()}.`;
+  if (positive && number <= 0) return `${label} must be greater than zero.`;
+  return null;
+}
+
 export function LineItemDialog({
   open,
   onOpenChange,
@@ -73,9 +81,25 @@ export function LineItemDialog({
   const [laborAmount, setLaborAmount] = useState(editingItem?.laborAmount ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+
+  const fieldErrors = attemptedSubmit ? {
+    description: description.trim() ? null : "Description is required.",
+    quantity: numberError(quantity, "Quantity", true),
+    unit: unit.trim() ? null : "Unit is required.",
+    price: costingMode === "direct" ? numberError(unitPriceBeforeVat, "Unit selling price") : null,
+    cost: costingMode === "cost_markup" ? numberError(unitCostExpense, "Unit cost") : null,
+    markup: costingMode === "cost_markup" ? numberError(markupPercent, "Markup") : null,
+  } : null;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    setAttemptedSubmit(true);
+    if (
+      !description.trim() || !unit.trim() || numberError(quantity, "Quantity", true) ||
+      (costingMode === "direct" ? numberError(unitPriceBeforeVat, "Unit selling price") :
+        numberError(unitCostExpense, "Unit cost") || numberError(markupPercent, "Markup"))
+    ) return;
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
@@ -111,9 +135,9 @@ export function LineItemDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!submitting || next) onOpenChange(next); }}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <DialogHeader>
             <DialogTitle>{isEdit ? "Edit line item" : "Add line item"}</DialogTitle>
             <DialogDescription>Selling information the customer will see, plus optional internal costing.</DialogDescription>
@@ -122,7 +146,8 @@ export function LineItemDialog({
           <div className="mt-4 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="li-description">Description</Label>
-              <Input id="li-description" value={description} onChange={(e) => setDescription(e.target.value)} required />
+              <Input id="li-description" value={description} onChange={(e) => setDescription(e.target.value)} required aria-invalid={!!fieldErrors?.description} aria-describedby={fieldErrors?.description ? "li-description-error" : undefined} />
+              {fieldErrors?.description && <p id="li-description-error" className="text-xs text-destructive">{fieldErrors.description}</p>}
             </div>
 
             <div className="space-y-1.5">
@@ -130,7 +155,7 @@ export function LineItemDialog({
               <Textarea id="li-spec" value={specification} onChange={(e) => setSpecification(e.target.value)} rows={2} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="li-brand">Brand (optional)</Label>
                 <Input id="li-brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
@@ -141,14 +166,16 @@ export function LineItemDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label htmlFor="li-qty">Quantity</Label>
-                <Input id="li-qty" type="number" min="0.001" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+                <Input id="li-qty" type="number" min="0.001" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} required aria-invalid={!!fieldErrors?.quantity} aria-describedby={fieldErrors?.quantity ? "li-qty-error" : undefined} />
+                {fieldErrors?.quantity && <p id="li-qty-error" className="text-xs text-destructive">{fieldErrors.quantity}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="li-unit">Unit</Label>
-                <Input id="li-unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pcs, lot, set, m" required />
+                <Input id="li-unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pcs, lot, set, m" required aria-invalid={!!fieldErrors?.unit} aria-describedby={fieldErrors?.unit ? "li-unit-error" : undefined} />
+                {fieldErrors?.unit && <p id="li-unit-error" className="text-xs text-destructive">{fieldErrors.unit}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="li-tax">Tax treatment</Label>
@@ -159,10 +186,15 @@ export function LineItemDialog({
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  {taxTreatment === "VAT_INCLUSIVE"
+                    ? "Enter the unit selling price before VAT. The calculated customer total includes VAT."
+                    : "No VAT is added or extracted. The entered unit selling price is the final price."}
+                </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="li-section">Section (optional)</Label>
                 <Select id="li-section" value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
@@ -173,6 +205,7 @@ export function LineItemDialog({
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Group this item under a quotation section, or leave it ungrouped.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="li-asset">Linked asset (optional)</Label>
@@ -184,6 +217,7 @@ export function LineItemDialog({
                     </option>
                   ))}
                 </Select>
+                <p className="text-xs text-muted-foreground">Link an existing site asset only when this item concerns that equipment.</p>
               </div>
             </div>
 
@@ -196,7 +230,7 @@ export function LineItemDialog({
                 {showBreakdown ? "Hide" : "Add"} selling-price breakdown (material / labor)
               </button>
               {showBreakdown && (
-                <div className="mt-2 grid grid-cols-2 gap-3 rounded-md border p-3">
+                <div className="mt-2 grid grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="li-material">Material amount</Label>
                     <Input id="li-material" type="number" step="0.01" value={materialAmount} onChange={(e) => setMaterialAmount(e.target.value)} />
@@ -243,11 +277,14 @@ export function LineItemDialog({
                       value={unitPriceBeforeVat}
                       onChange={(e) => setUnitPriceBeforeVat(e.target.value)}
                       required={costingMode === "direct"}
+                      aria-invalid={!!fieldErrors?.price}
+                      aria-describedby={fieldErrors?.price ? "li-price-error" : undefined}
                     />
+                    {fieldErrors?.price && <p id="li-price-error" className="text-xs text-destructive">{fieldErrors.price}</p>}
                   </div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
                         <Label htmlFor="li-cost">Unit cost / expense</Label>
                         <Input
@@ -257,7 +294,10 @@ export function LineItemDialog({
                           value={unitCostExpense}
                           onChange={(e) => setUnitCostExpense(e.target.value)}
                           required={costingMode === "cost_markup"}
+                          aria-invalid={!!fieldErrors?.cost}
+                          aria-describedby={fieldErrors?.cost ? "li-cost-error" : undefined}
                         />
+                        {fieldErrors?.cost && <p id="li-cost-error" className="text-xs text-destructive">{fieldErrors.cost}</p>}
                       </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="li-markup">Markup %</Label>
@@ -268,7 +308,10 @@ export function LineItemDialog({
                           value={markupPercent}
                           onChange={(e) => setMarkupPercent(e.target.value)}
                           required={costingMode === "cost_markup"}
+                          aria-invalid={!!fieldErrors?.markup}
+                          aria-describedby={fieldErrors?.markup ? "li-markup-error" : undefined}
                         />
+                        {fieldErrors?.markup && <p id="li-markup-error" className="text-xs text-destructive">{fieldErrors.markup}</p>}
                       </div>
                     </div>
                     <p className="text-xs text-amber-800">
@@ -279,7 +322,7 @@ export function LineItemDialog({
               </div>
             </InternalPanel>
 
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </div>
 
           <DialogFooter className="mt-6">

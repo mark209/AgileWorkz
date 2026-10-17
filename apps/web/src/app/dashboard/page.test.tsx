@@ -30,11 +30,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const ADMIN_PERMISSIONS = ["customers.read", "service_reports.read", "quotations.read", "work_orders.read", "audit_logs.read"];
 const OFFICE_STAFF_PERMISSIONS = ["customers.read", "service_reports.read", "quotations.read", "work_orders.read"];
-const TECHNICIAN_PERMISSIONS: string[] = []; // only work_orders.read_own / service_reports.upload,read_own in reality — none of which unlock any Dashboard section
+const TECHNICIAN_PERMISSIONS = ["work_orders.read_own"];
 
-function authAs(permissions: string[]) {
+function authAs(permissions: string[], roles = ["Test Role"]) {
   useAuthMock.mockReturnValue({
-    user: { fullName: "Test User", roles: ["Test Role"] },
+    user: { fullName: "Test User", roles },
     accessToken: "token-1",
     isLoading: false,
     logout: vi.fn(),
@@ -57,10 +57,11 @@ function mockAllResolved() {
     { id: "q1", status: "PENDING_APPROVAL" },
     { id: "q2", status: "SENT" },
     { id: "q3", status: "SENT" },
+    { id: "q4", status: "PENDING_OWNER_APPROVAL" },
   ]);
   listWorkOrdersMock.mockResolvedValue([
-    { id: "w1", status: "SCHEDULED", cancellationRequestedAt: null, cancelledAt: null },
-    { id: "w2", status: "IN_PROGRESS", cancellationRequestedAt: "2026-08-30T00:00:00.000Z", cancelledAt: null },
+    { id: "w1", workOrderNumber: "WO-001", customer: { name: "Active Co" }, site: { label: "Main Site" }, status: "SCHEDULED", cancellationRequestedAt: null, cancelledAt: null },
+    { id: "w2", workOrderNumber: "WO-002", customer: { name: "Active Co" }, site: { label: "Main Site" }, status: "IN_PROGRESS", cancellationRequestedAt: "2026-08-30T00:00:00.000Z", cancelledAt: null },
   ]);
   listAuditLogsMock.mockResolvedValue([
     { id: "a1", actorType: "USER", actorUserId: "u1", action: "service_report_locked", entityType: "ServiceReport", entityId: "sr-1", createdAt: "2026-08-30T00:00:00.000Z" },
@@ -73,7 +74,7 @@ describe("DashboardPage — role-based section visibility", () => {
     mockAllResolved();
   });
 
-  it("Admin/Owner (or Manager): shows every section, including Recent Activity", async () => {
+  it("Admin/Owner shows authorized company-wide sections, including Recent Activity", async () => {
     authAs(ADMIN_PERMISSIONS);
     render(<DashboardPage />);
 
@@ -101,22 +102,44 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
   });
 
-  it("Technician: sees no Dashboard sections and no unauthorized data is even fetched", async () => {
-    authAs(TECHNICIAN_PERMISSIONS);
+  it("Manager: requests the assigned Work Order view and shows the existing creation path", async () => {
+    authAs(["work_orders.read_assigned", "work_orders.create", "quotations.read", "audit_logs.read"], ["Manager"]);
     render(<DashboardPage />);
 
-    expect(await screen.findByText(/no operational dashboard sections/i)).toBeInTheDocument();
+    expect(await screen.findByText("Manager Dashboard")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Choose customer to create Service" })).toHaveAttribute("href", "/customers");
+    await waitFor(() => expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", undefined, true));
+    expect(listCustomersMock).not.toHaveBeenCalled();
+    expect(listServiceReportsMock).not.toHaveBeenCalled();
+    expect(listAuditLogsMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
+  });
+
+  it("Admin/Owner with a Manager role keeps the administrative dashboard and full Work Order view", async () => {
+    authAs(ADMIN_PERMISSIONS, ["Admin/Owner", "Manager"]);
+    render(<DashboardPage />);
+
+    expect(await screen.findByText("Super Admin Dashboard")).toBeInTheDocument();
+    await waitFor(() => expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", "SCHEDULED,IN_PROGRESS", false));
+    expect(await screen.findByText("Recent Activity")).toBeInTheDocument();
+  });
+
+  it("Technician: sees assigned Work Orders without fetching unrelated data", async () => {
+    authAs(TECHNICIAN_PERMISSIONS, ["Technician"]);
+    render(<DashboardPage />);
+
+    expect(await screen.findByText("Technician Dashboard")).toBeInTheDocument();
+    expect(await screen.findByText("Work Orders — Scheduled")).toBeInTheDocument();
     expect(screen.queryByText("Active Customers")).not.toBeInTheDocument();
     expect(screen.queryByText(/service reports/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/quotations/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/work orders/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
 
     // Not just hidden in the UI — never even requested.
     expect(listCustomersMock).not.toHaveBeenCalled();
     expect(listServiceReportsMock).not.toHaveBeenCalled();
     expect(listQuotationsMock).not.toHaveBeenCalled();
-    expect(listWorkOrdersMock).not.toHaveBeenCalled();
+    expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", undefined, false);
     expect(listAuditLogsMock).not.toHaveBeenCalled();
   });
 
@@ -141,6 +164,9 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(screen.getByText("Active Customers").closest("a")).toHaveAttribute("href", "/customers");
     expect(screen.getByText("Service Reports — Pending Verification").closest("a")).toHaveAttribute("href", "/service-reports");
     expect(screen.getByText("Quotations — Pending Approval").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_APPROVAL");
+    expect(screen.getByText("Quotations — Pending Owner Approval").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_OWNER_APPROVAL");
+    expect(listQuotationsMock).toHaveBeenCalledWith("token-1", "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT");
+    expect(screen.getByText("Quotations — Pending Owner Approval").closest("div")?.textContent).toContain("1");
   });
 
   it("computes the Cancellation Requested count only for work orders with an open (unresolved) cancellation request", async () => {
@@ -179,6 +205,6 @@ describe("DashboardPage — role-based section visibility", () => {
     authAs(ADMIN_PERMISSIONS);
     render(<DashboardPage />);
     await waitFor(() => expect(listCustomersMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(listAuditLogsMock).toHaveBeenCalledWith("token-1", 10));
+    await waitFor(() => expect(listAuditLogsMock).toHaveBeenCalledWith("token-1", 8));
   });
 });

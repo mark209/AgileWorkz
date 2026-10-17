@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import {
   getCustomer,
@@ -25,11 +26,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { InquiriesTab } from "@/components/inquiries/inquiries-tab";
 import { QuotationsTab } from "@/components/quotations/quotations-tab";
 import { WorkOrdersTab } from "@/components/work-orders/work-orders-tab";
+import { CustomerRecordDialog } from "@/components/customers/customer-record-dialog";
+import { CustomerServiceReports } from "@/components/service-reports/customer-service-reports";
 
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { user, accessToken, hasPermission } = useAuth();
+  const canReadSites = hasPermission("sites", "read");
+  const canReadContacts = hasPermission("contacts", "read");
+  const canReadInquiries = hasPermission("inquiries", "read");
+  const canReadQuotations = hasPermission("quotations", "read");
+  const canReadWorkOrders = ["read", "read_assigned", "read_own"].some((action) => hasPermission("work_orders", action));
+  const canReadReports = hasPermission("service_reports", "read");
+  const defaultTab = canReadSites ? "sites" : canReadContacts ? "contacts" : canReadInquiries ? "inquiries" : canReadQuotations ? "quotations" : canReadWorkOrders ? "work-orders" : "service-reports";
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [contacts, setContacts] = useState<Contact[] | null>(null);
@@ -43,8 +53,8 @@ export default function CustomerDetailPage() {
     try {
       const [customerRow, contactRows, siteRows] = await Promise.all([
         getCustomer(accessToken, params.id),
-        listContactsForCustomer(accessToken, params.id),
-        listSitesForCustomer(accessToken, params.id),
+        canReadContacts ? listContactsForCustomer(accessToken, params.id) : Promise.resolve([]),
+        canReadSites ? listSitesForCustomer(accessToken, params.id) : Promise.resolve([]),
       ]);
       setCustomer(customerRow);
       setContacts(contactRows);
@@ -52,7 +62,7 @@ export default function CustomerDetailPage() {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load customer.");
     }
-  }, [accessToken, params.id]);
+  }, [accessToken, params.id, canReadContacts, canReadSites]);
 
   useEffect(() => {
     load();
@@ -105,6 +115,7 @@ export default function CustomerDetailPage() {
         actions={
           <>
             <StatusBadge status={customer.status} />
+            {hasPermission("customers", "update") && <CustomerRecordDialog kind="customer" customer={customer} onSaved={load} />}
             {hasPermission("customers", "deactivate") && (
               <Button variant="outline" size="sm" onClick={toggleStatus} disabled={statusUpdating}>
                 {customer.status === "ACTIVE" ? "Deactivate" : "Activate"}
@@ -135,16 +146,20 @@ export default function CustomerDetailPage() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="sites">
-        <TabsList>
-          <TabsTrigger value="sites">Sites {sites ? `(${sites.length})` : ""}</TabsTrigger>
-          <TabsTrigger value="contacts">Contacts {contacts ? `(${contacts.length})` : ""}</TabsTrigger>
-          <TabsTrigger value="inquiries">Inquiries</TabsTrigger>
-          <TabsTrigger value="quotations">Quotations</TabsTrigger>
-          <TabsTrigger value="work-orders">Work Orders</TabsTrigger>
-        </TabsList>
+      <Tabs defaultValue={defaultTab}>
+        <div className="max-w-full overflow-x-auto pb-1">
+          <TabsList>
+            {canReadSites && <TabsTrigger value="sites">Sites {sites ? `(${sites.length})` : ""}</TabsTrigger>}
+            {canReadContacts && <TabsTrigger value="contacts">Contacts {contacts ? `(${contacts.length})` : ""}</TabsTrigger>}
+            {canReadInquiries && <TabsTrigger value="inquiries">Inquiries</TabsTrigger>}
+            {canReadQuotations && <TabsTrigger value="quotations">Quotations</TabsTrigger>}
+            {canReadWorkOrders && <TabsTrigger value="work-orders">Work Orders</TabsTrigger>}
+            {canReadReports && <TabsTrigger value="service-reports">Service Reports</TabsTrigger>}
+          </TabsList>
+        </div>
 
-        <TabsContent value="sites">
+        {canReadSites && <TabsContent value="sites">
+          {hasPermission("sites", "create") && <div className="mb-3"><CustomerRecordDialog kind="site" customer={customer} onSaved={load} /></div>}
           {sites === null && <LoadingState label="Loading sites…" />}
           {sites !== null && sites.length === 0 && (
             <EmptyState title="No sites yet" description="Sites are the serviceable locations for this customer." />
@@ -157,15 +172,19 @@ export default function CustomerDetailPage() {
                     <TableHead>Site</TableHead>
                     <TableHead>Address</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sites.map((site) => (
-                    <TableRow key={site.id} className="cursor-pointer" onClick={() => router.push(`/sites/${site.id}`)}>
-                      <TableCell className="font-medium">{site.label}</TableCell>
+                    <TableRow key={site.id}>
+                      <TableCell className="font-medium"><Link className="text-primary hover:underline" href={`/sites/${site.id}`}>{site.label}</Link></TableCell>
                       <TableCell>{site.addressLine}</TableCell>
                       <TableCell>
                         <StatusBadge status={site.status} />
+                      </TableCell>
+                      <TableCell>
+                        {hasPermission("sites", "update") && <CustomerRecordDialog kind="site" customer={customer} record={site} onSaved={load} />}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -173,9 +192,10 @@ export default function CustomerDetailPage() {
               </Table>
             </div>
           )}
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="contacts">
+        {canReadContacts && <TabsContent value="contacts">
+          {hasPermission("contacts", "create") && <div className="mb-3"><CustomerRecordDialog kind="contact" customer={customer} onSaved={load} /></div>}
           {contacts === null && <LoadingState label="Loading contacts…" />}
           {contacts !== null && contacts.length === 0 && (
             <EmptyState title="No contacts yet" description="People at this customer who can be reached for site visits." />
@@ -190,6 +210,7 @@ export default function CustomerDetailPage() {
                     <TableHead>Phone</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -205,25 +226,29 @@ export default function CustomerDetailPage() {
                       <TableCell>
                         <StatusBadge status={contact.status} />
                       </TableCell>
+                      <TableCell>{hasPermission("contacts", "update") && <CustomerRecordDialog kind="contact" customer={customer} record={contact} onSaved={load} />}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
           )}
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="inquiries">
+        {canReadInquiries && <TabsContent value="inquiries">
           <InquiriesTab customerId={customer.id} sites={sites ?? []} contacts={contacts ?? []} />
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="quotations">
+        {canReadQuotations && <TabsContent value="quotations">
           <QuotationsTab customerId={customer.id} sites={sites ?? []} />
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="work-orders">
+        {canReadWorkOrders && <TabsContent value="work-orders">
           <WorkOrdersTab customerId={customer.id} sites={sites ?? []} />
-        </TabsContent>
+        </TabsContent>}
+        {canReadReports && <TabsContent value="service-reports">
+          <CustomerServiceReports customerId={customer.id} sites={sites ?? []} />
+        </TabsContent>}
       </Tabs>
     </main>
   );

@@ -168,10 +168,15 @@ export default function ServiceReportVerifyPage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-2rem)]">
+              <h2 className="mb-2 text-base font-semibold">Original uploaded document</h2>
               <DocumentViewer url={view.documentUrl} mimeType={view.report.documentMimeType} fileName={view.report.documentFileName} />
             </div>
 
             <div className="flex flex-col gap-4">
+              <div>
+                <h2 className="text-base font-semibold">Extracted fields for review</h2>
+                <p className="text-sm text-muted-foreground">AI values are provisional until a reviewer confirms or corrects them against the original document.</p>
+              </div>
               {STAGING_CATEGORIES.map((category) => (
                 <FieldSection
                   key={category}

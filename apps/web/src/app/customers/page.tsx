@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Search } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { listCustomers, type Customer, CUSTOMER_TYPE_LABEL } from "@/lib/api";
@@ -112,12 +113,8 @@ export default function CustomerListPage() {
             </TableHeader>
             <TableBody>
               {filtered.map((customer) => (
-                <TableRow
-                  key={customer.id}
-                  className="cursor-pointer"
-                  onClick={() => router.push(`/customers/${customer.id}`)}
-                >
-                  <TableCell className="font-medium">{customer.name}</TableCell>
+                <TableRow key={customer.id}>
+                  <TableCell className="font-medium"><Link className="text-primary hover:underline" href={`/customers/${customer.id}`}>{customer.name}</Link></TableCell>
                   <TableCell>{CUSTOMER_TYPE_LABEL[customer.customerType]}</TableCell>
                   <TableCell>{customer.phone ?? "—"}</TableCell>
                   <TableCell>{customer.email ?? "—"}</TableCell>

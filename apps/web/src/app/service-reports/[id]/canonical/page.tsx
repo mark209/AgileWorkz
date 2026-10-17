@@ -31,16 +31,17 @@ export default function CanonicalServiceReportPage() {
   const [view, setView] = useState<CanonicalServiceReportView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canRead = hasPermission("service_reports", "read");
+  const canRead = hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned");
   const canLock = hasPermission("service_reports", "lock");
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
     setError(null);
+    setView(null);
     try {
       setView(await getCanonicalServiceReport(accessToken, params.id));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load the canonical Service Report.");
+      setError(e instanceof ApiError && e.status === 403 ? "Access denied to this Service Report." : e instanceof ApiError ? e.message : "Failed to load the canonical Service Report.");
     }
   }, [accessToken, canRead, params.id]);
 

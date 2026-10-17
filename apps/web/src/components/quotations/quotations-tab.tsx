@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import {
   listQuotationRevisions,
@@ -19,7 +19,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { CreateQuotationDialog } from "./create-quotation-dialog";
 
 export function QuotationsTab({ customerId, sites }: { customerId: string; sites: Site[] }) {
-  const router = useRouter();
   const { accessToken, hasPermission } = useAuth();
   const [quotations, setQuotations] = useState<Quotation[] | null>(null);
   // Keyed by quotationId — the current revision's totals, fetched
@@ -79,8 +78,8 @@ export function QuotationsTab({ customerId, sites }: { customerId: string; sites
               {quotations.map((q) => {
                 const revision = currentRevisions[q.id];
                 return (
-                  <TableRow key={q.id} className="cursor-pointer" onClick={() => router.push(`/quotations/${q.id}`)}>
-                    <TableCell className="font-medium">{q.quotationNumber}</TableCell>
+                  <TableRow key={q.id}>
+                    <TableCell className="font-medium"><Link className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={`/quotations/${q.id}`}>{q.quotationNumber}</Link></TableCell>
                     <TableCell>{QUOTATION_TYPE_LABEL[q.quotationType]}</TableCell>
                     <TableCell>{revision ? `Rev ${revision.revisionNumber}` : "—"}</TableCell>
                     <TableCell>

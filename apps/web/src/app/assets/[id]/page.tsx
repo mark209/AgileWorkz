@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import {
   getAsset,
@@ -10,6 +11,7 @@ import {
   getSite,
   listCapacityUnits,
   listEquipmentTypes,
+  listServiceHistoryForAsset,
   type Asset,
   type CapacityUnit,
   type Customer,
@@ -37,7 +39,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, hasPermission } = useAuth();
 
   const [asset, setAsset] = useState<Asset | null>(null);
   const [site, setSite] = useState<Site | null>(null);
@@ -47,6 +49,7 @@ export default function AssetDetailPage() {
   const [equipmentTypeLabel, setEquipmentTypeLabel] = useState<string | null>(null);
   const [capacityUnitLabel, setCapacityUnitLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<Array<{ id: string; serviceReportNumber: string; status: string; serviceDate: string | null; uploadedAt: string }>>([]);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -54,6 +57,9 @@ export default function AssetDetailPage() {
     try {
       const assetRow = await getAsset(accessToken, params.id);
       setAsset(assetRow);
+      if (hasPermission("service_reports", "read")) {
+        setHistory(await listServiceHistoryForAsset(accessToken, assetRow.id));
+      }
 
       const [siteRow, equipmentTypes] = await Promise.all([
         getSite(accessToken, assetRow.siteId),
@@ -82,7 +88,7 @@ export default function AssetDetailPage() {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load asset.");
     }
-  }, [accessToken, params.id]);
+  }, [accessToken, params.id, hasPermission]);
 
   useEffect(() => {
     load();
@@ -176,11 +182,11 @@ export default function AssetDetailPage() {
           <CardTitle className="text-base">Service history</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Reserved for Phase 5 (Service Reports) — deliberately no data or
-              backend call here yet, per the approved plan. */}
-          <p className="text-sm text-muted-foreground">
-            Service history will appear here once Service Reports are introduced in a later phase.
-          </p>
+          {history.length === 0 ? <p className="text-sm text-muted-foreground">No verified Service Reports are linked to this equipment yet.</p> :
+            <ul className="space-y-2">{history.map((report) => <li key={report.id} className="flex items-center justify-between border-b py-2 text-sm">
+              <Link className="font-medium text-primary hover:underline" href={`/service-reports/${report.id}/${report.status === "VERIFIED" ? "verify" : "canonical"}`}>{report.serviceReportNumber}</Link>
+              <span>{new Date(report.serviceDate ?? report.uploadedAt).toLocaleDateString()}</span>
+            </li>)}</ul>}
         </CardContent>
       </Card>
 

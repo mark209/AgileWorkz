@@ -25,7 +25,7 @@ describe("ServiceReportsQueuePage", () => {
   it("requests PENDING_VERIFICATION, VERIFIED, and CONFIRMED reports, so Confirm- and Lock-eligible reports are reachable too", async () => {
     listServiceReportsMock.mockResolvedValue([]);
     render(<ServiceReportsQueuePage />);
-    await screen.findByText(/nothing to verify/i);
+    await screen.findByText(/no reports to review/i);
     expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "PENDING_VERIFICATION,VERIFIED,CONFIRMED");
   });
 

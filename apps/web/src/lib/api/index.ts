@@ -1,4 +1,4 @@
-import { apiRequest } from "../api-client";
+import { apiPdf, apiRequest, uploadFileWithProgress } from "../api-client";
 import type { ServiceReportListItem } from "./service-report-verification";
 import type {
   Asset,
@@ -55,11 +55,44 @@ export function createCustomer(
 export function updateCustomerStatus(accessToken: string, id: string, status: CustomerStatus) {
   return apiRequest<Customer>(`/customers/${id}/status`, { method: "PATCH", body: { status }, accessToken });
 }
+export function updateCustomer(accessToken: string, id: string, body: { name: string; billingAddress: string; phone?: string; email?: string }) {
+  return apiRequest<Customer>(`/customers/${id}`, { method: "PATCH", body, accessToken });
+}
 export function listContactsForCustomer(accessToken: string, customerId: string) {
   return apiRequest<Contact[]>(`/customers/${customerId}/contacts`, { accessToken });
 }
+export function createContact(accessToken: string, customerId: string, body: { fullName: string; phone?: string; email?: string }) {
+  return apiRequest<Contact>(`/customers/${customerId}/contacts`, { method: "POST", body, accessToken });
+}
+export function updateContact(accessToken: string, id: string, body: { fullName: string; phone?: string; email?: string }) {
+  return apiRequest<Contact>(`/contacts/${id}`, { method: "PATCH", body, accessToken });
+}
 export function listSitesForCustomer(accessToken: string, customerId: string) {
   return apiRequest<Site[]>(`/customers/${customerId}/sites`, { accessToken });
+}
+export function createSite(accessToken: string, customerId: string, body: { label: string; addressLine: string }) {
+  return apiRequest<Site>(`/customers/${customerId}/sites`, { method: "POST", body, accessToken });
+}
+export function updateSite(accessToken: string, id: string, body: { label: string; addressLine: string }) {
+  return apiRequest<Site>(`/sites/${id}`, { method: "PATCH", body, accessToken });
+}
+export function listServiceReportTypes(accessToken: string) {
+  return apiRequest<Array<{ code: string; label: string }>>("/service-reports/types", { accessToken });
+}
+export function uploadCustomerServiceReport(accessToken: string, customerId: string, input: {
+  siteId: string; reportTypeCode: string; sourceType: string; file: File; idempotencyKey: string;
+}) {
+  const form = new FormData();
+  form.append("siteId", input.siteId);
+  form.append("reportTypeCode", input.reportTypeCode);
+  form.append("sourceType", input.sourceType);
+  form.append("file", input.file);
+  return uploadFileWithProgress<{ id: string; serviceReportNumber: string }>(
+    `/customers/${customerId}/service-reports`, accessToken, form, undefined, input.idempotencyKey,
+  );
+}
+export function listServiceReportsForCustomer(accessToken: string, customerId: string) {
+  return apiRequest<ServiceReportListItem[]>(`/customers/${customerId}/service-reports`, { accessToken });
 }
 
 // --- Sites ---------------------------------------------------------------
@@ -78,6 +111,11 @@ export function listAssetsForSite(accessToken: string, siteId: string) {
 
 export function getAsset(accessToken: string, id: string) {
   return apiRequest<Asset>(`/assets/${id}`, { accessToken });
+}
+export function listServiceHistoryForAsset(accessToken: string, id: string) {
+  return apiRequest<Array<{ id: string; serviceReportNumber: string; status: string; serviceDate: string | null; uploadedAt: string }>>(
+    `/assets/${id}/service-reports`, { accessToken },
+  );
 }
 export function updateAssetStatus(accessToken: string, id: string, status: AssetStatus) {
   return apiRequest<Asset>(`/assets/${id}/status`, { method: "PATCH", body: { status }, accessToken });
@@ -190,6 +228,9 @@ export function listQuotationRevisions(accessToken: string, quotationId: string)
 export function getQuotationRevision(accessToken: string, quotationId: string, revisionId: string) {
   return apiRequest<QuotationRevision>(`/quotations/${quotationId}/revisions/${revisionId}`, { accessToken });
 }
+export function getQuotationPdf(accessToken: string, quotationId: string, revisionId: string) {
+  return apiPdf(`${revisionUrl(quotationId, revisionId)}/pdf`, accessToken);
+}
 // Full copy-forward of the current revision — the backend refuses this when
 // the current revision is ACCEPTED (C6); the UI must not imply it's ever
 // possible from that state.
@@ -247,7 +288,7 @@ export function rejectRevision(accessToken: string, quotationId: string, revisio
     accessToken,
   });
 }
-export function sendRevision(accessToken: string, quotationId: string, revisionId: string) {
+export function markRevisionSent(accessToken: string, quotationId: string, revisionId: string) {
   return apiRequest<QuotationRevision>(`${revisionUrl(quotationId, revisionId)}/send`, {
     method: "PATCH",
     accessToken,
@@ -471,8 +512,11 @@ export function listQuotations(accessToken: string, status?: string) {
 // Technician's own read_own view remains a separate, not-yet-built concern
 // (GET /work-orders/mine already exists server-side but has no frontend
 // consumer yet).
-export function listWorkOrders(accessToken: string, status?: string) {
-  return apiRequest<WorkOrder[]>(`/work-orders${status ? `?status=${encodeURIComponent(status)}` : ""}`, {
+export function listWorkOrders(accessToken: string, status?: string, assignedOnly = false) {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  if (assignedOnly) query.set("scope", "assigned");
+  return apiRequest<WorkOrder[]>(`/work-orders${query.size ? `?${query}` : ""}`, {
     accessToken,
   });
 }
@@ -494,6 +538,7 @@ export function listWorkOrdersForCustomer(accessToken: string, customerId: strin
 }
 
 export interface CreateStandaloneWorkOrderInput {
+  responsibleManagerId?: string;
   siteId: string;
   standaloneReason: string;
   standaloneReasonType: StandaloneReasonType;
@@ -512,7 +557,7 @@ export function convertQuotationToWorkOrders(
   accessToken: string,
   quotationId: string,
   revisionId: string,
-  body: { scheduledDate?: string } = {},
+  body: { scheduledDate?: string; responsibleManagerId?: string } = {},
 ) {
   return apiRequest<WorkOrder[]>(`/quotations/${quotationId}/revisions/${revisionId}/convert-to-work-orders`, {
     method: "POST",
@@ -527,6 +572,67 @@ export function generateMaintenanceVisits(accessToken: string, quotationId: stri
     body: { startDate },
     accessToken,
   });
+}
+
+export function listManagers(accessToken: string) {
+  return apiRequest<Array<{ id: string; fullName: string }>>("/users/managers", { accessToken });
+}
+
+export function setResponsibleManager(accessToken: string, workOrderId: string, responsibleManagerId: string | null) {
+  return apiRequest<WorkOrder>(`/work-orders/${workOrderId}/responsible-manager`, {
+    method: "PATCH", body: { responsibleManagerId }, accessToken,
+  });
+}
+
+export interface Member {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  userRoles: Array<{ role: { id: string; name: string } }>;
+}
+
+export interface PendingRegistration {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  createdAt: string;
+  requestedRole: { id: string; name: string };
+}
+
+export function listRequestableDesignations() {
+  return apiRequest<import("@agileworks/shared-types").RequestableDesignation[]>("/auth/requestable-designations");
+}
+export function submitRegistration(body: import("@agileworks/shared-types").RegistrationRequestInput) {
+  return apiRequest<import("@agileworks/shared-types").RegistrationResponse>("/auth/register", { method: "POST", body });
+}
+export function listPendingRegistrations(accessToken: string) {
+  return apiRequest<PendingRegistration[]>("/users/registration-requests", { accessToken });
+}
+export function approveRegistration(accessToken: string, id: string, roleId: string) {
+  return apiRequest<{ id: string; fullName: string; email: string }>(`/users/registration-requests/${id}/approve`, { method: "POST", body: { roleId }, accessToken });
+}
+export function declineRegistration(accessToken: string, id: string) {
+  return apiRequest<{ declined: boolean }>(`/users/registration-requests/${id}`, { method: "DELETE", accessToken });
+}
+
+export interface MemberRole { id: string; name: string }
+
+export function listMembers(accessToken: string) { return apiRequest<Member[]>("/users", { accessToken }); }
+export function listMemberRoles(accessToken: string) { return apiRequest<MemberRole[]>("/roles", { accessToken }); }
+export function createMember(accessToken: string, body: { fullName: string; email: string; phone?: string; password: string }) {
+  return apiRequest<Member>("/users", { method: "POST", body, accessToken });
+}
+export function setMemberStatus(accessToken: string, id: string, status: Member["status"]) {
+  return apiRequest<Member>(`/users/${id}/status`, { method: "PATCH", body: { status }, accessToken });
+}
+export function assignMemberRole(accessToken: string, id: string, roleId: string) {
+  return apiRequest(`/users/${id}/roles/${roleId}`, { method: "POST", accessToken });
+}
+export function revokeMemberRole(accessToken: string, id: string, roleId: string) {
+  return apiRequest(`/users/${id}/roles/${roleId}`, { method: "DELETE", accessToken });
 }
 
 export function scheduleWorkOrder(accessToken: string, id: string, scheduledDate?: string) {

@@ -8,13 +8,13 @@ import {
   expireRevision,
   recordRevisionDecision,
   rejectRevision,
-  sendRevision,
+  markRevisionSent,
   submitRevision,
   type QuotationRevision,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 
 type DialogKind = "reject" | "send" | "accept" | "decline" | "expire" | null;
@@ -127,13 +127,13 @@ export function LifecycleActionBar({
 
   if (revision.status === "PENDING_APPROVAL") {
     // Level 1 (Manager). The server decides, from totalAmount, whether this
-    // approval finalizes the revision (<=200k) or only advances it to
-    // PENDING_OWNER_APPROVAL (>200k) — the button and call are the same
+    // approval finalizes the revision (<=50k) or only advances it to
+    // PENDING_OWNER_APPROVAL (>50k) — the button and call are the same
     // either way, no client-side amount branching needed.
     if (canApprove) {
       buttons.push(
         <Button key="approve" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
-          Approve
+          Approve internal review
         </Button>,
       );
     }
@@ -154,7 +154,7 @@ export function LifecycleActionBar({
     if (canApproveFinal) {
       buttons.push(
         <Button key="approve-final" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
-          Final Approve (Owner)
+          Give final approval
         </Button>,
       );
     }
@@ -170,7 +170,7 @@ export function LifecycleActionBar({
   if (revision.status === "APPROVED" && canUpdate) {
     buttons.push(
       <Button key="send" onClick={() => setDialog("send")} disabled={submitting}>
-        Send to Customer
+        Mark as sent
       </Button>,
     );
   }
@@ -190,10 +190,28 @@ export function LifecycleActionBar({
   }
 
   const canCreateNext = revision.status !== "ACCEPTED" && canCreate;
+  const actionTitle = revision.status === "DRAFT" || revision.status === "PENDING_APPROVAL" || revision.status === "PENDING_OWNER_APPROVAL"
+    ? "Internal approval"
+    : revision.status === "APPROVED" ? "Send quotation" : revision.status === "SENT" ? "Customer decision" : "Revision actions";
+  const actionDescription = revision.status === "APPROVED"
+    ? "Download the approved PDF, send it to the customer outside the system, then mark this revision as sent."
+    : revision.status === "SENT"
+      ? "Record the customer's response to this sent revision."
+      : revision.status === "PENDING_OWNER_APPROVAL"
+        ? "Manager review is complete. Owner approval is required before this revision can be sent."
+        : revision.status === "PENDING_APPROVAL"
+          ? "A Manager must review this revision before it can be sent."
+          : revision.status === "DRAFT"
+            ? "Submit this draft when its details and line items are ready for review."
+            : undefined;
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center gap-2 pt-6">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{actionTitle}</CardTitle>
+        {actionDescription && <p className="text-sm text-muted-foreground">{actionDescription}</p>}
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-2">
         {buttons.length === 0 && !canCreateNext && (
           <p className="text-sm text-muted-foreground">
             {revision.status === "ACCEPTED"
@@ -225,13 +243,13 @@ export function LifecycleActionBar({
       <ActionConfirmDialog
         open={dialog === "send"}
         onOpenChange={(open) => !open && setDialog(null)}
-        title="Send this quotation to the customer"
-        description="This marks the revision as SENT. Make sure the details and terms are final."
+        title="Mark quotation as sent?"
+        description="Download the approved PDF and send it outside this system first. This action records that you have sent this exact revision; it does not email the customer."
         reasonMode="none"
-        confirmLabel="Send"
+        confirmLabel="Mark as sent"
         submitting={submitting}
         error={error}
-        onConfirm={() => run(() => sendRevision(accessToken!, quotationId, revision.id))}
+        onConfirm={() => run(() => markRevisionSent(accessToken!, quotationId, revision.id))}
       />
       <ActionConfirmDialog
         open={dialog === "accept"}

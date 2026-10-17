@@ -38,6 +38,15 @@ export async function apiRequest<T>(
   return JSON.parse(text) as T;
 }
 
+export async function apiPdf(path: string, accessToken: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(res.status, Array.isArray(body.message) ? body.message.join(", ") : body.message);
+  }
+  return res.blob();
+}
+
 // Real byte-level upload progress needs XMLHttpRequest's upload.onprogress —
 // fetch() has no equivalent for outgoing request bodies in browsers. This is
 // a native browser API, not a new dependency; every other request in this
@@ -48,11 +57,13 @@ export function uploadFileWithProgress<T>(
   accessToken: string,
   formData: FormData,
   onProgress?: (percent: number) => void,
+  idempotencyKey?: string,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}${path}`);
     xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    if (idempotencyKey) xhr.setRequestHeader("Idempotency-Key", idempotencyKey);
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
