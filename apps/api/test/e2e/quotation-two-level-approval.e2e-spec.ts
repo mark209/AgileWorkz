@@ -10,7 +10,7 @@ import { PrismaService } from "../../src/prisma/prisma.service";
  * (Level 1) -> Owner (Level 2) sequential mechanics itself, server-side
  * enforcement of the stage boundary (not just UI button visibility),
  * revision non-inheritance of approval across both directions, and the
- * real production default ₱200,000 boundary at exact-centavo precision.
+ * real production default ₱50,000 boundary at exact-centavo precision.
  *
  * Fixture roles below are deliberately narrow and synthetic (matching this
  * suite's established convention elsewhere), not the real seeded Manager/
@@ -154,7 +154,7 @@ describe("Quotations — two-level approval correction (live)", () => {
     try {
       return await fn();
     } finally {
-      await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "200000" } });
+      await prisma.systemSetting.update({ where: { key: "quotation_approval_threshold_php" }, data: { value: "50000" } });
     }
   }
 
@@ -304,18 +304,18 @@ describe("Quotations — two-level approval correction (live)", () => {
 
   // --- Real production-default boundary, exact centavo precision -----------
 
-  it("boundary at the real default threshold (₱200,000): ₱199,999.99 and ₱200,000.00 are Manager-only; ₱200,000.01 requires Owner", async () => {
-    const underBoundary = await createReadyQuotation("boundary-under", 199999.99);
+  it("boundary at the real default threshold (₱50,000): ₱49,999.99 and ₱50,000.00 are Manager-only; ₱50,000.01 requires Owner", async () => {
+    const underBoundary = await createReadyQuotation("boundary-under", 49999.99);
     await request(app.getHttpServer()).patch(submitUrl(underBoundary.quotationId, underBoundary.revisionId)).set("Authorization", managerHeader);
     const underRes = await request(app.getHttpServer()).patch(approveUrl(underBoundary.quotationId, underBoundary.revisionId)).set("Authorization", managerHeader);
     expect(underRes.body.status).toBe("APPROVED"); // Manager alone finalizes
 
-    const atBoundary = await createReadyQuotation("boundary-at", 200000);
+    const atBoundary = await createReadyQuotation("boundary-at", 50000);
     await request(app.getHttpServer()).patch(submitUrl(atBoundary.quotationId, atBoundary.revisionId)).set("Authorization", managerHeader);
     const atRes = await request(app.getHttpServer()).patch(approveUrl(atBoundary.quotationId, atBoundary.revisionId)).set("Authorization", managerHeader);
     expect(atRes.body.status).toBe("APPROVED"); // inclusive boundary — still Manager alone
 
-    const overBoundary = await createReadyQuotation("boundary-over", 200000.01);
+    const overBoundary = await createReadyQuotation("boundary-over", 50000.01);
     await request(app.getHttpServer()).patch(submitUrl(overBoundary.quotationId, overBoundary.revisionId)).set("Authorization", managerHeader);
     const overRes = await request(app.getHttpServer()).patch(approveUrl(overBoundary.quotationId, overBoundary.revisionId)).set("Authorization", managerHeader);
     expect(overRes.body.status).toBe("PENDING_OWNER_APPROVAL"); // one centavo over — Owner now required

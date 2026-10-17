@@ -24,6 +24,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ActorContext } from "../identity/users.service";
 import { PermissionsService } from "../identity/permissions.service";
+import { ServiceAccessService } from "../identity/service-access.service";
 import { NumberingService } from "../../common/numbering/numbering.service";
 import { STORAGE_PROVIDER, StorageProvider } from "../../common/storage/storage-provider.interface";
 import { ExtractionQueueService } from "../../common/extraction/service-report-extraction.processor";
@@ -106,6 +107,7 @@ export class ServiceReportsService {
     private readonly numbering: NumberingService,
     private readonly audit: AuditService,
     private readonly permissions: PermissionsService,
+    private readonly access: ServiceAccessService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly extractionQueue: ExtractionQueueService,
   ) {}
@@ -273,6 +275,21 @@ export class ServiceReportsService {
     await this.assertReportTypeActive(dto.reportTypeCode);
 
     const workOrderId = dto.workOrderId ? await this.assertWorkOrderValid(dto.workOrderId, customerId, dto.siteId) : null;
+    if (!workOrderId && dto.sourceType === ServiceReportSourceType.WORK_ORDER_LINKED) {
+      throw new BadRequestException("WORK_ORDER_LINKED sourceType requires a workOrderId");
+    }
+    if (workOrderId && dto.sourceType && dto.sourceType !== ServiceReportSourceType.WORK_ORDER_LINKED) {
+      throw new BadRequestException("A report linked to a Work Order must use WORK_ORDER_LINKED sourceType");
+    }
+    if (workOrderId) {
+      const grants = await this.permissions.getEffectivePermissions(actor.userId);
+      if (grants.some((p) => p.module === "work_orders" && p.action === "start_own")) {
+        const active = await this.prisma.workOrderAssignment.findFirst({
+          where: { workOrderId, technicianId: actor.userId, unassignedAt: null }, select: { id: true },
+        });
+        if (!active) throw new ForbiddenException("You are not currently assigned to this Work Order");
+      }
+    }
     if (!workOrderId && !dto.sourceType) {
       // ServiceReport.sourceType's own schema comment: "required (app-
       // validated) when work_order_id is null" — there is no Work Order to
@@ -403,17 +420,9 @@ export class ServiceReportsService {
   // UI did or didn't show, and never bypassable by calling the API
   // directly with a known id.
   async getForActor(id: string, actor: ActorContext): Promise<PublicServiceReport> {
+    await this.access.assertReportReadable(id, actor.userId);
     const report = await this.findByIdOrThrow(id);
-    const granted = new Set((await this.permissions.getEffectivePermissions(actor.userId)).map((p) => `${p.module}.${p.action}`));
-
-    if (granted.has("service_reports.read")) return toPublicServiceReport(report);
-
-    if (granted.has("service_reports.read_own")) {
-      if (report.uploadedBy === actor.userId) return toPublicServiceReport(report);
-      throw new ForbiddenException("You did not upload this Service Report");
-    }
-
-    throw new ForbiddenException("Missing required permission(s): service_reports.read or service_reports.read_own");
+    return toPublicServiceReport(report);
   }
 
   // GET /service-reports/mine — service_reports.read_own (guard-gated: this
@@ -434,9 +443,10 @@ export class ServiceReportsService {
   // what makes a verifier's queue of PENDING_VERIFICATION reports
   // discoverable at all through the UI, rather than requiring a known id.
   // No new permission needed; no canonical/staging table touched.
-  async listByStatus(statuses: ServiceReportStatus[]): Promise<PublicServiceReport[]> {
+  async listByStatus(statuses: ServiceReportStatus[], actor?: ActorContext): Promise<PublicServiceReport[]> {
+    const scope = actor ? await this.access.reportFilter(actor.userId) : {};
     const reports = await this.prisma.serviceReport.findMany({
-      where: { status: { in: statuses } },
+      where: { status: { in: statuses }, ...scope },
       orderBy: { uploadedAt: "asc" },
     });
     return reports.map(toPublicServiceReport);
@@ -449,9 +459,19 @@ export class ServiceReportsService {
   // remains entirely Phase 5's own frozen pipeline — this only lists rows
   // already carrying this workOrderId, exactly as service_reports.read
   // already permits reading them one at a time via GET /service-reports/:id).
-  async listByWorkOrder(workOrderId: string): Promise<PublicServiceReport[]> {
+  async listByWorkOrder(workOrderId: string, actor?: ActorContext): Promise<PublicServiceReport[]> {
+    const scope = actor ? await this.access.reportFilter(actor.userId) : {};
     const reports = await this.prisma.serviceReport.findMany({
-      where: { workOrderId },
+      where: { workOrderId, ...scope },
+      orderBy: { uploadedAt: "desc" },
+    });
+    return reports.map(toPublicServiceReport);
+  }
+
+  async listByCustomer(customerId: string, actor?: ActorContext): Promise<PublicServiceReport[]> {
+    const scope = actor ? await this.access.reportFilter(actor.userId) : {};
+    const reports = await this.prisma.serviceReport.findMany({
+      where: { customerId, ...scope },
       orderBy: { uploadedAt: "desc" },
     });
     return reports.map(toPublicServiceReport);

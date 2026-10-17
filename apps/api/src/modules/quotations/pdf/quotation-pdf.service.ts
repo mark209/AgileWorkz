@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { QuotationRevisionStatus } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { buildQuotationPdfDocument, QuotationPdfApprovalEvent, QuotationPdfLineItem } from "./quotation-pdf-document";
 
@@ -20,7 +19,14 @@ export class QuotationPdfService {
       where: { id: revisionId },
       include: {
         quotation: { include: { customer: true, site: true } },
-        lineItems: { orderBy: { sortOrder: "asc" } },
+        lineItems: {
+          orderBy: { sortOrder: "asc" },
+          select: {
+            description: true, specification: true, brand: true, model: true,
+            quantity: true, unit: true, unitPrice: true, lineFinalAmount: true,
+            lineVatAmount: true, taxTreatment: true,
+          },
+        },
         managerApprovedByUser: { select: { fullName: true } },
         ownerApprovedByUser: { select: { fullName: true } },
       },
@@ -29,11 +35,10 @@ export class QuotationPdfService {
       throw new NotFoundException("Quotation revision not found");
     }
 
-    // isFinal: APPROVED is only ever reached once every required level for
-    // this revision's amount has explicitly approved it — there is no
-    // automatic-approval path left that could reach APPROVED any other
-    // way, so this single check is sufficient, not a proxy.
-    const isFinal = revision.status === QuotationRevisionStatus.APPROVED;
+    // Approval remains valid when the same revision later becomes SENT,
+    // ACCEPTED, DECLINED, EXPIRED or SUPERSEDED. Its approval timestamp is
+    // retained; the current lifecycle status alone cannot identify a draft.
+    const isFinal = revision.approvedAt !== null;
 
     const approvals: QuotationPdfApprovalEvent[] = [];
     if (isFinal && revision.managerApprovedAt && revision.managerApprovedByUser) {
@@ -62,6 +67,8 @@ export class QuotationPdfService {
       unit: li.unit,
       unitPrice: li.unitPrice.toString(),
       lineFinalAmount: li.lineFinalAmount.toString(),
+      lineVatAmount: li.lineVatAmount.toString(),
+      taxTreatment: li.taxTreatment,
     }));
 
     const element = buildQuotationPdfDocument({
@@ -78,6 +85,11 @@ export class QuotationPdfService {
       vatAmount: revision.vatAmount.toString(),
       totalAmount: revision.totalAmount.toString(),
       termsAndConditions: revision.termsAndConditions,
+      paymentTerms: revision.paymentTerms,
+      warranty: revision.warranty,
+      leadTime: revision.leadTime,
+      exclusions: revision.exclusions,
+      validUntil: revision.validUntil?.toISOString() ?? null,
       isFinal,
       approvals,
       generatedAt: new Date().toISOString(),

@@ -121,10 +121,9 @@ export class CustomersController {
   }
 
   // Phase 4 Step 3 — Path B (standalone, non-quotation Work Orders).
-  @Permissions({ module: "work_orders", action: "read" })
   @Get(":id/work-orders")
-  async listWorkOrders(@Param("id") id: string) {
-    return this.workOrdersService.listForCustomer(id);
+  async listWorkOrders(@Param("id") id: string, @Req() req: AuthedRequest) {
+    return this.workOrdersService.listForCustomer(id, actorFrom(req));
   }
 
   @Permissions({ module: "work_orders", action: "create" })
@@ -142,6 +141,12 @@ export class CustomersController {
   // by hiding this endpoint in the UI. MAX_UPLOAD_BYTES (25 MB, same policy
   // as customer_documents) is enforced at the Multer stream level, not
   // just checked after the fact.
+  @Get(":id/service-reports")
+  async listServiceReports(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.customersService.findByIdOrThrow(id);
+    return this.serviceReportsService.listByCustomer(id, actorFrom(req));
+  }
+
   @Permissions({ module: "service_reports", action: "upload" })
   @Post(":id/service-reports")
   @UseFilters(ServiceReportMulterExceptionFilter)

@@ -2,12 +2,14 @@ import * as crypto from "node:crypto";
 import { DocumentRelatedType, DocumentType } from "@prisma/client";
 import { BadRequestException, NotFoundException, UnsupportedMediaTypeException } from "@nestjs/common";
 import { DocumentsService } from "../src/modules/documents/documents.service";
+import { ServiceAccessService } from "../src/modules/identity/service-access.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AuditService } from "../src/modules/audit/audit.service";
 import { StorageProvider } from "../src/common/storage/storage-provider.interface";
 import { mockOf } from "./test-utils";
 
 const actor = { userId: "actor-1", ipAddress: "127.0.0.1", userAgent: "jest" };
+const access = mockOf<ServiceAccessService>({ assertWorkOrderReadable: jest.fn(), assertManagerScopedAction: jest.fn() });
 
 function makeFile(overrides: Partial<Express.Multer.File> = {}): Express.Multer.File {
   return {
@@ -32,7 +34,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const prisma = mockOf<PrismaService>({});
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({ putObject: jest.fn() });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.upload(undefined, uploadDto, actor)).rejects.toThrow(BadRequestException);
     expect(storage.putObject).not.toHaveBeenCalled();
@@ -42,7 +44,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const prisma = mockOf<PrismaService>({ customer: { findUnique: jest.fn() } });
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({ putObject: jest.fn() });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     const zipFile = makeFile({ originalname: "archive.zip", mimetype: "application/zip" });
 
@@ -67,7 +69,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const storage = mockOf<StorageProvider>({
       putObject: jest.fn().mockResolvedValue({ key: "customer-documents/whatever" }),
     });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.upload(file, uploadDto, actor)).resolves.toBe(created);
     expect(storage.putObject).toHaveBeenCalledWith(expect.objectContaining({ contentType: mimetype }));
@@ -79,7 +81,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({ putObject: jest.fn() });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.upload(makeFile(), uploadDto, actor)).rejects.toThrow(NotFoundException);
     expect(storage.putObject).not.toHaveBeenCalled();
@@ -92,7 +94,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({ putObject: jest.fn() });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(
       service.upload(makeFile(), { ...uploadDto, relatedType: DocumentRelatedType.SITE, relatedId: "site-1" }, actor),
@@ -112,7 +114,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const storage = mockOf<StorageProvider>({
       putObject: jest.fn().mockResolvedValue({ key: "customer-documents/whatever.pdf" }),
     });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     const result = await service.upload(file, uploadDto, actor);
 
@@ -142,7 +144,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
       putObject: jest.fn().mockResolvedValue({ key: "customer-documents/whatever.pdf" }),
       deleteObject: jest.fn().mockResolvedValue(undefined),
     });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.upload(file, uploadDto, actor)).rejects.toThrow("db exploded");
     expect(storage.deleteObject).toHaveBeenCalled();
@@ -156,7 +158,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({});
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     const result = await service.list(DocumentRelatedType.ASSET, "asset-1");
 
@@ -174,7 +176,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const storage = mockOf<StorageProvider>({
       getSignedUrl: jest.fn().mockResolvedValue("https://signed.example/doc-1.pdf"),
     });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     const result = await service.getSignedUrl("doc-1");
 
@@ -192,7 +194,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
     const storage = mockOf<StorageProvider>({ deleteObject: jest.fn().mockResolvedValue(undefined) });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await service.remove("doc-1", actor);
 
@@ -213,7 +215,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
     const storage = mockOf<StorageProvider>({ deleteObject: jest.fn().mockRejectedValue(new Error("storage down")) });
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.remove("doc-1", actor)).resolves.toBeUndefined();
   });
@@ -222,7 +224,7 @@ describe("DocumentsService — the one Phase 2 entity with a real DELETE", () =>
     const prisma = mockOf<PrismaService>({ customerDocument: { findUnique: jest.fn().mockResolvedValue(null) } });
     const audit = mockOf<AuditService>({ write: jest.fn() });
     const storage = mockOf<StorageProvider>({});
-    const service = new DocumentsService(prisma, audit, storage);
+    const service = new DocumentsService(prisma, audit, storage, access);
 
     await expect(service.findByIdOrThrow("missing")).rejects.toThrow(NotFoundException);
   });

@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from "class-validator";
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength } from "class-validator";
 import { StandaloneReasonType } from "@prisma/client";
 
 // Path B (approved plan §02/§03) — no quotationId/quotationRevisionId field
@@ -7,6 +7,9 @@ import { StandaloneReasonType } from "@prisma/client";
 // (D10) are both required, not conditional, because this DTO is only ever
 // used for the standalone path — the FROM_QUOTATION path never touches it.
 export class CreateStandaloneWorkOrderDto {
+  @IsOptional()
+  @IsUUID()
+  responsibleManagerId?: string;
   @IsString()
   @MinLength(1)
   siteId!: string;

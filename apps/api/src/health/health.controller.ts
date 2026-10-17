@@ -41,14 +41,23 @@ export class HealthController {
   }
 
   private async checkQueue(): Promise<ComponentStatus> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      // bullmq's own client type doesn't surface ioredis's `ping`; the
-      // underlying connection is a real ioredis client at runtime.
-      const client = (await this.healthQueue.client) as unknown as { ping(): Promise<string> };
-      await client.ping();
+      await Promise.race([
+        (async () => {
+          // BullMQ's client type doesn't surface ioredis's `ping`.
+          const client = (await this.healthQueue.client) as unknown as { ping(): Promise<string> };
+          await client.ping();
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Redis health check timed out")), 3000);
+        }),
+      ]);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   }
 

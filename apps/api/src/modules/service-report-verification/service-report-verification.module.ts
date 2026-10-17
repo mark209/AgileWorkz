@@ -3,6 +3,7 @@ import { ServiceReportVerificationService } from "./service-report-verification.
 import { ServiceReportVerificationController } from "./service-report-verification.controller";
 import { AuditModule } from "../audit/audit.module";
 import { StorageModule } from "../../common/storage/storage.module";
+import { IdentityModule } from "../identity/identity.module";
 
 // Deliberately does NOT import ServiceReportsModule or ExtractionModule —
 // this module reads/writes the extraction_* staging tables and
@@ -11,7 +12,7 @@ import { StorageModule } from "../../common/storage/storage.module";
 // "no cross-module dependency for a shared table" precedent as
 // ServiceReportsModule not importing CustomersModule.
 @Module({
-  imports: [AuditModule, StorageModule],
+  imports: [AuditModule, StorageModule, IdentityModule],
   controllers: [ServiceReportVerificationController],
   providers: [ServiceReportVerificationService],
   exports: [ServiceReportVerificationService],

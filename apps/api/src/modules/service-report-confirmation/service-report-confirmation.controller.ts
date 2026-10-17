@@ -2,6 +2,7 @@ import { Controller, Get, Param, Post, Req } from "@nestjs/common";
 import { Request } from "express";
 import { ServiceReportConfirmationService } from "./service-report-confirmation.service";
 import { Permissions } from "../../common/guards/permissions.decorator";
+import { ServiceAccessService } from "../identity/service-access.service";
 // No @UseGuards(PermissionsGuard) — it's already global (AppModule's
 // APP_GUARD); see service-reports.controller.ts.
 
@@ -25,23 +26,25 @@ function actorFrom(req: AuthedRequest) {
  */
 @Controller("service-reports/:id")
 export class ServiceReportConfirmationController {
-  constructor(private readonly confirmation: ServiceReportConfirmationService) {}
+  constructor(private readonly confirmation: ServiceReportConfirmationService, private readonly access: ServiceAccessService) {}
 
   @Permissions({ module: "service_reports", action: "confirm" })
   @Get("confirm/preview")
-  async preview(@Param("id") id: string) {
+  async preview(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.confirmation.preview(id);
   }
 
   @Permissions({ module: "service_reports", action: "confirm" })
   @Post("confirm")
   async confirm(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.confirmation.confirm(id, actorFrom(req));
   }
 
-  @Permissions({ module: "service_reports", action: "read" })
   @Get("canonical")
-  async getCanonical(@Param("id") id: string) {
+  async getCanonical(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertFullReportReadable(id, req.user.userId);
     return this.confirmation.getCanonicalView(id);
   }
 
@@ -52,6 +55,7 @@ export class ServiceReportConfirmationController {
   @Permissions({ module: "service_reports", action: "lock" })
   @Post("lock")
   async lock(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.confirmation.lock(id, actorFrom(req));
   }
 }

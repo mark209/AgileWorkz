@@ -11,6 +11,7 @@ import { ServiceReportsService } from "../src/modules/service-reports/service-re
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AuditService } from "../src/modules/audit/audit.service";
 import { PermissionsService } from "../src/modules/identity/permissions.service";
+import { ServiceAccessService } from "../src/modules/identity/service-access.service";
 import { NumberingService } from "../src/common/numbering/numbering.service";
 import { StorageProvider } from "../src/common/storage/storage-provider.interface";
 import { ExtractionQueueService } from "../src/common/extraction/service-report-extraction.processor";
@@ -102,7 +103,8 @@ function buildHarness(overrides: {
   });
   const numbering = mockOf<NumberingService>({ generateNumber: jest.fn().mockResolvedValue("SR-2026-08-00001") });
 
-  const service = new ServiceReportsService(prisma, numbering, audit, permissions, storage, extractionQueue);
+  const access = new ServiceAccessService(prisma, permissions);
+  const service = new ServiceReportsService(prisma, numbering, audit, permissions, access, storage, extractionQueue);
   return { service, prisma, audit, permissions, storage, extractionQueue };
 }
 
@@ -194,6 +196,22 @@ describe("ServiceReportsService.upload", () => {
     );
   });
 
+  it("rejects WORK_ORDER_LINKED without a Work Order before writing a file", async () => {
+    const { service, storage } = buildHarness();
+    await expect(service.upload("cust-1", makeFile(), { ...baseDto, sourceType: "WORK_ORDER_LINKED" }, actor))
+      .rejects.toThrow(/requires a workOrderId/);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("rejects a direct source type when a Work Order is linked", async () => {
+    const { service, storage } = buildHarness({
+      prisma: { workOrder: { findUnique: jest.fn().mockResolvedValue({ id: "wo-1", customerId: "cust-1", siteId: "site-1" }) } },
+    });
+    await expect(service.upload("cust-1", makeFile(), { ...baseDto, workOrderId: "wo-1" }, actor))
+      .rejects.toThrow(/must use WORK_ORDER_LINKED/);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
   it("rejects a workOrderId belonging to a different customer (work-order linkage)", async () => {
     const { service, storage } = buildHarness({
       prisma: { workOrder: { findUnique: jest.fn().mockResolvedValue({ id: "wo-1", customerId: "other-cust", siteId: "site-1" }) } },
@@ -234,6 +252,22 @@ describe("ServiceReportsService.upload", () => {
 
     expect(capturedData?.workOrderId).toBe("wo-1");
     expect(capturedData?.sourceType).toBe("WORK_ORDER_LINKED"); // defaulted, not required from the caller
+  });
+
+  it("rejects a Technician upload linked to a Work Order without a current assignment", async () => {
+    const { service, storage, prisma } = buildHarness({
+      prisma: {
+        workOrder: { findUnique: jest.fn().mockResolvedValue({ id: "wo-1", customerId: "cust-1", siteId: "site-1" }) },
+        workOrderAssignment: { findFirst: jest.fn().mockResolvedValue(null) },
+      },
+      permissions: { getEffectivePermissions: jest.fn().mockResolvedValue([{ module: "work_orders", action: "start_own" }]) },
+    });
+    await expect(service.upload("cust-1", makeFile(), { ...baseDto, workOrderId: "wo-1", sourceType: undefined }, actor))
+      .rejects.toThrow(ForbiddenException);
+    expect(prisma.workOrderAssignment.findFirst).toHaveBeenCalledWith({
+      where: { workOrderId: "wo-1", technicianId: actor.userId, unassignedAt: null }, select: { id: true },
+    });
+    expect(storage.putObject).not.toHaveBeenCalled();
   });
 
   it("writes to storage before creating the DB row, forces uploadedBy to the caller, and never accepts a client-supplied status", async () => {

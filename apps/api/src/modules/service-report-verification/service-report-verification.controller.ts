@@ -4,6 +4,7 @@ import { ServiceReportVerificationService } from "./service-report-verification.
 import { SubmitFieldReviewDto } from "./dto/submit-field-review.dto";
 import { isStagingCategory } from "./staging-category";
 import { Permissions } from "../../common/guards/permissions.decorator";
+import { ServiceAccessService } from "../identity/service-access.service";
 // No @UseGuards(PermissionsGuard) — it's already global (AppModule's
 // APP_GUARD); see service-reports.controller.ts.
 
@@ -25,11 +26,12 @@ function actorFrom(req: AuthedRequest) {
  */
 @Controller("service-reports/:id/verification")
 export class ServiceReportVerificationController {
-  constructor(private readonly verification: ServiceReportVerificationService) {}
+  constructor(private readonly verification: ServiceReportVerificationService, private readonly access: ServiceAccessService) {}
 
   @Permissions({ module: "service_reports", action: "verify" })
   @Get()
-  async getView(@Param("id") id: string) {
+  async getView(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.getVerificationView(id);
   }
 
@@ -45,24 +47,28 @@ export class ServiceReportVerificationController {
     if (!isStagingCategory(category)) {
       throw new BadRequestException(`Unknown field category: ${category}`);
     }
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.submitFieldReview(id, category, rowId, dto, actorFrom(req));
   }
 
   @Permissions({ module: "service_reports", action: "verify" })
   @Get("bulk-confirm/preview")
-  async previewBulkConfirm(@Param("id") id: string) {
+  async previewBulkConfirm(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.previewBulkConfirm(id);
   }
 
   @Permissions({ module: "service_reports", action: "verify" })
   @Post("bulk-confirm")
   async bulkConfirm(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.bulkConfirmEligibleFields(id, actorFrom(req));
   }
 
   @Permissions({ module: "service_reports", action: "verify" })
   @Post("complete")
   async complete(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.completeVerification(id, actorFrom(req));
   }
 }

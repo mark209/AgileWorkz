@@ -4,6 +4,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ActorContext } from "../identity/users.service";
 import { WorkOrdersService } from "./work-orders.service";
+import { ServiceAccessService } from "../identity/service-access.service";
 import { CreateAssignmentDto } from "./dto/create-assignment.dto";
 
 // Step 4 — Assignment module (approved plan §06/§07, D3/D4). Append-only
@@ -19,9 +20,11 @@ export class WorkOrderAssignmentsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly workOrdersService: WorkOrdersService,
+    private readonly access: ServiceAccessService,
   ) {}
 
-  async listForWorkOrder(workOrderId: string) {
+  async listForWorkOrder(workOrderId: string, userId?: string) {
+    if (userId) await this.access.assertManagerScopedAction(workOrderId, userId);
     await this.workOrdersService.findByIdOrThrow(workOrderId);
     return this.prisma.workOrderAssignment.findMany({ where: { workOrderId }, orderBy: { assignedAt: "asc" } });
   }
@@ -32,6 +35,7 @@ export class WorkOrderAssignmentsService {
   // caught below as P2002, same "friendly check + real DB guard" split
   // already used by quotations.service.ts's createFromInquiry.
   async assign(workOrderId: string, dto: CreateAssignmentDto, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(workOrderId, actor.userId);
     await this.workOrdersService.findByIdOrThrow(workOrderId);
     await this.assertTechnicianValid(dto.technicianId);
 
@@ -73,6 +77,7 @@ export class WorkOrderAssignmentsService {
   // quotations.service.ts's approveRevision/rejectRevision) means two
   // concurrent unassign calls for the same row can never both "win".
   async unassign(workOrderId: string, assignmentId: string, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(workOrderId, actor.userId);
     const before = await this.prisma.workOrderAssignment.findUnique({ where: { id: assignmentId } });
     if (!before || before.workOrderId !== workOrderId) {
       throw new NotFoundException("Assignment not found");

@@ -1,6 +1,7 @@
 import { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { UserStatus } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { bootstrapTestApp, E2eFixtures } from "./support";
 import { PrismaService } from "../../src/prisma/prisma.service";
 
@@ -115,6 +116,23 @@ describe("Work Order Lifecycle — Step 5 (live)", () => {
 
   const url = (id: string, suffix: string) => `/work-orders/${id}/${suffix}`;
 
+  async function addReport(workOrderId: string) {
+    const workOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: workOrderId } });
+    const reportType = await prisma.serviceReportType.findFirstOrThrow();
+    return prisma.serviceReport.create({ data: {
+      serviceReportNumber: `T-${randomUUID().slice(0, 24)}`,
+      customerId: workOrder.customerId,
+      siteId: workOrder.siteId,
+      workOrderId,
+      reportTypeCode: reportType.code,
+      documentFileKey: "test/report.pdf",
+      documentMimeType: "application/pdf",
+      documentFileName: "report.pdf",
+      documentFileSize: 1,
+      uploadedAt: new Date(),
+    } });
+  }
+
   /** Drives a fresh standalone Work Order to SCHEDULED (assign techA + schedule). Returns the WO id and its active assignment id. */
   async function scheduleFreshWorkOrder(suffix: string) {
     const wo = await createStandaloneWorkOrder(suffix);
@@ -139,12 +157,19 @@ describe("Work Order Lifecycle — Step 5 (live)", () => {
     expect(startRes.body.startedAt).not.toBeNull();
     expect(startRes.body.startedBy).toBe(techA.userId);
 
+    const missingReport = await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
+    expect(missingReport.status).toBe(400);
+    const report = await addReport(workOrderId);
+
     const completeRes = await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
     expect(completeRes.status).toBe(200);
     expect(completeRes.body.status).toBe("COMPLETED");
     expect(completeRes.body.completedAt).not.toBeNull();
     expect(completeRes.body.closedAt).toBeNull(); // COMPLETED != CLOSED (§04/D2)
 
+    const unverifiedClose = await request(app.getHttpServer()).patch(url(workOrderId, "close")).set("Authorization", managerHeader);
+    expect(unverifiedClose.status).toBe(400);
+    await prisma.serviceReport.update({ where: { id: report.id }, data: { status: "VERIFIED" } });
     const closeRes = await request(app.getHttpServer()).patch(url(workOrderId, "close")).set("Authorization", managerHeader);
     expect(closeRes.status).toBe(200);
     expect(closeRes.body.status).toBe("CLOSED");
@@ -192,7 +217,9 @@ describe("Work Order Lifecycle — Step 5 (live)", () => {
   it("terminal state: CLOSED accepts no further transition of any kind", async () => {
     const { workOrderId } = await scheduleFreshWorkOrder("closed-terminal");
     await request(app.getHttpServer()).patch(url(workOrderId, "start")).set("Authorization", techA.header);
+    const report = await addReport(workOrderId);
     await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
+    await prisma.serviceReport.update({ where: { id: report.id }, data: { status: "VERIFIED" } });
     await request(app.getHttpServer()).patch(url(workOrderId, "close")).set("Authorization", managerHeader);
 
     const attempts = await Promise.all([
@@ -211,6 +238,7 @@ describe("Work Order Lifecycle — Step 5 (live)", () => {
   it("COMPLETED cannot be cancelled, re-completed, or bypassed straight to CLOSED without going through close", async () => {
     const { workOrderId } = await scheduleFreshWorkOrder("completed-separation");
     await request(app.getHttpServer()).patch(url(workOrderId, "start")).set("Authorization", techA.header);
+    const report = await addReport(workOrderId);
     const completeRes = await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
     expect(completeRes.body.status).toBe("COMPLETED");
 
@@ -223,6 +251,7 @@ describe("Work Order Lifecycle — Step 5 (live)", () => {
     // Only close (Manager/Admin-Owner) actually reaches CLOSED.
     const officeCloseDenied = await request(app.getHttpServer()).patch(url(workOrderId, "close")).set("Authorization", officeHeader);
     expect(officeCloseDenied.status).toBe(403);
+    await prisma.serviceReport.update({ where: { id: report.id }, data: { status: "VERIFIED" } });
     const closeRes = await request(app.getHttpServer()).patch(url(workOrderId, "close")).set("Authorization", managerHeader);
     expect(closeRes.status).toBe(200);
     expect(closeRes.body.status).toBe("CLOSED");

@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional } from "class-validator";
+import { IsDateString, IsOptional, IsUUID } from "class-validator";
 
 // Path A (approved plan §02/§05). Everything else about the resulting Work
 // Order(s) — customer/site, scope by reference, costing snapshot, copied
@@ -6,6 +6,9 @@ import { IsDateString, IsOptional } from "class-validator";
 // thing conversion accepts from the caller is this one optional field,
 // applied identically to every Work Order the conversion produces.
 export class ConvertToWorkOrdersDto {
+  @IsOptional()
+  @IsUUID()
+  responsibleManagerId?: string;
   @IsOptional()
   @IsDateString()
   scheduledDate?: string;

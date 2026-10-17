@@ -3,6 +3,7 @@ import { ActorType, AssetStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ActorContext } from "../identity/users.service";
+import { ServiceAccessService } from "../identity/service-access.service";
 import { changedKeysOf, pickDefined } from "../../common/diff-fields.util";
 import { CreateAssetDto } from "./dto/create-asset.dto";
 import { UpdateAssetDto } from "./dto/update-asset.dto";
@@ -15,12 +16,23 @@ export class AssetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly access: ServiceAccessService,
   ) {}
 
   async findByIdOrThrow(id: string) {
     const asset = await this.prisma.asset.findUnique({ where: { id } });
     if (!asset) throw new NotFoundException("Asset not found");
     return asset;
+  }
+
+  async listServiceHistory(id: string, actor: ActorContext) {
+    await this.findByIdOrThrow(id);
+    const scope = await this.access.reportFilter(actor.userId);
+    return this.prisma.serviceReport.findMany({
+      where: { status: { in: ["VERIFIED", "CONFIRMED", "LOCKED"] }, equipmentUnits: { some: { assetId: id } }, ...scope },
+      select: { id: true, serviceReportNumber: true, status: true, serviceDate: true, uploadedAt: true },
+      orderBy: { uploadedAt: "desc" },
+    });
   }
 
   async listForSite(siteId: string) {

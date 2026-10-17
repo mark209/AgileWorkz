@@ -1,6 +1,7 @@
 import { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { UserStatus } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { bootstrapTestApp, E2eFixtures } from "./support";
 import { PrismaService } from "../../src/prisma/prisma.service";
 
@@ -108,6 +109,18 @@ describe("Work Order field completion — RBAC correction (live)", () => {
 
   const url = (id: string, suffix: string) => `/work-orders/${id}/${suffix}`;
 
+  async function addVerifiedReport(workOrderId: string) {
+    const workOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: workOrderId } });
+    const reportType = await prisma.serviceReportType.findFirstOrThrow();
+    return prisma.serviceReport.create({ data: {
+      serviceReportNumber: `T-${randomUUID().slice(0, 24)}`,
+      customerId: workOrder.customerId, siteId: workOrder.siteId, workOrderId,
+      reportTypeCode: reportType.code, status: "VERIFIED",
+      documentFileKey: "test/report.pdf", documentMimeType: "application/pdf",
+      documentFileName: "report.pdf", documentFileSize: 1, uploadedAt: new Date(),
+    } });
+  }
+
   /** Drives a fresh standalone Work Order to IN_PROGRESS with techA actively assigned. */
   async function inProgressWorkOrder(suffix: string, technicianId = techA.userId) {
     const wo = await createStandaloneWorkOrder(suffix);
@@ -174,6 +187,7 @@ describe("Work Order field completion — RBAC correction (live)", () => {
 
   it("rejects field-complete once the Work Order has moved past IN_PROGRESS (COMPLETED/CLOSED)", async () => {
     const { workOrderId } = await inProgressWorkOrder("wrong-state-completed");
+    await addVerifiedReport(workOrderId);
     await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
 
     const afterComplete = await request(app.getHttpServer()).patch(url(workOrderId, "field-complete")).set("Authorization", techA.header);
@@ -205,6 +219,8 @@ describe("Work Order field completion — RBAC correction (live)", () => {
     const { workOrderId } = await inProgressWorkOrder("field-then-office-complete");
     const fieldRes = await request(app.getHttpServer()).patch(url(workOrderId, "field-complete")).set("Authorization", techA.header);
     expect(fieldRes.status).toBe(200);
+
+    await addVerifiedReport(workOrderId);
 
     const completeRes = await request(app.getHttpServer()).patch(url(workOrderId, "complete")).set("Authorization", officeHeader);
     expect(completeRes.status).toBe(200);

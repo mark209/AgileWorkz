@@ -20,7 +20,7 @@ import { PrismaService } from "../../src/prisma/prisma.service";
  * approval requires an explicit action by someone holding the right
  * permission for the right stage. The two-level (Manager -> Owner) path
  * itself, discount-percentage's removal from approval routing, and the
- * exact ₱200,000 boundary are covered in their own dedicated file,
+ * exact ₱50,000 boundary are covered in their own dedicated file,
  * quotation-two-level-approval.e2e-spec.ts — this file's amounts (1000,
  * 1500, etc.) are all deliberately well under the default threshold, so
  * every approval here is Manager-only, single-level, same as before this

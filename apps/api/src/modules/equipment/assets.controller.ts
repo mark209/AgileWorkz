@@ -25,6 +25,11 @@ export class AssetsController {
     return this.assetsService.findByIdOrThrow(id);
   }
 
+  @Get(":id/service-reports")
+  async serviceHistory(@Param("id") id: string, @Req() req: AuthedRequest) {
+    return this.assetsService.listServiceHistory(id, actorFrom(req));
+  }
+
   @Permissions({ module: "assets", action: "update" })
   @Patch(":id")
   async update(@Param("id") id: string, @Body() dto: UpdateAssetDto, @Req() req: AuthedRequest) {

@@ -39,10 +39,9 @@ export class ServiceReportsController {
   // Phase 5 Step 5 — the verification queue. service_reports.read (not
   // read_own): Technician never holds it, so this route is structurally
   // unreachable for them regardless of what status is requested.
-  @Permissions({ module: "service_reports", action: "read" })
   @Get()
-  async list(@Query("status") status?: string) {
-    if (!status) return this.serviceReportsService.listByStatus([ServiceReportStatus.PENDING_VERIFICATION]);
+  async list(@Req() req: AuthedRequest, @Query("status") status?: string) {
+    if (!status) return this.serviceReportsService.listByStatus([ServiceReportStatus.PENDING_VERIFICATION], { userId: req.user.userId });
     const statuses = status.split(",").map((s) => s.trim());
     const valid = Object.values(ServiceReportStatus);
     for (const s of statuses) {
@@ -50,7 +49,7 @@ export class ServiceReportsController {
         throw new BadRequestException(`Unknown status: ${s}`);
       }
     }
-    return this.serviceReportsService.listByStatus(statuses as ServiceReportStatus[]);
+    return this.serviceReportsService.listByStatus(statuses as ServiceReportStatus[], { userId: req.user.userId });
   }
 
   // D4-style — no @Permissions() here deliberately. PermissionsGuard only

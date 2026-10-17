@@ -48,7 +48,7 @@ const DEFAULT_VAT_RATE_FALLBACK = "12";
 // approval correction: this is now the Owner-approval threshold (amount
 // only — discount percentage was removed as an approval-routing input
 // entirely, per the approved business rule).
-const DEFAULT_APPROVAL_THRESHOLD_PHP_FALLBACK = "200000";
+const DEFAULT_APPROVAL_THRESHOLD_PHP_FALLBACK = "50000";
 
 // The exact literal seeded onto the placeholder QuotationTermTemplate (see
 // seed.ts DEFAULT_QUOTATION_TERM_TEMPLATE_BODY). Deliberately a simple
@@ -370,8 +370,8 @@ export class QuotationsService {
   // under any circumstance; approval routing is amount-only, discount
   // percentage plays no part):
   //   DRAFT --submit--> PENDING_APPROVAL (always)
-  //   PENDING_APPROVAL --Manager approves, amount<=200k--> APPROVED
-  //   PENDING_APPROVAL --Manager approves, amount>200k--> PENDING_OWNER_APPROVAL
+  //   PENDING_APPROVAL --Manager approves, amount<=50k--> APPROVED
+  //   PENDING_APPROVAL --Manager approves, amount>50k--> PENDING_OWNER_APPROVAL
   //   PENDING_APPROVAL --Manager rejects--> REJECTED (terminal — never reaches Owner)
   //   PENDING_OWNER_APPROVAL --Owner approves--> APPROVED
   //   PENDING_OWNER_APPROVAL --Owner rejects--> REJECTED (terminal)
@@ -458,9 +458,9 @@ export class QuotationsService {
   // already used by WorkOrdersService.getForActor/fieldCompleteOwn:
   //   - PENDING_APPROVAL: Manager's Level-1 action. quotations.approve
   //     alone is sufficient (Manager and Admin/Owner both hold it).
-  //     amount<=200k finalizes straight to APPROVED; amount>200k only
+  //     amount<=50k finalizes straight to APPROVED; amount>50k only
   //     advances to PENDING_OWNER_APPROVAL — Manager's approval alone
-  //     never finally approves a >200k revision.
+  //     never finally approves a >50k revision.
   //   - PENDING_OWNER_APPROVAL: Owner's Level-2 action. Requires the
   //     additional quotations.approve_final permission (Admin/Owner only)
   //     — checked manually here, not by the controller's guard, so a
@@ -469,8 +469,8 @@ export class QuotationsService {
   //     hidden in the UI.
   // approvedBy/approvedAt (kept, V1 compatibility) are populated only by
   // whichever action actually finalizes the revision — Manager's for
-  // <=200k, Owner's for >200k — never by an intermediate Level-1 action on
-  // a >200k revision.
+  // <=50k, Owner's for >50k — never by an intermediate Level-1 action on
+  // a >50k revision.
   async approveRevision(revisionId: string, actor: ActorContext) {
     const before = await this.findRevisionByIdOrThrow(revisionId);
 

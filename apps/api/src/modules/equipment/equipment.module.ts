@@ -4,9 +4,10 @@ import { EquipmentSystemsController } from "./equipment-systems.controller";
 import { AssetsService } from "./assets.service";
 import { AssetsController } from "./assets.controller";
 import { AuditModule } from "../audit/audit.module";
+import { IdentityModule } from "../identity/identity.module";
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, IdentityModule],
   controllers: [EquipmentSystemsController, AssetsController],
   providers: [EquipmentSystemsService, AssetsService],
   // Exported so SitesController (CustomersModule) can host the nested

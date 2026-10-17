@@ -1,9 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { ActorType, UserStatus } from "@prisma/client";
+import { ActorType, Prisma, UserStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { RegisterDto } from "./dto/register.dto";
 
 export interface ActorContext {
   userId: string;
@@ -22,6 +23,9 @@ const USER_SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
+const REQUESTABLE_ROLE_NAMES = ["Manager", "Office Staff", "Technician"];
+const REGISTRATION_TRANSACTION_TIMEOUT_MS = 30_000;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -32,7 +36,9 @@ export class UsersService {
   async findByEmailWithSecrets(email: string) {
     // The only place password_hash is ever selected — every other query in
     // this service uses USER_SAFE_SELECT.
-    return this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim().toLowerCase();
+    return (await this.prisma.user.findUnique({ where: { email: normalizedEmail } }))
+      ?? this.prisma.user.findFirst({ where: { email: { equals: normalizedEmail, mode: "insensitive" } } });
   }
 
   async findByIdSafe(id: string) {
@@ -42,7 +48,130 @@ export class UsersService {
   }
 
   async list() {
-    return this.prisma.user.findMany({ select: USER_SAFE_SELECT, orderBy: { fullName: "asc" } });
+    return this.prisma.user.findMany({
+      select: { ...USER_SAFE_SELECT, userRoles: { select: { role: { select: { id: true, name: true } } } } },
+      orderBy: { fullName: "asc" },
+    });
+  }
+
+  async requestableDesignations() {
+    return this.prisma.role.findMany({
+      where: { name: { in: REQUESTABLE_ROLE_NAMES } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  async requestRegistration(dto: RegisterDto, meta: { ipAddress?: string; userAgent?: string }) {
+    const fullName = dto.fullName.trim();
+    const email = dto.email.trim().toLowerCase();
+    if (!fullName) throw new BadRequestException("Name is required");
+
+    const role = await this.prisma.role.findUnique({ where: { id: dto.requestedRoleId }, select: { id: true, name: true } });
+    if (!role || !REQUESTABLE_ROLE_NAMES.includes(role.name)) {
+      throw new BadRequestException("Select an available designation");
+    }
+
+    // The public response is identical for new, existing and already-pending emails.
+    const [existingUser, existingRequest] = await Promise.all([
+      this.prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } }),
+      this.prisma.registrationRequest.findUnique({ where: { email }, select: { id: true } }),
+    ]);
+    if (existingUser || existingRequest) return;
+
+    const passwordHash = await argon2.hash(dto.password);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const request = await tx.registrationRequest.create({
+          data: { fullName, email, phone: dto.phone?.trim() || null, passwordHash, requestedRoleId: role.id },
+          select: { id: true },
+        });
+        await this.audit.write({
+          actorType: ActorType.SYSTEM,
+          action: "registration_requested",
+          entityType: "registration_request",
+          entityId: request.id,
+          afterData: { requestedRole: role.name },
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        }, tx);
+      }, { timeout: REGISTRATION_TRANSACTION_TIMEOUT_MS });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+      throw error;
+    }
+  }
+
+  private async assertAdminOwner(actor: ActorContext, client: Prisma.TransactionClient | PrismaService = this.prisma) {
+    const membership = await client.userRole.findFirst({
+      where: { userId: actor.userId, role: { name: "Admin/Owner" } },
+      select: { userId: true },
+    });
+    if (!membership) throw new ForbiddenException("Only Admin/Owner can review registrations");
+  }
+
+  async listRegistrationRequests(actor: ActorContext) {
+    await this.assertAdminOwner(actor);
+    return this.prisma.registrationRequest.findMany({
+      select: {
+        id: true, fullName: true, email: true, phone: true, createdAt: true,
+        requestedRole: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  async approveRegistration(requestId: string, roleId: string, actor: ActorContext) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertAdminOwner(actor, tx);
+      const request = await tx.registrationRequest.findUnique({ where: { id: requestId } });
+      if (!request) throw new NotFoundException("Registration request not found");
+      const role = await tx.role.findUnique({ where: { id: roleId }, select: { id: true, name: true } });
+      if (!role) throw new BadRequestException("Select an existing role");
+      const existing = await tx.user.findFirst({
+        where: { email: { equals: request.email, mode: "insensitive" } }, select: { id: true },
+      });
+      if (existing) throw new ConflictException("An account with this email already exists");
+
+      const user = await tx.user.create({
+        data: {
+          fullName: request.fullName, email: request.email, phone: request.phone,
+          passwordHash: request.passwordHash, status: UserStatus.ACTIVE,
+        },
+        select: USER_SAFE_SELECT,
+      });
+      await tx.userRole.create({ data: { userId: user.id, roleId: role.id, assignedBy: actor.userId } });
+      await this.audit.write({
+        actorType: ActorType.USER, actorUserId: actor.userId, action: "registration_approved",
+        entityType: "user", entityId: user.id,
+        afterData: { requestedRoleId: request.requestedRoleId, assignedRole: role.name },
+        ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+      }, tx);
+      await tx.registrationRequest.delete({ where: { id: requestId } });
+      return user;
+    }, { timeout: REGISTRATION_TRANSACTION_TIMEOUT_MS });
+  }
+
+  async declineRegistration(requestId: string, actor: ActorContext) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.assertAdminOwner(actor, tx);
+      const request = await tx.registrationRequest.findUnique({ where: { id: requestId }, select: { id: true } });
+      if (!request) throw new NotFoundException("Registration request not found");
+      await this.audit.write({
+        actorType: ActorType.USER, actorUserId: actor.userId, action: "registration_declined",
+        entityType: "registration_request", entityId: requestId,
+        ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+      }, tx);
+      await tx.registrationRequest.delete({ where: { id: requestId } });
+    }, { timeout: REGISTRATION_TRANSACTION_TIMEOUT_MS });
+  }
+
+  async listManagers() {
+    return this.prisma.user.findMany({
+      where: { status: UserStatus.ACTIVE, userRoles: { some: { role: { name: "Manager" } } } },
+      select: { id: true, fullName: true },
+      orderBy: { fullName: "asc" },
+    });
   }
 
   /**

@@ -40,14 +40,14 @@ export class DocumentsController {
 
   @Permissions({ module: "customer_documents", action: "read" })
   @Get()
-  async list(@Query() query: ListDocumentsQueryDto) {
-    return this.documentsService.list(query.relatedType, query.relatedId);
+  async list(@Query() query: ListDocumentsQueryDto, @Req() req: AuthedRequest) {
+    return this.documentsService.list(query.relatedType, query.relatedId, req.user.userId);
   }
 
   @Permissions({ module: "customer_documents", action: "read" })
   @Get(":id/signed-url")
-  async getSignedUrl(@Param("id") id: string) {
-    return this.documentsService.getSignedUrl(id);
+  async getSignedUrl(@Param("id") id: string, @Req() req: AuthedRequest) {
+    return this.documentsService.getSignedUrl(id, req.user.userId);
   }
 
   @Permissions({ module: "customer_documents", action: "delete" })

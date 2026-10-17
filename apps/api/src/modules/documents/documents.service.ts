@@ -7,6 +7,7 @@ import { AuditService } from "../audit/audit.service";
 import { ActorContext } from "../identity/users.service";
 import { STORAGE_PROVIDER, StorageProvider } from "../../common/storage/storage-provider.interface";
 import { UploadDocumentDto } from "./dto/upload-document.dto";
+import { ServiceAccessService } from "../identity/service-access.service";
 
 const STORAGE_KEY_PREFIX = "customer-documents";
 
@@ -22,6 +23,7 @@ export class DocumentsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
+    private readonly access: ServiceAccessService,
   ) {}
 
   async findByIdOrThrow(id: string) {
@@ -30,20 +32,34 @@ export class DocumentsService {
     return document;
   }
 
-  async list(relatedType: DocumentRelatedType, relatedId: string) {
+  async list(relatedType: DocumentRelatedType, relatedId: string, userId?: string) {
+    if (relatedType === DocumentRelatedType.WORK_ORDER && userId) await this.access.assertWorkOrderReadable(relatedId, userId);
+    if (relatedType === DocumentRelatedType.SERVICE_REPORT && userId) await this.access.assertFullReportReadable(relatedId, userId);
     return this.prisma.customerDocument.findMany({
       where: { relatedType, relatedId },
       orderBy: { uploadedAt: "desc" },
     });
   }
 
-  async getSignedUrl(id: string) {
+  async getSignedUrl(id: string, userId?: string) {
     const document = await this.findByIdOrThrow(id);
+    if (document.relatedType === DocumentRelatedType.WORK_ORDER && userId) {
+      await this.access.assertWorkOrderReadable(document.relatedId, userId);
+    }
+    if (document.relatedType === DocumentRelatedType.SERVICE_REPORT && userId) {
+      await this.access.assertFullReportReadable(document.relatedId, userId);
+    }
     const url = await this.storage.getSignedUrl(document.fileKey);
     return { url };
   }
 
   async upload(file: Express.Multer.File | undefined, dto: UploadDocumentDto, actor: ActorContext) {
+    if (dto.relatedType === DocumentRelatedType.WORK_ORDER) {
+      await this.access.assertManagerScopedAction(dto.relatedId, actor.userId);
+    }
+    if (dto.relatedType === DocumentRelatedType.SERVICE_REPORT) {
+      await this.access.assertManagerScopedReportAction(dto.relatedId, actor.userId);
+    }
     if (!file) {
       throw new BadRequestException("A file is required");
     }
@@ -123,6 +139,12 @@ export class DocumentsService {
   // successful deletion as a failure.
   async remove(id: string, actor: ActorContext) {
     const before = await this.findByIdOrThrow(id);
+    if (before.relatedType === DocumentRelatedType.WORK_ORDER) {
+      await this.access.assertManagerScopedAction(before.relatedId, actor.userId);
+    }
+    if (before.relatedType === DocumentRelatedType.SERVICE_REPORT) {
+      await this.access.assertManagerScopedReportAction(before.relatedId, actor.userId);
+    }
 
     await this.prisma.customerDocument.delete({ where: { id } });
 

@@ -21,10 +21,10 @@ function actorFrom(req: AuthedRequest) {
 export class WorkOrderAssignmentsController {
   constructor(private readonly assignmentsService: WorkOrderAssignmentsService) {}
 
-  @Permissions({ module: "work_orders", action: "read" })
+  @Permissions({ module: "work_orders", action: "assign" })
   @Get()
-  async list(@Param("workOrderId") workOrderId: string) {
-    return this.assignmentsService.listForWorkOrder(workOrderId);
+  async list(@Param("workOrderId") workOrderId: string, @Req() req: AuthedRequest) {
+    return this.assignmentsService.listForWorkOrder(workOrderId, req.user.userId);
   }
 
   @Permissions({ module: "work_orders", action: "assign" })

@@ -1,6 +1,7 @@
 import { AssetStatus } from "@prisma/client";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { AssetsService } from "../src/modules/equipment/assets.service";
+import { ServiceAccessService } from "../src/modules/identity/service-access.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AuditService } from "../src/modules/audit/audit.service";
 import { mockOf } from "./test-utils";
@@ -19,7 +20,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
   it("rejects creating an asset under a site that doesn't exist", async () => {
     const prisma = mockOf<PrismaService>({ site: { findUnique: jest.fn().mockResolvedValue(null) } });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(service.create("missing-site", baseCreateDto, actor)).rejects.toThrow(NotFoundException);
   });
@@ -30,7 +31,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       equipmentType: { findUnique: jest.fn().mockResolvedValue(null) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(service.create("site-1", baseCreateDto, actor)).rejects.toThrow(NotFoundException);
   });
@@ -41,7 +42,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       equipmentType: { findUnique: jest.fn().mockResolvedValue({ code: "SPLIT_INDOOR" }) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(
       service.create("site-1", { ...baseCreateDto, capacityValue: 2 }, actor),
@@ -54,7 +55,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       equipmentType: { findUnique: jest.fn().mockResolvedValue({ code: "SPLIT_INDOOR" }) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(
       service.create("site-1", { ...baseCreateDto, capacityUnitCode: "TR" }, actor),
@@ -68,7 +69,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       capacityUnit: { findUnique: jest.fn().mockResolvedValue(null) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(
       service.create("site-1", { ...baseCreateDto, capacityValue: 2, capacityUnitCode: "GHOST" }, actor),
@@ -82,7 +83,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       asset: { findUnique: jest.fn().mockResolvedValue({ id: "existing-asset" }) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(service.create("site-1", baseCreateDto, actor)).rejects.toThrow(ConflictException);
   });
@@ -94,7 +95,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       equipmentSystem: { findUnique: jest.fn().mockResolvedValue({ id: "es1", siteId: "other-site" }) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(
       service.create("site-1", { ...baseCreateDto, equipmentSystemId: "es1" }, actor),
@@ -108,7 +109,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       asset: { findUnique: jest.fn().mockResolvedValue({ id: "parent-1", siteId: "other-site" }) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(
       service.create("site-1", { ...baseCreateDto, parentAssetId: "parent-1" }, actor),
@@ -133,7 +134,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       },
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     const result = await service.create("site-1", { ...baseCreateDto, capacityValue: 2, capacityUnitCode: "TR" }, actor);
 
@@ -161,7 +162,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       },
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await service.update("a1", { brand: "New Brand" }, actor);
 
@@ -187,7 +188,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       asset: { findUnique: jest.fn().mockResolvedValue(before) },
     });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     // capacityUnitCode is omitted entirely, so it stays "TR" from `before`;
     // capacityValue is explicitly cleared to null — the pair is now broken.
@@ -206,7 +207,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       },
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await service.update("a1", { assetTag: "AC-101-IDU", brand: "New Brand" }, actor);
 
@@ -225,7 +226,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       },
     });
     const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     const result = await service.updateStatus("a1", AssetStatus.OUT_OF_SERVICE, actor);
 
@@ -244,7 +245,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
       const before = { id: "a1", siteId: "site-1" };
       const prisma = mockOf<PrismaService>({ asset: { findUnique: jest.fn().mockResolvedValue(before) } });
       const audit = mockOf<AuditService>({ write: jest.fn() });
-      const service = new AssetsService(prisma, audit);
+      const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
       await expect(service.link("a1", { parentAssetId: "a1" }, actor)).rejects.toThrow(BadRequestException);
     });
@@ -260,7 +261,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
         },
       });
       const audit = mockOf<AuditService>({ write: jest.fn() });
-      const service = new AssetsService(prisma, audit);
+      const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
       await expect(service.link("a1", { parentAssetId: "a2" }, actor)).rejects.toThrow(BadRequestException);
     });
@@ -272,7 +273,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
         equipmentSystem: { findUnique: jest.fn().mockResolvedValue({ id: "es1", siteId: "other-site" }) },
       });
       const audit = mockOf<AuditService>({ write: jest.fn() });
-      const service = new AssetsService(prisma, audit);
+      const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
       await expect(service.link("a1", { equipmentSystemId: "es1" }, actor)).rejects.toThrow(BadRequestException);
     });
@@ -290,7 +291,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
         },
       });
       const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-      const service = new AssetsService(prisma, audit);
+      const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
       const result = await service.link("a1", { parentAssetId: "a2" }, actor);
 
@@ -314,7 +315,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
         },
       });
       const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-      const service = new AssetsService(prisma, audit);
+      const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
       const result = await service.link("a1", { parentAssetId: null }, actor);
 
@@ -331,7 +332,7 @@ describe("AssetsService — status is the only lifecycle mechanism (no delete)",
   it("findByIdOrThrow throws NotFoundException for a missing asset", async () => {
     const prisma = mockOf<PrismaService>({ asset: { findUnique: jest.fn().mockResolvedValue(null) } });
     const audit = mockOf<AuditService>({ write: jest.fn() });
-    const service = new AssetsService(prisma, audit);
+    const service = new AssetsService(prisma, audit, mockOf<ServiceAccessService>({}));
 
     await expect(service.findByIdOrThrow("missing")).rejects.toThrow(NotFoundException);
   });

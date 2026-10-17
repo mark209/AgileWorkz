@@ -3,6 +3,7 @@ import { ServiceReportConfirmationService } from "./service-report-confirmation.
 import { ServiceReportConfirmationController } from "./service-report-confirmation.controller";
 import { ConfirmationPlanBuilderService } from "./confirmation-plan-builder.service";
 import { AuditModule } from "../audit/audit.module";
+import { IdentityModule } from "../identity/identity.module";
 
 // Deliberately does NOT import ServiceReportsModule or
 // ServiceReportVerificationModule — reads/writes the extraction_* staging
@@ -11,7 +12,7 @@ import { AuditModule } from "../audit/audit.module";
 // binding, same "no cross-module dependency for a shared table" precedent
 // already established by ServiceReportVerificationModule.
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, IdentityModule],
   controllers: [ServiceReportConfirmationController],
   providers: [ServiceReportConfirmationService, ConfirmationPlanBuilderService],
   exports: [ServiceReportConfirmationService],

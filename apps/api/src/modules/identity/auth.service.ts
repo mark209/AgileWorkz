@@ -6,6 +6,7 @@ import { AuthenticatedUser, LoginResponseDto } from "@agileworks/shared-types";
 import { UsersService } from "./users.service";
 import { PermissionsService } from "./permissions.service";
 import { AuditService } from "../audit/audit.service";
+import { RegisterDto } from "./dto/register.dto";
 
 export interface RequestMeta {
   ipAddress?: string;
@@ -20,6 +21,14 @@ export class AuthService {
     private readonly audit: AuditService,
     private readonly jwt: JwtService,
   ) {}
+
+  requestableDesignations() {
+    return this.users.requestableDesignations();
+  }
+
+  register(dto: RegisterDto, meta: RequestMeta) {
+    return this.users.requestRegistration(dto, meta);
+  }
 
   async login(email: string, password: string, meta: RequestMeta): Promise<LoginResponseDto> {
     const user = await this.users.findByEmailWithSecrets(email);

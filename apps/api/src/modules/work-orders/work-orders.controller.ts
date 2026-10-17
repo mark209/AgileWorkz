@@ -6,6 +6,7 @@ import { ServiceReportsService } from "../service-reports/service-reports.servic
 import { ScheduleWorkOrderDto } from "./dto/schedule-work-order.dto";
 import { RequestCancelWorkOrderDto } from "./dto/request-cancel-work-order.dto";
 import { CancelWorkOrderDto } from "./dto/cancel-work-order.dto";
+import { SetResponsibleManagerDto } from "./dto/set-responsible-manager.dto";
 import { Permissions } from "../../common/guards/permissions.decorator";
 // No @UseGuards(PermissionsGuard) — it's already global (AppModule's
 // APP_GUARD); see customers.controller.ts / quotations.controller.ts.
@@ -43,16 +44,16 @@ export class WorkOrdersController {
   // other unscoped route; their own jobs remain reachable only via
   // GET /work-orders/mine below. Same comma-separated-status convention
   // already approved for GET /service-reports and GET /quotations.
-  @Permissions({ module: "work_orders", action: "read" })
   @Get()
-  async list(@Query("status") status?: string) {
-    if (!status) return this.workOrdersService.listAllOrByStatus();
+  async list(@Req() req: AuthedRequest, @Query("status") status?: string, @Query("scope") scope?: string) {
+    if (scope && scope !== "assigned") throw new BadRequestException("Unknown scope");
+    if (!status) return this.workOrdersService.listAllOrByStatus(undefined, actorFrom(req), scope === "assigned");
     const statuses = status.split(",").map((s) => s.trim());
     const valid = Object.values(WorkOrderStatus);
     for (const s of statuses) {
       if (!valid.includes(s as WorkOrderStatus)) throw new BadRequestException(`Unknown status: ${s}`);
     }
-    return this.workOrdersService.listAllOrByStatus(statuses as WorkOrderStatus[]);
+    return this.workOrdersService.listAllOrByStatus(statuses as WorkOrderStatus[], actorFrom(req), scope === "assigned");
   }
 
   @Permissions({ module: "work_orders", action: "read_own" })
@@ -70,6 +71,12 @@ export class WorkOrdersController {
   @Get(":id")
   async get(@Param("id") id: string, @Req() req: AuthedRequest) {
     return this.workOrdersService.getForActor(id, { userId: req.user.userId });
+  }
+
+  @Permissions({ module: "users", action: "manage" })
+  @Patch(":id/responsible-manager")
+  async setResponsibleManager(@Param("id") id: string, @Body() dto: SetResponsibleManagerDto, @Req() req: AuthedRequest) {
+    return this.workOrdersService.setResponsibleManager(id, dto.responsibleManagerId, actorFrom(req));
   }
 
   // DRAFT -> SCHEDULED. No dedicated permission exists for this transition
@@ -150,10 +157,9 @@ export class WorkOrdersController {
   // convertToWorkOrders (gated on work_orders.create, not quotations.*).
   // Never touches Phase 5's own extraction/verification/confirm/lock
   // pipeline — only lists rows that pipeline already produced.
-  @Permissions({ module: "service_reports", action: "read" })
   @Get(":id/service-reports")
-  async listServiceReports(@Param("id") id: string) {
-    await this.workOrdersService.findByIdOrThrow(id);
-    return this.serviceReportsService.listByWorkOrder(id);
+  async listServiceReports(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.workOrdersService.getForActor(id, actorFrom(req));
+    return this.serviceReportsService.listByWorkOrder(id, actorFrom(req));
   }
 }

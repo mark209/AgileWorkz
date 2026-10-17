@@ -9,11 +9,13 @@ import {
   WorkOrder,
   WorkOrderStatus,
   WorkOrderType,
+  UserStatus,
 } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NumberingService } from "../../common/numbering/numbering.service";
 import { PermissionsService } from "../identity/permissions.service";
+import { ServiceAccessService } from "../identity/service-access.service";
 import { ActorContext } from "../identity/users.service";
 import { CreateStandaloneWorkOrderDto } from "./dto/create-standalone-work-order.dto";
 import { ConvertToWorkOrdersDto } from "./dto/convert-to-work-orders.dto";
@@ -49,6 +51,7 @@ const CANCELLABLE_STATUSES: WorkOrderStatus[] = [WorkOrderStatus.DRAFT, WorkOrde
 const WORK_ORDER_LIST_INCLUDE = {
   customer: { select: { id: true, name: true } },
   site: { select: { id: true, label: true } },
+  responsibleManager: { select: { id: true, fullName: true } },
   assignments: {
     where: { unassignedAt: null },
     orderBy: { assignedAt: "asc" as const },
@@ -68,6 +71,7 @@ export class WorkOrdersService {
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
     private readonly permissions: PermissionsService,
+    private readonly access: ServiceAccessService,
   ) {}
 
   // Plain existence check, no ownership/permission branching — used
@@ -92,20 +96,10 @@ export class WorkOrdersService {
   // did or didn't show, and never bypassable by calling the API directly
   // with a known Work Order id.
   async getForActor(id: string, actor: ActorContext) {
+    await this.access.assertWorkOrderReadable(id, actor.userId);
     const workOrder = await this.prisma.workOrder.findUnique({ where: { id }, include: WORK_ORDER_DETAIL_INCLUDE });
     if (!workOrder) throw new NotFoundException("Work Order not found");
-
-    const granted = new Set((await this.permissions.getEffectivePermissions(actor.userId)).map((p) => `${p.module}.${p.action}`));
-
-    if (granted.has("work_orders.read")) return workOrder;
-
-    if (granted.has("work_orders.read_own")) {
-      const isActivelyAssigned = workOrder.assignments.some((a) => a.technicianId === actor.userId);
-      if (isActivelyAssigned) return workOrder;
-      throw new ForbiddenException("You are not currently assigned to this Work Order");
-    }
-
-    throw new ForbiddenException("Missing required permission(s): work_orders.read or work_orders.read_own");
+    return workOrder;
   }
 
   // GET /work-orders/mine — work_orders.read_own (guard-gated: this route
@@ -121,9 +115,10 @@ export class WorkOrdersService {
     });
   }
 
-  async listForCustomer(customerId: string) {
+  async listForCustomer(customerId: string, actor?: ActorContext) {
     await this.assertCustomerExists(customerId);
-    return this.prisma.workOrder.findMany({ where: { customerId }, orderBy: { createdAt: "desc" }, include: WORK_ORDER_LIST_INCLUDE });
+    const scope = actor ? await this.access.workOrderFilter(actor.userId) : {};
+    return this.prisma.workOrder.findMany({ where: { customerId, ...scope }, orderBy: { createdAt: "desc" }, include: WORK_ORDER_LIST_INCLUDE });
   }
 
   /**
@@ -134,9 +129,11 @@ export class WorkOrdersService {
    * undefined/empty returns every Work Order, matching listForCustomer's
    * own no-implicit-filter shape.
    */
-  async listAllOrByStatus(statuses?: WorkOrderStatus[]) {
+  async listAllOrByStatus(statuses?: WorkOrderStatus[], actor?: ActorContext, assignedOnly = false) {
+    const authorizedScope = actor ? await this.access.workOrderFilter(actor.userId) : {};
+    const scope = assignedOnly && actor ? { ...authorizedScope, responsibleManagerId: actor.userId } : authorizedScope;
     return this.prisma.workOrder.findMany({
-      where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
+      where: { ...scope, ...(statuses && statuses.length > 0 ? { status: { in: statuses } } : {}) },
       orderBy: { createdAt: "desc" },
       include: WORK_ORDER_LIST_INCLUDE,
     });
@@ -152,6 +149,7 @@ export class WorkOrdersService {
   // least one ACTIVE technician assignment, and a scheduledDate (already
   // stored, or supplied here).
   async schedule(id: string, dto: ScheduleWorkOrderDto, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.findByIdOrThrow(id);
     if (before.status !== WorkOrderStatus.DRAFT) {
       throw new BadRequestException(`Only a DRAFT Work Order can be scheduled — this Work Order is ${before.status}`);
@@ -291,12 +289,17 @@ export class WorkOrdersService {
   // §07). IN_PROGRESS -> COMPLETED only — field/technical execution
   // finished, deliberately NOT the same as CLOSED (§04/D2).
   async complete(id: string, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.plainFindOrThrow(id);
     if (before.status !== WorkOrderStatus.IN_PROGRESS) {
       throw new BadRequestException(`Only an IN_PROGRESS Work Order can be completed — this Work Order is ${before.status}`);
     }
 
     const after = await this.prisma.$transaction(async (tx) => {
+      const submittedReports = await tx.serviceReport.count({ where: { workOrderId: id } });
+      if (submittedReports === 0) {
+        throw new BadRequestException("Upload a Service Report before completing this Work Order");
+      }
       const guarded = await tx.workOrder.updateMany({
         where: { id, status: WorkOrderStatus.IN_PROGRESS },
         data: { status: WorkOrderStatus.COMPLETED, completedAt: new Date(), completedBy: actor.userId },
@@ -319,12 +322,19 @@ export class WorkOrdersService {
   // only (§07/D2 — the final administrative sign-off, deliberately excluding
   // Office Staff). COMPLETED -> CLOSED only.
   async close(id: string, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.plainFindOrThrow(id);
     if (before.status !== WorkOrderStatus.COMPLETED) {
       throw new BadRequestException(`Only a COMPLETED Work Order can be closed — this Work Order is ${before.status}`);
     }
 
     const after = await this.prisma.$transaction(async (tx) => {
+      const verifiedReports = await tx.serviceReport.count({
+        where: { workOrderId: id, status: { in: ["VERIFIED", "CONFIRMED", "LOCKED"] } },
+      });
+      if (verifiedReports === 0) {
+        throw new BadRequestException("A verified Service Report is required before closing this Work Order");
+      }
       const guarded = await tx.workOrder.updateMany({
         where: { id, status: WorkOrderStatus.COMPLETED },
         data: { status: WorkOrderStatus.CLOSED, closedAt: new Date(), closedBy: actor.userId },
@@ -350,6 +360,7 @@ export class WorkOrdersService {
   // set a request can target, since a request that could never be
   // confirmed would be meaningless).
   async requestCancel(id: string, dto: RequestCancelWorkOrderDto, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.plainFindOrThrow(id);
     if (!CANCELLABLE_STATUSES.includes(before.status)) {
       throw new BadRequestException(`Cannot request cancellation of a Work Order that is ${before.status}`);
@@ -388,6 +399,7 @@ export class WorkOrdersService {
   // a historical record — cancelledAt/By/cancellationReason are the actual
   // authority's own fields, never overwritten onto the request fields.
   async cancel(id: string, dto: CancelWorkOrderDto, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.plainFindOrThrow(id);
     if (!CANCELLABLE_STATUSES.includes(before.status)) {
       throw new BadRequestException(`Cannot cancel a Work Order that is ${before.status}`);
@@ -431,6 +443,7 @@ export class WorkOrdersService {
   // exercising that authority, §04's "or dismisses" branch). Clears the
   // request fields; status is never touched here.
   async dismissCancellationRequest(id: string, actor: ActorContext) {
+    await this.access.assertManagerScopedAction(id, actor.userId);
     const before = await this.plainFindOrThrow(id);
     if (!before.cancellationRequestedAt) {
       throw new BadRequestException("This Work Order has no pending cancellation request to dismiss");
@@ -578,6 +591,7 @@ export class WorkOrdersService {
   async createStandalone(customerId: string, dto: CreateStandaloneWorkOrderDto, actor: ActorContext) {
     await this.assertCustomerExists(customerId);
     await this.assertSiteValid(customerId, dto.siteId);
+    if (dto.responsibleManagerId) await this.assertResponsibleManagerEligible(dto.responsibleManagerId);
 
     const workOrder = await this.prisma.$transaction(async (tx) => {
       const workOrderNumber = await this.numbering.generateNumber(tx, NumberSeries.WORK_ORDER);
@@ -595,6 +609,7 @@ export class WorkOrdersService {
           scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : null,
           description: dto.description,
           createdBy: actor.userId,
+          responsibleManagerId: dto.responsibleManagerId ?? null,
         },
       });
     });
@@ -609,6 +624,7 @@ export class WorkOrdersService {
   // are read by reference (quotationId/quotationRevisionId) — nothing on the
   // quotation or revision itself is mutated by conversion.
   async convertRevision(quotationId: string, revisionId: string, dto: ConvertToWorkOrdersDto, actor: ActorContext) {
+    if (dto.responsibleManagerId) await this.assertResponsibleManagerEligible(dto.responsibleManagerId);
     const quotation = await this.prisma.quotation.findUnique({ where: { id: quotationId } });
     if (!quotation) throw new NotFoundException("Quotation not found");
 
@@ -671,6 +687,7 @@ export class WorkOrdersService {
             lineItems,
             testingItems,
             actor,
+            responsibleManagerId: dto.responsibleManagerId,
           });
           results.push(workOrder);
         }
@@ -688,6 +705,7 @@ export class WorkOrdersService {
           lineItems,
           testingItems,
           actor,
+          responsibleManagerId: dto.responsibleManagerId,
         });
         return [workOrder];
       });
@@ -718,6 +736,7 @@ export class WorkOrdersService {
       }>;
       testingItems: Array<{ id: string; description: string; sortOrder: number }>;
       actor: ActorContext;
+      responsibleManagerId?: string;
     },
   ): Promise<WorkOrder> {
     const workOrderNumber = await this.numbering.generateNumber(tx, NumberSeries.WORK_ORDER);
@@ -739,6 +758,7 @@ export class WorkOrdersService {
         scheduledDate: params.scheduledDate,
         description: params.description,
         createdBy: params.actor.userId,
+        responsibleManagerId: params.responsibleManagerId ?? null,
       },
     });
 
@@ -772,10 +792,39 @@ export class WorkOrdersService {
         quotationRevisionId: workOrder.quotationRevisionId,
         standaloneReasonType: workOrder.standaloneReasonType,
         status: workOrder.status,
+        responsibleManagerId: workOrder.responsibleManagerId,
       },
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
     });
+  }
+
+  async setResponsibleManager(id: string, managerId: string | null, actor: ActorContext) {
+    const roles = await this.permissions.getRoleNames(actor.userId);
+    if (!roles.includes("Admin/Owner")) throw new ForbiddenException("Only Admin/Owner may reassign the responsible Manager");
+    if (managerId) await this.assertResponsibleManagerEligible(managerId);
+    const before = await this.plainFindOrThrow(id);
+    if (before.responsibleManagerId === managerId) return before;
+    const changed = await this.prisma.workOrder.updateMany({
+      where: { id, responsibleManagerId: before.responsibleManagerId },
+      data: { responsibleManagerId: managerId },
+    });
+    if (changed.count === 0) throw new ConflictException("Responsible Manager changed concurrently");
+    const after = await this.plainFindOrThrow(id);
+    await this.writeTransitionAudit(after, actor, "work_order_manager_assigned", {
+      responsibleManagerId: before.responsibleManagerId,
+    }, { responsibleManagerId: managerId });
+    return after;
+  }
+
+  private async assertResponsibleManagerEligible(managerId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: managerId },
+      select: { status: true, userRoles: { where: { role: { name: "Manager" } }, select: { roleId: true } } },
+    });
+    if (!user || user.status !== UserStatus.ACTIVE || user.userRoles.length === 0) {
+      throw new BadRequestException("Responsible Manager must be an active user with the Manager role");
+    }
   }
 
   private async assertCustomerExists(customerId: string) {

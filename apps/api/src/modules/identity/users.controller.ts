@@ -4,6 +4,7 @@ import { UsersService } from "./users.service";
 import { AuthService } from "./auth.service";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
+import { ApproveRegistrationDto } from "./dto/approve-registration.dto";
 import { Permissions } from "../../common/guards/permissions.decorator";
 // No @UseGuards(PermissionsGuard) anywhere below — it's already global
 // (AppModule's APP_GUARD); see audit.controller.ts for why repeating it
@@ -36,6 +37,25 @@ export class UsersController {
     return this.usersService.list();
   }
 
+  @Permissions({ module: "users", action: "manage" })
+  @Get("registration-requests")
+  async registrationRequests(@Req() req: AuthedRequest) {
+    return this.usersService.listRegistrationRequests(actorFrom(req));
+  }
+
+  @Permissions({ module: "users", action: "manage" })
+  @Post("registration-requests/:id/approve")
+  async approveRegistration(@Param("id") id: string, @Body() dto: ApproveRegistrationDto, @Req() req: AuthedRequest) {
+    return this.usersService.approveRegistration(id, dto.roleId, actorFrom(req));
+  }
+
+  @Permissions({ module: "users", action: "manage" })
+  @Delete("registration-requests/:id")
+  async declineRegistration(@Param("id") id: string, @Req() req: AuthedRequest) {
+    await this.usersService.declineRegistration(id, actorFrom(req));
+    return { declined: true };
+  }
+
   // Phase 4 Operations Frontend (approved Decision 1) — a deliberately
   // separate, narrower route from the one above: gated on work_orders.assign
   // (already held by Office Staff/Manager/Admin-Owner) rather than the
@@ -47,6 +67,12 @@ export class UsersController {
   @Get("technicians")
   async listTechnicians() {
     return this.usersService.listTechnicians();
+  }
+
+  @Permissions({ module: "work_orders", action: "create" })
+  @Get("managers")
+  async listManagers() {
+    return this.usersService.listManagers();
   }
 
   @Permissions({ module: "users", action: "manage" })
