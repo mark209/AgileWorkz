@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../lib/auth-context";
 import { ApiError } from "../../lib/api-client";
+import { page, primaryButton, heading, subheading, colors } from "../../lib/styles";
 
 export default function LoginPage() {
   const { login, isLoading } = useAuth();
@@ -24,9 +26,11 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={{ maxWidth: 360, margin: "60px auto", padding: 24 }}>
-      <h1 style={{ fontSize: 20 }}>AgileWorks Field</h1>
-      <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 24 }}>
+    <main style={{ ...page, paddingTop: 48 }}>
+      <p style={{ color: colors.green, fontSize: 14, fontWeight: 700 }}>AgileWorks Field</p>
+      <h1 style={{ ...heading, fontSize: 28, marginTop: 8 }}>Sign in</h1>
+      <p style={subheading}>Use your approved account to view your assigned work.</p>
+      <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 28 }}>
         <label>
           Email
           <input
@@ -35,7 +39,7 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="username"
-            style={{ display: "block", width: "100%", padding: 10, marginTop: 4 }}
+            style={{ display: "block", width: "100%", minHeight: 48, padding: 10, marginTop: 6, border: `1px solid ${colors.border}`, borderRadius: 8, boxSizing: "border-box" }}
           />
         </label>
         <label>
@@ -46,7 +50,7 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            style={{ display: "block", width: "100%", padding: 10, marginTop: 4 }}
+            style={{ display: "block", width: "100%", minHeight: 48, padding: 10, marginTop: 6, border: `1px solid ${colors.border}`, borderRadius: 8, boxSizing: "border-box" }}
           />
         </label>
         {error && (
@@ -54,10 +58,11 @@ export default function LoginPage() {
             {error}
           </p>
         )}
-        <button type="submit" disabled={isLoading} style={{ padding: 12 }}>
+        <button type="submit" disabled={isLoading} style={primaryButton}>
           {isLoading ? "Signing in..." : "Sign in"}
         </button>
       </form>
+      <p style={{ ...subheading, marginTop: 24 }}>New to AgileWorks? <Link href="/signup" style={{ color: colors.green, fontWeight: 600 }}>Request an account</Link></p>
     </main>
   );
 }

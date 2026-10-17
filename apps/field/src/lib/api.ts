@@ -1,4 +1,13 @@
 import { apiRequest, apiUpload } from "./api-client";
+import type { RegistrationRequestInput, RegistrationResponse, RequestableDesignation } from "@agileworks/shared-types";
+
+export function listRequestableDesignations() {
+  return apiRequest<RequestableDesignation[]>("/auth/requestable-designations");
+}
+
+export function submitRegistration(body: RegistrationRequestInput) {
+  return apiRequest<RegistrationResponse>("/auth/register", { method: "POST", body });
+}
 
 /**
  * Phase 4 Operations Frontend — apps/field's first real API surface beyond

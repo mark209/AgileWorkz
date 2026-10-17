@@ -21,7 +21,7 @@ import { colors, dangerText, page, pageHeader, heading, secondaryButton, subhead
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, hasPermission } = useAuth();
 
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,10 +29,11 @@ export default function JobDetailPage() {
   const load = useCallback(async () => {
     if (!accessToken) return;
     setError(null);
+    setWorkOrder(null);
     try {
       setWorkOrder(await getWorkOrder(accessToken, params.id));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load this job.");
+      setError(e instanceof ApiError && e.status === 403 ? "Access denied: this job is no longer assigned to you." : e instanceof ApiError ? e.message : "Failed to load this job.");
     }
   }, [accessToken, params.id]);
 
@@ -76,6 +77,7 @@ export default function JobDetailPage() {
           </p>
 
           <section style={{ marginTop: 20 }}>
+            <p style={{ color: colors.textMuted, fontSize: 14 }}>Service location: {workOrder.site.label}</p>
             {workOrder.scheduledDate && (
               <p style={{ color: colors.textMuted, fontSize: 14 }}>Scheduled: {new Date(workOrder.scheduledDate).toLocaleDateString()}</p>
             )}
@@ -90,14 +92,15 @@ export default function JobDetailPage() {
 
           <section style={{ marginTop: 24 }}>
             <StartJobButton workOrder={workOrder} onStarted={load} />
+            {workOrder.status !== "SCHEDULED" && <p style={subheading}>Start Job is available only while this service is scheduled.</p>}
           </section>
 
           <section style={{ marginTop: 28, borderTop: `1px solid ${colors.border}`, paddingTop: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>Upload Service Report</h2>
-            {["IN_PROGRESS", "COMPLETED"].includes(workOrder.status) ? (
+            {["IN_PROGRESS", "COMPLETED"].includes(workOrder.status) && hasPermission("service_reports", "upload") ? (
               <ServiceReportUploadForm workOrder={workOrder} />
             ) : (
-              <p style={subheading}>Available once the job is started.</p>
+              <p style={subheading}>{hasPermission("service_reports", "upload") ? "Available once the job is started, while reporting is permitted." : "Your account cannot upload Service Reports."}</p>
             )}
           </section>
         </>

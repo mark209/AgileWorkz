@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { listServiceReportTypes, uploadServiceReport, type ServiceReportType, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
-import { colors, dangerText, input, label, primaryButton } from "@/lib/styles";
+import { colors, dangerText, input, label, primaryButton, secondaryButton } from "@/lib/styles";
 
 const ACCEPTED_MIME_TYPES = "application/pdf,image/jpeg,image/png,image/webp";
 
@@ -113,17 +113,23 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} aria-busy={submitting}>
       {uploaded && (
-        <p style={{ color: colors.green, fontWeight: 600 }}>
+        <p role="status" style={{ color: colors.green, fontWeight: 600 }}>
           Uploaded — {uploaded}. Your office will verify it from here; you can upload another if you have more paperwork for this job.
         </p>
       )}
 
-      {typesError && <p style={dangerText}>{typesError}</p>}
+      {typesError && (
+        <div>
+          <p role="alert" style={dangerText}>{typesError}</p>
+          <button type="button" style={secondaryButton} onClick={loadTypes}>Try again</button>
+        </div>
+      )}
       {!typesError && types === null && <p style={{ color: colors.textMuted }}>Loading report types…</p>}
+      {!typesError && types?.length === 0 && <p style={{ color: colors.textMuted }}>No report types are available for upload.</p>}
 
-      {!typesError && types !== null && (
+      {!typesError && types !== null && types.length > 0 && (
         <>
           <label style={label} htmlFor="sr-report-type">
             Report type
@@ -150,7 +156,8 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
 
-          {error && <p style={{ ...dangerText, marginTop: 12 }}>{error}</p>}
+          {error && <p role="alert" style={{ ...dangerText, marginTop: 12 }}>{error}</p>}
+          {submitting && <p role="status" style={{ color: colors.textMuted }}>Uploading the report. Keep this page open until it finishes.</p>}
 
           <button type="submit" style={{ ...primaryButton, width: "100%", marginTop: 16 }} disabled={submitting || !reportTypeCode || !file}>
             {submitting ? "Uploading…" : "Upload Service Report"}

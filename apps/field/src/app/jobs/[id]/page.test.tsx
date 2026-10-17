@@ -57,7 +57,7 @@ describe("JobDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useParamsMock.mockReturnValue({ id: "wo1" });
-    useAuthMock.mockReturnValue({ user: { id: "u1", fullName: "Jordan Lee" }, accessToken: "token-1" });
+    useAuthMock.mockReturnValue({ user: { id: "u1", fullName: "Jordan Lee" }, accessToken: "token-1", hasPermission: () => true });
   });
 
   it("redirects to /login when there is no user", () => {
@@ -102,7 +102,7 @@ describe("JobDetailPage", () => {
   it("surfaces a load error with a retry option (e.g. no longer assigned)", async () => {
     getWorkOrderMock.mockRejectedValue(new ApiError(403, "You are not currently assigned to this Work Order"));
     render(<JobDetailPage />);
-    expect(await screen.findByText(/not currently assigned/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no longer assigned/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
   });
 

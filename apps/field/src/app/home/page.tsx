@@ -28,10 +28,11 @@ export default function HomePage() {
   const load = useCallback(async () => {
     if (!accessToken || !canReadOwn) return;
     setError(null);
+    setJobs(null);
     try {
       setJobs(await listMyWorkOrders(accessToken));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load your jobs.");
+      setError(e instanceof ApiError && e.status === 403 ? "Your account cannot view assigned jobs." : e instanceof ApiError ? e.message : "Failed to load your jobs.");
     }
   }, [accessToken, canReadOwn]);
 
@@ -50,7 +51,7 @@ export default function HomePage() {
       <div style={pageHeader}>
         <div>
           <h1 style={heading}>Hi, {user.fullName.split(" ")[0]}</h1>
-          <p style={subheading}>My Jobs</p>
+          <p style={subheading}>My Assigned Services</p>
         </div>
         <button
           style={secondaryButton}
@@ -80,6 +81,10 @@ export default function HomePage() {
         <p style={subheading}>No assigned jobs right now. New assignments will show up here.</p>
       )}
 
+      {canReadOwn && !error && jobs !== null && jobs.length > 0 && (
+        <p style={subheading}>{jobs.length} assigned {jobs.length === 1 ? "service" : "services"}. Open one to view the permitted next action.</p>
+      )}
+
       {canReadOwn &&
         !error &&
         jobs !== null &&
@@ -97,6 +102,9 @@ export default function HomePage() {
                 Scheduled: {new Date(job.scheduledDate).toLocaleDateString()}
               </p>
             )}
+            <p style={{ margin: "8px 0 0", color: colors.green, fontSize: 14, fontWeight: 600 }}>
+              {job.status === "SCHEDULED" ? "Open to start job →" : job.status === "IN_PROGRESS" || job.status === "COMPLETED" ? "Open to upload report →" : "View service →"}
+            </p>
           </Link>
         ))}
     </main>
