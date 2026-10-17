@@ -9,9 +9,9 @@ import { PrismaService } from "../../src/prisma/prisma.service";
  * global, cross-customer listing endpoints — GET /quotations?status=... and
  * GET /work-orders?status=... — added solely so the Dashboard can build
  * Quotation/Work Order KPI cards and queues. No new permission, no
- * aggregate table, no schema change: both are gated on the module's
- * existing `read` permission, mirroring GET /service-reports (Phase 5 Step
- * 5) exactly. Real HTTP/guard/RBAC stack.
+ * aggregate table, no schema change: the endpoints use the module's
+ * existing read permissions and scope results to the caller.
+ * Real HTTP/guard/RBAC stack.
  */
 describe("Phase 6 Dashboard — global list endpoints (live)", () => {
   let app: INestApplication;
@@ -47,7 +47,7 @@ describe("Phase 6 Dashboard — global list endpoints (live)", () => {
     // but this suite only needs it to prove read access works the same way
     // regardless of role name — reuse the same "admin" fixture shape under
     // a different identity for the read-access assertions, and a genuinely
-    // scope-limited identity for the rejection assertions below.
+    // scope-limited identity for the work order visibility assertion below.
     officeStaff = await userWithPermissions("office", [
       ["quotations", "read"],
       ["work_orders", "read"],
@@ -143,9 +143,11 @@ describe("Phase 6 Dashboard — global list endpoints (live)", () => {
   });
 
   describe("GET /work-orders", () => {
-    it("rejects a Technician-equivalent (read_own only, no unscoped read)", async () => {
+    it("limits a Technician-equivalent to assigned work orders", async () => {
+      const wo = await seedWorkOrder("unassigned", "DRAFT");
       const res = await request(app.getHttpServer()).get("/work-orders").set("Authorization", technician.authHeader);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.body.map((r: { id: string }) => r.id)).not.toContain(wo.id);
     });
 
     it("returns every work order when no status filter is given", async () => {

@@ -224,7 +224,7 @@ describe("Work Order Assignments — Step 4 (live)", () => {
     // techB was never assigned to this Work Order at all.
     const strangerRes = await request(app.getHttpServer()).get(`/work-orders/${wo.id}`).set("Authorization", techB.header);
     expect(strangerRes.status).toBe(403);
-    expect(strangerRes.body.message).toMatch(/not currently assigned/i);
+    expect(strangerRes.body.message).toMatch(/not assigned/i);
 
     // A user with neither read nor read_own also gets 403, not a 500 or a silent 200.
     const noPermsRes = await request(app.getHttpServer()).get(`/work-orders/${wo.id}`).set("Authorization", noPermsHeader);
