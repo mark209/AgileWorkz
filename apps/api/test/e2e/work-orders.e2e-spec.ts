@@ -9,8 +9,8 @@ import { PrismaService } from "../../src/prisma/prisma.service";
  * read to verify what was created. Covers: standalone (Path B) creation and
  * its required-field validation, quotation-conversion (Path A) for the
  * REPAIR/SUPPLY_INSTALLATION 1:1 case and the PROJECT one-per-section case
- * (D1), the ACCEPTED-only guard, the PREVENTIVE_MAINTENANCE deferral to the
- * not-yet-built Step 6 generator, RBAC per §07 (Office Staff+ can create,
+ * (D1), the ACCEPTED-only guard, the PREVENTIVE_MAINTENANCE route to the
+ * separate Step 6 generator, RBAC per §07 (Office Staff+ can create,
  * Technician cannot), the WO-YYYY-MM-NNNNN numbering format (D9, 5-digit),
  * testing/commissioning-item copy-to-checklist, the estimated-cost snapshot,
  * and audit log entries. Assignment (Step 4), lifecycle transitions beyond
@@ -287,7 +287,7 @@ describe("Work Orders — Step 3 creation (live)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("refuses PREVENTIVE_MAINTENANCE conversion through this endpoint — deferred to the not-yet-built Step 6 generator", async () => {
+  it("refuses PREVENTIVE_MAINTENANCE conversion through this endpoint and directs callers to maintenance visit generation", async () => {
     const { customer, site } = await createCustomerAndSite("convert-pm");
     const { quotationId, revisionId } = await createQuotation(customer.id, site.id, "PREVENTIVE_MAINTENANCE");
     await request(app.getHttpServer())
@@ -298,7 +298,7 @@ describe("Work Orders — Step 3 creation (live)", () => {
 
     const res = await request(app.getHttpServer()).post(convertUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({});
     expect(res.status).toBe(400);
-    expect(res.body.message).toMatch(/generate_maintenance_visits|not yet implemented|later Phase 4 step/i);
+    expect(res.body.message).toMatch(/Use Generate Maintenance Visits/i);
   });
 
   it("RBAC: Office Staff can convert; Technician (no grants) is denied", async () => {

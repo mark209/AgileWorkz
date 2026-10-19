@@ -43,6 +43,18 @@ describe("ConvertToWorkOrdersPanel", () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     render(<ConvertToWorkOrdersPanel quotationId="q1" revisionId="r1" quotationType="PREVENTIVE_MAINTENANCE" onConverted={vi.fn()} />);
     expect(screen.getByRole("button", { name: /generate maintenance visits/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /convert to work order/i })).not.toBeInTheDocument();
+  });
+
+  it("shows no unavailable action for a PREVENTIVE_MAINTENANCE quotation without visit-generation permission", () => {
+    useAuthMock.mockReturnValue({
+      accessToken: "token-1",
+      hasPermission: (_module: string, action: string) => action === "create",
+    });
+    const { container } = render(
+      <ConvertToWorkOrdersPanel quotationId="q1" revisionId="r1" quotationType="PREVENTIVE_MAINTENANCE" onConverted={vi.fn()} />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("converts to a work order and navigates to it when exactly one is created", async () => {
@@ -62,7 +74,7 @@ describe("ConvertToWorkOrdersPanel", () => {
   it("does not navigate when conversion produces more than one work order", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     convertQuotationToWorkOrdersMock.mockResolvedValue([{ id: "wo-1" }, { id: "wo-2" }]);
-    render(<ConvertToWorkOrdersPanel quotationId="q1" revisionId="r1" quotationType="PREVENTIVE_MAINTENANCE" onConverted={vi.fn()} />);
+    render(<ConvertToWorkOrdersPanel quotationId="q1" revisionId="r1" quotationType="PROJECT" onConverted={vi.fn()} />);
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^convert to work order$/i }));

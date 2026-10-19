@@ -638,16 +638,12 @@ export class WorkOrdersService {
       );
     }
 
-    // PM quotations produce many Work Orders (recurring visits) via the
-    // dedicated generator the approved plan reserves for Step 6 (§08,
-    // work_orders.generate_maintenance_visits) — deliberately not built
-    // here, so this generic conversion path explicitly refuses PM revisions
-    // rather than either silently creating the wrong shape of Work Order
-    // (a single one-off) or reimplementing Step 6 early.
+    // PM quotations produce many Work Orders through the dedicated
+    // generateMaintenanceVisits endpoint. This generic conversion path
+    // must not create a single one-off Work Order for them.
     if (quotation.quotationType === QuotationType.PREVENTIVE_MAINTENANCE) {
       throw new BadRequestException(
-        "PREVENTIVE_MAINTENANCE quotations are not converted through this endpoint — recurring visit " +
-          "generation (work_orders.generate_maintenance_visits) is a later Phase 4 step, not yet implemented.",
+        "Preventive Maintenance quotations cannot use Convert to Work Order. Use Generate Maintenance Visits for an accepted revision.",
       );
     }
 
