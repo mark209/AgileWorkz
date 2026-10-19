@@ -6,7 +6,7 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
   return (
     <div className="flex items-center justify-between py-1.5">
       <span className={emphasize ? "text-sm font-medium" : "text-sm text-muted-foreground"}>{label}</span>
-      <span className={emphasize ? "text-base font-semibold" : "text-sm"}>{value}</span>
+      <span className={emphasize ? "text-xl font-semibold tabular-nums" : "text-sm tabular-nums"}>{value}</span>
     </div>
   );
 }
@@ -19,11 +19,11 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
 export function RevisionSummaryCard({ revision }: { revision: QuotationRevision }) {
   const hasDiscount = Number(revision.discountAmount) > 0;
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Commercial summary</CardTitle>
+    <Card className="shadow-none">
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">Quotation summary</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 pb-4 pt-0">
         <Row label="Subtotal" value={formatMoney(revision.subtotal)} />
         {hasDiscount && (
           <Row label={`Discount (${formatPercent(revision.discountPercent)})`} value={`− ${formatMoney(revision.discountAmount)}`} />

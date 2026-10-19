@@ -44,6 +44,7 @@ export function LifecycleActionBar({
   quotationId,
   revision,
   lineItemCount,
+  hasUnsavedDetails = false,
   onChanged,
   onConflict,
   onNextRevisionCreated,
@@ -51,6 +52,7 @@ export function LifecycleActionBar({
   quotationId: string;
   revision: QuotationRevision;
   lineItemCount: number;
+  hasUnsavedDetails?: boolean;
   onChanged: () => void;
   onConflict: () => void;
   onNextRevisionCreated: (newRevisionId: string) => void;
@@ -73,6 +75,7 @@ export function LifecycleActionBar({
   const canRejectFinal = hasPermission("quotations", "reject_final");
   const canUpdate = hasPermission("quotations", "update");
   const canCreate = hasPermission("quotations", "create");
+  const hasPlaceholderTerms = revision.termsAndConditions?.includes("[PLACEHOLDER") ?? false;
 
   async function run(action: () => Promise<unknown>) {
     if (!accessToken) return;
@@ -117,10 +120,11 @@ export function LifecycleActionBar({
   if (revision.status === "DRAFT" && canUpdate) {
     buttons.push(
       <div key="submit" className="flex flex-col items-start gap-1">
-        <Button onClick={() => run(() => submitRevision(accessToken!, quotationId, revision.id))} disabled={submitting || lineItemCount === 0}>
+        <Button onClick={() => run(() => submitRevision(accessToken!, quotationId, revision.id))} disabled={submitting || lineItemCount === 0 || hasUnsavedDetails}>
           Submit for Approval
         </Button>
         {lineItemCount === 0 && <p className="text-xs text-muted-foreground">Add at least one line item first.</p>}
+        {hasUnsavedDetails && <p className="text-xs text-muted-foreground">Save details and commercial terms before submitting.</p>}
       </div>,
     );
   }
@@ -169,7 +173,7 @@ export function LifecycleActionBar({
 
   if (revision.status === "APPROVED" && canUpdate) {
     buttons.push(
-      <Button key="send" onClick={() => setDialog("send")} disabled={submitting}>
+      <Button key="send" onClick={() => setDialog("send")} disabled={submitting || hasPlaceholderTerms}>
         Mark as sent
       </Button>,
     );
@@ -194,7 +198,11 @@ export function LifecycleActionBar({
     ? "Internal approval"
     : revision.status === "APPROVED" ? "Send quotation" : revision.status === "SENT" ? "Customer decision" : "Revision actions";
   const actionDescription = revision.status === "APPROVED"
-    ? "Download the approved PDF, send it to the customer outside the system, then mark this revision as sent."
+    ? hasPlaceholderTerms
+      ? canCreate
+        ? "This approved revision still contains placeholder Terms & Conditions. Create a new revision, replace the placeholder, then submit and approve it again before marking it as sent."
+        : "This approved revision still contains placeholder Terms & Conditions. Ask an authorized colleague to create a new revision and replace the placeholder before sending."
+      : "Download the approved PDF, send it to the customer outside the system, then mark this revision as sent."
     : revision.status === "SENT"
       ? "Record the customer's response to this sent revision."
       : revision.status === "PENDING_OWNER_APPROVAL"
@@ -206,12 +214,12 @@ export function LifecycleActionBar({
             : undefined;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="shadow-none">
+      <CardHeader className="p-4 pb-2">
         <CardTitle className="text-base">{actionTitle}</CardTitle>
         {actionDescription && <p className="text-sm text-muted-foreground">{actionDescription}</p>}
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-2">
+      <CardContent className="flex flex-wrap items-center gap-2 px-4 pb-4 pt-0">
         {buttons.length === 0 && !canCreateNext && (
           <p className="text-sm text-muted-foreground">
             {revision.status === "ACCEPTED"
@@ -221,7 +229,7 @@ export function LifecycleActionBar({
         )}
         {buttons}
         {canCreateNext && (
-          <Button variant="outline" onClick={handleCreateNextRevision} disabled={creatingRevision}>
+          <Button variant="outline" onClick={handleCreateNextRevision} disabled={creatingRevision || hasUnsavedDetails}>
             {creatingRevision ? "Creating…" : "Create New Revision"}
           </Button>
         )}

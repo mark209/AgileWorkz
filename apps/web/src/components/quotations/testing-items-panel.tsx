@@ -6,9 +6,8 @@ import { useAuth } from "@/lib/auth-context";
 import { createTestingItem, deleteTestingItem, updateTestingItem, type QuotationTestingCommissioningItem } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { EmptyState } from "@/components/shared/states";
+import { SuggestedInput, useQuotationSuggestions } from "./suggested-input";
 
 export function TestingItemsPanel({
   quotationId,
@@ -24,6 +23,7 @@ export function TestingItemsPanel({
   onChanged: () => void;
 }) {
   const { accessToken } = useAuth();
+  const { history, remember } = useQuotationSuggestions();
   const [newDescription, setNewDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +35,7 @@ export function TestingItemsPanel({
     setError(null);
     try {
       await createTestingItem(accessToken, quotationId, revisionId, { description: newDescription.trim() });
+      remember("checklistItem", newDescription);
       setNewDescription("");
       onChanged();
     } catch (e) {
@@ -66,16 +67,15 @@ export function TestingItemsPanel({
     }
   }
 
-  if (!canEdit && items.length === 0) return null;
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="shadow-none">
+      <CardHeader className="p-4 pb-2 sm:px-5">
         <CardTitle className="text-base">Testing &amp; commissioning checklist</CardTitle>
+        <p className="text-xs text-muted-foreground">Track the checks included before handover.</p>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5">
         {items.length === 0 ? (
-          <EmptyState title="No checklist items yet" description="What must be tested or commissioned before handover." />
+          <p className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">No checklist items added.</p>
         ) : (
           <ul className="divide-y rounded-md border">
             {items.map((item) => (
@@ -104,8 +104,8 @@ export function TestingItemsPanel({
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         {canEdit && (
-          <form onSubmit={handleAdd} className="flex items-center gap-2">
-            <Input placeholder="e.g. Phase Sequence Test" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
+          <form onSubmit={handleAdd} className="flex flex-wrap items-center gap-2">
+            <SuggestedInput placeholder="e.g. Phase Sequence Test" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} suggestions={history.checklistItem ?? []} className="min-w-0 flex-1" aria-label="New checklist item" />
             <Button type="submit" variant="outline" size="sm" disabled={submitting || !newDescription.trim()}>
               <Plus className="mr-1 h-4 w-4" /> Add
             </Button>

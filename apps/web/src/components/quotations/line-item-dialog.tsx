@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InternalPanel } from "@/components/shared/internal-panel";
+import { SuggestedInput, useQuotationSuggestions } from "./suggested-input";
 
 type CostingMode = "direct" | "cost_markup";
 
@@ -61,6 +62,7 @@ export function LineItemDialog({
   onSaved: () => void;
 }) {
   const { accessToken } = useAuth();
+  const { history, remember } = useQuotationSuggestions();
   const isEdit = editingItem !== null;
 
   const [description, setDescription] = useState(editingItem?.description ?? "");
@@ -125,6 +127,10 @@ export function LineItemDialog({
       } else {
         await createLineItem(accessToken, quotationId, revisionId, body);
       }
+      remember("lineDescription", description);
+      remember("brand", brand);
+      remember("model", model);
+      remember("unit", unit);
       onOpenChange(false);
       onSaved();
     } catch (e) {
@@ -146,7 +152,7 @@ export function LineItemDialog({
           <div className="mt-4 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="li-description">Description</Label>
-              <Input id="li-description" value={description} onChange={(e) => setDescription(e.target.value)} required aria-invalid={!!fieldErrors?.description} aria-describedby={fieldErrors?.description ? "li-description-error" : undefined} />
+              <SuggestedInput id="li-description" value={description} onChange={(e) => setDescription(e.target.value)} suggestions={history.lineDescription ?? []} required aria-invalid={!!fieldErrors?.description} aria-describedby={fieldErrors?.description ? "li-description-error" : undefined} />
               {fieldErrors?.description && <p id="li-description-error" className="text-xs text-destructive">{fieldErrors.description}</p>}
             </div>
 
@@ -158,11 +164,11 @@ export function LineItemDialog({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="li-brand">Brand (optional)</Label>
-                <Input id="li-brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
+                <SuggestedInput id="li-brand" value={brand} onChange={(e) => setBrand(e.target.value)} suggestions={history.brand ?? []} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="li-model">Model (optional)</Label>
-                <Input id="li-model" value={model} onChange={(e) => setModel(e.target.value)} />
+                <SuggestedInput id="li-model" value={model} onChange={(e) => setModel(e.target.value)} suggestions={history.model ?? []} />
               </div>
             </div>
 
@@ -174,7 +180,7 @@ export function LineItemDialog({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="li-unit">Unit</Label>
-                <Input id="li-unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pcs, lot, set, m" required aria-invalid={!!fieldErrors?.unit} aria-describedby={fieldErrors?.unit ? "li-unit-error" : undefined} />
+                <SuggestedInput id="li-unit" value={unit} onChange={(e) => setUnit(e.target.value)} suggestions={history.unit ?? []} placeholder="pcs, lot, set, m" required aria-invalid={!!fieldErrors?.unit} aria-describedby={fieldErrors?.unit ? "li-unit-error" : undefined} />
                 {fieldErrors?.unit && <p id="li-unit-error" className="text-xs text-destructive">{fieldErrors.unit}</p>}
               </div>
               <div className="space-y-1.5">
