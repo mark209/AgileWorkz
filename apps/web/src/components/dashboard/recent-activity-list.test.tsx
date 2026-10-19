@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { RecentActivityList } from "./recent-activity-list";
 
 describe("RecentActivityList", () => {
-  it("renders each entry with a humanized action and its entity type", () => {
+  it("renders a readable action and keeps audit details available", () => {
     render(
       <RecentActivityList
         entries={[
@@ -12,7 +12,9 @@ describe("RecentActivityList", () => {
       />,
     );
     expect(screen.getByText(/service report locked/i)).toBeInTheDocument();
-    expect(screen.getByText(/Service Report/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Details"));
+    expect(screen.getByText("Record type: Service Report")).toBeInTheDocument();
+    expect(screen.getByText("Record ID: sr-1")).toBeInTheDocument();
   });
 
   it("keeps older fetched activity available without crowding the initial dashboard", () => {

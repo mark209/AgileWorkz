@@ -102,7 +102,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
           </Link>
           {!onNavigate && !isCollapsed && <Button variant="ghost" size="icon" onClick={toggleCollapsed} aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar"><ChevronLeft className="h-4 w-4" /></Button>}
         </div>
-        <nav aria-label="Main navigation" className="flex-1 space-y-5 overflow-y-auto px-3 py-5">
+        <nav aria-label="Main navigation" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-5">
           {groups.map((group) => (
             <div key={group.label}>
               {!isCollapsed && <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>}
@@ -110,13 +110,13 @@ export function MainNavigation({ children }: { children: ReactNode }) {
                 {group.items.map((item) => {
                   const active = isActive(item.href);
                   const Icon = item.icon;
-                  return <Link key={item.href} id={onNavigate && item.href === "/dashboard" ? "mobile-navigation-first" : undefined} href={item.href} onClick={onNavigate} aria-current={active ? "page" : undefined} aria-label={isCollapsed ? item.label : undefined} title={isCollapsed ? item.label : undefined} className={`flex min-h-10 items-center gap-3 rounded-md border-l-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "border-primary bg-accent text-foreground" : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"} ${isCollapsed ? "justify-center px-2" : ""}`}><Icon className="h-4 w-4 shrink-0" aria-hidden="true" />{!isCollapsed && <span>{item.label}</span>}</Link>;
+                  return <Link key={item.href} id={onNavigate && item.href === "/dashboard" ? "mobile-navigation-first" : undefined} href={item.href} onClick={onNavigate} aria-current={active ? "page" : undefined} aria-label={isCollapsed ? item.label : undefined} title={isCollapsed ? item.label : undefined} className={`flex min-h-10 items-center gap-3 rounded-md border-l-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "border-primary bg-accent font-semibold text-foreground" : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"} ${isCollapsed ? "justify-center px-2" : ""}`}><Icon className="h-4 w-4 shrink-0" aria-hidden="true" />{!isCollapsed && <span className="min-w-0 truncate">{item.label}</span>}</Link>;
                 })}
               </div>
             </div>
           ))}
         </nav>
-        <div className="border-t p-3">
+        <div className="shrink-0 border-t p-3">
           {isCollapsed && <Button variant="ghost" size="icon" onClick={toggleCollapsed} aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar" className="mb-2 w-full"><ChevronRight className="h-4 w-4" /></Button>}
           {!isCollapsed && <p className="truncate px-3 pb-2 text-xs text-muted-foreground" title={userName}>{userName}</p>}
           <Button variant="ghost" className={`w-full ${isCollapsed ? "justify-center px-2" : "justify-start"}`} onClick={signOut} aria-label={isCollapsed ? "Sign out" : undefined} title={isCollapsed ? "Sign out" : undefined}><LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />{!isCollapsed && <span className="ml-3">Sign out</span>}</Button>
@@ -127,7 +127,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen md:flex">
-      <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background md:flex ${sidebarCollapsed ? "w-[72px]" : "w-60"}`}>
+      <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background md:flex ${sidebarCollapsed ? "w-[72px]" : "w-[244px]"}`}>
         {navigationContent(sidebarCollapsed)}
       </aside>
       <div className="min-w-0 flex-1">
