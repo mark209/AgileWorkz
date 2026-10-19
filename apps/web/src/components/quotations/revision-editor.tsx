@@ -18,12 +18,11 @@ import {
 import { ApiError } from "@/lib/api-client";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState } from "@/components/shared/states";
 import { InternalPanel } from "@/components/shared/internal-panel";
 import { LineItemDialog } from "./line-item-dialog";
+import { SuggestedInput, useQuotationSuggestions } from "./suggested-input";
 
 function LineItemsTable({
   items,
@@ -143,6 +142,7 @@ export function RevisionEditor({
   onChanged: () => void;
 }) {
   const { accessToken } = useAuth();
+  const { history, remember } = useQuotationSuggestions();
   const [newSectionName, setNewSectionName] = useState("");
   const [addingSection, setAddingSection] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -184,6 +184,7 @@ export function RevisionEditor({
     setError(null);
     try {
       await createSection(accessToken, quotationId, revisionId, { name: newSectionName.trim() });
+      remember("sectionName", newSectionName);
       setNewSectionName("");
       onChanged();
     } catch (e) {
@@ -198,6 +199,7 @@ export function RevisionEditor({
     setError(null);
     try {
       await updateSection(accessToken, quotationId, revisionId, section.id, { name: editingSectionName.trim() });
+      remember("sectionName", editingSectionName);
       setEditingSectionId(null);
       onChanged();
     } catch (e) {
@@ -233,18 +235,47 @@ export function RevisionEditor({
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Line Items</h2>
+          <p className="text-xs text-muted-foreground">Organize quotation items by section, or leave them ungrouped.</p>
+        </div>
+        {canEdit && (
+          <Button size="sm" onClick={() => openAddLine(null)}>
+            <Plus className="mr-1 h-4 w-4" /> Add Line Item
+          </Button>
+        )}
+      </div>
+
+      {canEdit && (
+        <form onSubmit={handleAddSection} className="flex flex-wrap items-center gap-2">
+          <SuggestedInput
+            placeholder="New section name (e.g. Airconditioning Works)"
+            value={newSectionName}
+            onChange={(e) => setNewSectionName(e.target.value)}
+            suggestions={history.sectionName ?? []}
+            className="min-w-0 flex-1 sm:max-w-sm"
+            aria-label="New section name"
+          />
+          <Button type="submit" variant="outline" size="sm" disabled={addingSection || !newSectionName.trim()}>
+            <Plus className="mr-1 h-4 w-4" /> Add section
+          </Button>
+        </form>
+      )}
+
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       {sortedSections.map((section, index) => {
         const items = lineItems.filter((i) => i.sectionId === section.id);
         return (
-          <Card key={section.id}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <Card key={section.id} className="min-w-0 shadow-none">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 p-4 pb-2">
               {editingSectionId === section.id ? (
-                <div className="flex flex-1 items-center gap-2">
-                  <Input
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                  <SuggestedInput
                     value={editingSectionName}
                     onChange={(e) => setEditingSectionName(e.target.value)}
+                    suggestions={history.sectionName ?? []}
                     className="h-8 max-w-xs"
                     autoFocus
                   />
@@ -289,7 +320,7 @@ export function RevisionEditor({
                 </div>
               )}
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-4 pb-4 pt-0">
               <LineItemsTable items={items} canEdit={canEdit} onEdit={openEditLine} onDelete={handleDeleteLine} />
               {canEdit && (
                 <Button variant="outline" size="sm" className="mt-3" onClick={() => openAddLine(section.id)}>
@@ -301,37 +332,21 @@ export function RevisionEditor({
         );
       })}
 
-      <Card>
-        <CardHeader className="pb-2">
+      <Card className="min-w-0 shadow-none">
+        <CardHeader className="p-4 pb-2">
           <CardTitle className="text-base">{sortedSections.length > 0 ? "Ungrouped line items" : "Line items"}</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-4 pt-0">
           {ungrouped.length === 0 && sortedSections.length === 0 ? (
-            <EmptyState title="No line items yet" description="Add the first line item to start building this quotation." />
+            <div className="rounded-md border border-dashed px-4 py-5 text-sm">
+              <p className="font-medium">No line items added.</p>
+              <p className="mt-1 text-muted-foreground">Add your first item to begin building this quotation.</p>
+            </div>
           ) : (
             <LineItemsTable items={ungrouped} canEdit={canEdit} onEdit={openEditLine} onDelete={handleDeleteLine} />
           )}
-          {canEdit && (
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => openAddLine(null)}>
-              <Plus className="mr-1 h-4 w-4" /> Add line item
-            </Button>
-          )}
         </CardContent>
       </Card>
-
-      {canEdit && (
-        <form onSubmit={handleAddSection} className="flex items-center gap-2">
-          <Input
-            placeholder="New section name (e.g. Airconditioning Works)"
-            value={newSectionName}
-            onChange={(e) => setNewSectionName(e.target.value)}
-            className="max-w-sm"
-          />
-          <Button type="submit" variant="outline" size="sm" disabled={addingSection || !newSectionName.trim()}>
-            <Plus className="mr-1 h-4 w-4" /> Add section
-          </Button>
-        </form>
-      )}
 
       <LineItemDialog
         key={editingItem?.id ?? `new-${presetSectionId ?? "ungrouped"}`}

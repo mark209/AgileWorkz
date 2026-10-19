@@ -14,10 +14,9 @@ import { Select } from "@/components/ui/select";
 /**
  * Phase 4 Operations Frontend — shown only on an ACCEPTED current revision
  * (the same gate LifecycleActionBar's own actions use), never edited
- * inline into that Phase 3 component. Path A (convert-to-work-orders) is
- * available for any quotation type; "Generate Maintenance Visits" only for
- * PREVENTIVE_MAINTENANCE, matching the backend's own approved §08 rule
- * exactly (the server itself re-validates both — this is UX only).
+ * inline into that Phase 3 component. Regular conversion excludes
+ * PREVENTIVE_MAINTENANCE; those quotations use Generate Maintenance Visits.
+ * The server re-validates both actions — this is UX only.
  */
 export function ConvertToWorkOrdersPanel({
   quotationId,
@@ -42,12 +41,14 @@ export function ConvertToWorkOrdersPanel({
 
   const canCreate = hasPermission("work_orders", "create");
   const canGenerateVisits = hasPermission("work_orders", "generate_maintenance_visits");
+  const canConvert = canCreate && quotationType !== "PREVENTIVE_MAINTENANCE";
+  const canGenerateMaintenanceVisits = canGenerateVisits && quotationType === "PREVENTIVE_MAINTENANCE";
 
   useEffect(() => {
-    if (accessToken && canCreate) listManagers(accessToken).then(setManagers).catch(() => setManagers([]));
-  }, [accessToken, canCreate]);
+    if (accessToken && canConvert) listManagers(accessToken).then(setManagers).catch(() => setManagers([]));
+  }, [accessToken, canConvert]);
 
-  if (!canCreate && !canGenerateVisits) return null;
+  if (!canConvert && !canGenerateMaintenanceVisits) return null;
 
   async function handleConvert() {
     if (!accessToken) return;
@@ -89,7 +90,7 @@ export function ConvertToWorkOrdersPanel({
         <CardTitle>Operations</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {canCreate && (
+        {canConvert && (
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="convert-manager">Responsible Manager (optional)</Label>
@@ -108,7 +109,7 @@ export function ConvertToWorkOrdersPanel({
           </div>
         )}
 
-        {canGenerateVisits && quotationType === "PREVENTIVE_MAINTENANCE" && (
+        {canGenerateMaintenanceVisits && (
           <div className="flex flex-wrap items-end gap-3 border-t pt-4">
             <div className="space-y-1.5">
               <Label htmlFor="visits-start-date">First visit date</Label>

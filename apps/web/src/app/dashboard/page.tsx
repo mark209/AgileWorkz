@@ -22,6 +22,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
+import { WorkflowOverview } from "@/components/dashboard/workflow-overview";
 import { StatusBadge } from "@/components/shared/status-badge";
 
 interface SectionState<T> {
@@ -142,6 +143,95 @@ export default function DashboardPage() {
   const attentionError = (canApproveQuotations || canApproveFinal) && quotations.error
     || canVerifyReports && serviceReports.error
     || canCancelWorkOrders && workOrders.error;
+
+  if (adminView) {
+    return (
+      <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <PageHeader title="Dashboard" description="Overview of your business operations" />
+
+        {!hasAnySection && (
+          <p className="text-sm text-muted-foreground">
+            Your account has no operational Dashboard sections to display for your current role.
+          </p>
+        )}
+
+        {(canReadCustomers || canReadQuotations || canReadWorkOrders || canVerifyReports) && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {canReadCustomers && section(customers, (data) => (
+              <KpiCard compact label="Active Customers" value={data.filter((c) => c.status === "ACTIVE").length} href="/customers" />
+            ))}
+            {canReadQuotations && section(quotations, (data) => (
+              <KpiCard compact label="Pending Approvals" value={data.filter((q) => q.status === "PENDING_APPROVAL" || q.status === "PENDING_OWNER_APPROVAL").length} href="/quotations?status=PENDING_APPROVAL,PENDING_OWNER_APPROVAL" />
+            ))}
+            {canReadWorkOrders && section(workOrders, (data) => (
+              <KpiCard compact label="Active Work Orders" value={data.filter((w) => w.status === "SCHEDULED" || w.status === "IN_PROGRESS").length} href="/work-orders?status=SCHEDULED,IN_PROGRESS" />
+            ))}
+            {canVerifyReports && section(serviceReports, (data) => (
+              <KpiCard compact label="Reports to Verify" value={data.filter((r) => r.status === "PENDING_VERIFICATION").length} />
+            ))}
+          </div>
+        )}
+
+        {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders) && (
+          <Card className="shadow-none">
+            <CardHeader className="p-4 pb-2 sm:px-5"><h2 className="text-base font-semibold">Needs Attention</h2></CardHeader>
+            <CardContent className="space-y-2 px-4 pb-4 pt-0 text-sm sm:px-5">
+              {attentionItems.map((item) => <Link key={item.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={item.href}><span className="min-w-0 break-words">{item.label}</span><span className="shrink-0 font-medium text-primary">Open →</span></Link>)}
+              {attentionLoading && <LoadingState label="Loading items needing attention…" />}
+              {attentionError && <ErrorState message="Some items could not be loaded." onRetry={load} />}
+              {!attentionLoading && !attentionError && attentionItems.length === 0 && <p className="text-muted-foreground">No items currently require your attention.</p>}
+            </CardContent>
+          </Card>
+        )}
+
+        {(canReadQuotations || canReadWorkOrders || canReadServiceReports || canReadAudit) && (
+          <div className="grid min-w-0 items-start gap-4 lg:grid-cols-2">
+            {(canReadQuotations || canReadWorkOrders || canReadServiceReports) && (
+              <Card className="min-w-0 shadow-none">
+                <CardHeader className="p-4 pb-2 sm:px-5"><h2 className="text-base font-semibold">Workflow Overview</h2></CardHeader>
+                <CardContent className="divide-y px-4 pb-4 pt-0 sm:px-5">
+                  {canReadQuotations && section(quotations, (data) => <WorkflowOverview groups={[{
+                    label: "Quotations",
+                    statuses: [
+                      { label: "Pending Approval", count: data.filter((q) => q.status === "PENDING_APPROVAL").length, href: "/quotations?status=PENDING_APPROVAL" },
+                      { label: "Pending Owner Approval", count: data.filter((q) => q.status === "PENDING_OWNER_APPROVAL").length, href: "/quotations?status=PENDING_OWNER_APPROVAL" },
+                      { label: "Awaiting Customer Decision", count: data.filter((q) => q.status === "SENT").length, href: "/quotations?status=SENT" },
+                    ],
+                  }]} />)}
+                  {canReadWorkOrders && section(workOrders, (data) => <WorkflowOverview groups={[{
+                    label: "Work Orders",
+                    statuses: [
+                      { label: "Scheduled", count: data.filter((w) => w.status === "SCHEDULED").length, href: "/work-orders?status=SCHEDULED" },
+                      { label: "In Progress", count: data.filter((w) => w.status === "IN_PROGRESS").length, href: "/work-orders?status=IN_PROGRESS" },
+                      { label: "Cancellation Requested", count: data.filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).length },
+                    ],
+                  }]} />)}
+                  {canReadServiceReports && section(serviceReports, (data) => <WorkflowOverview groups={[{
+                    label: "Service Reports",
+                    statuses: [
+                      { label: "Pending Verification", count: data.filter((r) => r.status === "PENDING_VERIFICATION").length },
+                      { label: "Verified", count: data.filter((r) => r.status === "VERIFIED").length },
+                      { label: "Confirmed", count: data.filter((r) => r.status === "CONFIRMED").length },
+                    ],
+                  }]} />)}
+                </CardContent>
+              </Card>
+            )}
+            {canReadAudit && (
+              <Card className="min-w-0 shadow-none">
+                <CardHeader className="p-4 pb-2 sm:px-5"><h2 className="text-base font-semibold">Recent Activity</h2></CardHeader>
+                <CardContent className="px-4 pb-4 pt-0 sm:px-5">
+                  {section(auditLogs, (data) => data.length === 0
+                    ? <p className="text-sm text-muted-foreground">No recent activity.</p>
+                    : <RecentActivityList entries={data} />)}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+      </main>
+    );
+  }
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">

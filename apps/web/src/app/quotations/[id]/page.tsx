@@ -34,6 +34,7 @@ import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { QuotationHeaderCard } from "@/components/quotations/quotation-header-card";
 import { RevisionHistoryNav } from "@/components/quotations/revision-history-nav";
 import { RevisionSummaryCard } from "@/components/quotations/revision-summary-card";
@@ -69,6 +70,7 @@ export default function QuotationDetailPage() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pendingRevisionId, setPendingRevisionId] = useState<string | null>(null);
+  const [hasUnsavedDetails, setHasUnsavedDetails] = useState(false);
   const revisionRequest = useRef(0);
 
   const loadQuotation = useCallback(async () => {
@@ -141,6 +143,16 @@ export default function QuotationDetailPage() {
     if (!user) router.replace("/login");
   }, [user, router]);
 
+  useEffect(() => {
+    if (!hasUnsavedDetails) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedDetails]);
+
   const refreshAll = useCallback(async () => {
     await loadQuotation();
     if (viewingRevisionId) await loadRevisionDetail(viewingRevisionId);
@@ -161,6 +173,7 @@ export default function QuotationDetailPage() {
   // sidesteps the race entirely.
   async function handleNextRevisionCreated(newRevisionId: string) {
     revisionRequest.current += 1;
+    setHasUnsavedDetails(false);
     setViewingRevisionId(newRevisionId);
     await loadQuotation();
     await loadRevisionDetail(newRevisionId);
@@ -214,6 +227,7 @@ export default function QuotationDetailPage() {
   function viewRevision(revisionId: string) {
     if (revisionId === viewingRevisionId) return;
     revisionRequest.current += 1;
+    setHasUnsavedDetails(false);
     setRevision(null);
     setViewingRevisionId(revisionId);
   }
@@ -228,7 +242,7 @@ export default function QuotationDetailPage() {
   }
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs
         items={[
           { label: "Dashboard", href: "/dashboard" },
@@ -240,8 +254,28 @@ export default function QuotationDetailPage() {
       <PageHeader
         title={quotation.quotationNumber}
         description={revision ? `Revision ${revision.revisionNumber} · ${customer.name}${site ? ` · ${site.label}` : ""}` : customer.name}
-        actions={<StatusBadge status={revision?.status ?? quotation.status} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status={revision?.status ?? quotation.status} />
+            {revision && (
+              <Button variant="outline" onClick={downloadPdf} disabled={pdfBusy}>
+                {pdfBusy ? "Preparing PDF…" : revision.approvedAt ? "Download quotation PDF" : "Download draft PDF"}
+              </Button>
+            )}
+          </div>
+        }
       />
+
+      {revision && (
+        <p className="mb-4 text-xs text-muted-foreground">
+          {revision.approvedAt
+            ? revision.status === "APPROVED"
+              ? "Download the approved PDF and send it outside the system. Downloading does not mark it as sent."
+              : "Downloading this revision does not change its status."
+            : "Draft PDFs are for internal review and are not approved for customer sending."}
+        </p>
+      )}
+      {pdfError && <p role="alert" className="mb-4 text-sm text-destructive">{pdfError}</p>}
 
       {staleNotice && (
         <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -253,9 +287,22 @@ export default function QuotationDetailPage() {
       <h2 className="mb-3 text-base font-semibold">Customer and Site</h2>
       <QuotationHeaderCard quotation={quotation} customer={customer} site={site} trade={trade} />
 
-      <h2 className="mb-3 text-base font-semibold">History and Document</h2>
       {revisions.length > 0 && viewingRevisionId && (
         <RevisionHistoryNav revisions={revisions} viewingRevisionId={viewingRevisionId} onSelect={handleSelectRevision} />
+      )}
+      {revision && (
+        <nav aria-label="Quotation sections" className="mb-5 flex gap-1 overflow-x-auto border-b text-sm">
+          {[
+            ["Details", "quotation-details"],
+            ["Line Items", "quotation-line-items"],
+            ["Commercial Terms", "quotation-commercial-terms"],
+            ["Checklist", "quotation-checklist"],
+          ].map(([label, id]) => (
+            <a key={id} href={`#${id}`} className="shrink-0 rounded-t-md px-3 py-2 font-medium text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {label}
+            </a>
+          ))}
+        </nav>
       )}
       <ActionConfirmDialog
         open={pendingRevisionId !== null}
@@ -278,19 +325,6 @@ export default function QuotationDetailPage() {
 
       {!revisionError && revision && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-            <Button variant="outline" onClick={downloadPdf} disabled={pdfBusy}>
-              {pdfBusy ? "Preparing PDF…" : revision.approvedAt ? "Download quotation PDF" : "Download draft PDF"}
-            </Button>
-            <p className="text-sm text-muted-foreground">
-              {revision.approvedAt
-                ? revision.status === "APPROVED"
-                  ? "Send this PDF outside the system. Downloading it does not mark the quotation as sent."
-                  : "Download a copy of this revision. Downloading it does not change its status."
-                : "This draft PDF is for internal review. It is not approved for customer sending."}
-            </p>
-            {pdfError && <p role="alert" className="text-sm text-destructive">{pdfError}</p>}
-          </div>
           {!revision.isCurrent && (
             <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
               This is a historical revision — it is read-only. View the current revision to make changes or take
@@ -303,60 +337,86 @@ export default function QuotationDetailPage() {
               new revision to make further changes.
             </p>
           )}
-          {revision.isCurrent && (
-            <LifecycleActionBar
-              quotationId={quotation.id}
-              revision={revision}
-              lineItemCount={lineItems.length}
-              onChanged={refreshAll}
-              onConflict={handleConflict}
-              onNextRevisionCreated={handleNextRevisionCreated}
-            />
-          )}
+          <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] xl:items-start">
+            <div className="min-w-0 space-y-5">
+              <section id="quotation-details" className="scroll-mt-6">
+                <RevisionFreeTextForm quotationId={quotation.id} revisionId={revision.id} canEdit={canEdit} revision={revision} onChanged={refreshAll} onDirtyChange={setHasUnsavedDetails} />
+              </section>
 
-          <h2 className="text-base font-semibold">Pricing and Tax Summary</h2>
-          <RevisionSummaryCard revision={revision} />
+              <section id="quotation-line-items" className="scroll-mt-6">
+                <RevisionEditor
+                  quotationId={quotation.id}
+                  revisionId={revision.id}
+                  canEdit={canEdit}
+                  sections={sections}
+                  lineItems={lineItems}
+                  assets={assets}
+                  defaultTaxTreatment={revision.defaultTaxTreatment}
+                  onChanged={refreshAll}
+                />
+              </section>
 
-          <h2 className="text-base font-semibold">Scope and Line Items</h2>
-          <RevisionFreeTextForm quotationId={quotation.id} revisionId={revision.id} canEdit={canEdit} revision={revision} onChanged={refreshAll} />
+              {quotation.quotationType === "PREVENTIVE_MAINTENANCE" && (
+                <MaintenanceDetailsPanel
+                  quotationId={quotation.id}
+                  revisionId={revision.id}
+                  canEdit={canEdit}
+                  details={maintenanceDetails}
+                  onChanged={refreshAll}
+                />
+              )}
 
-          <RevisionEditor
-            quotationId={quotation.id}
-            revisionId={revision.id}
-            canEdit={canEdit}
-            sections={sections}
-            lineItems={lineItems}
-            assets={assets}
-            defaultTaxTreatment={revision.defaultTaxTreatment}
-            onChanged={refreshAll}
-          />
+              <section id="quotation-checklist" className="scroll-mt-6">
+                <TestingItemsPanel
+                  quotationId={quotation.id}
+                  revisionId={revision.id}
+                  canEdit={canEdit}
+                  items={testingItems}
+                  onChanged={refreshAll}
+                />
+              </section>
 
-          {quotation.quotationType === "PREVENTIVE_MAINTENANCE" && (
-            <MaintenanceDetailsPanel
-              quotationId={quotation.id}
-              revisionId={revision.id}
-              canEdit={canEdit}
-              details={maintenanceDetails}
-              onChanged={refreshAll}
-            />
-          )}
+              {revision.isCurrent && revision.status === "ACCEPTED" && (
+                <ConvertToWorkOrdersPanel
+                  quotationId={quotation.id}
+                  revisionId={revision.id}
+                  quotationType={quotation.quotationType}
+                  onConverted={refreshAll}
+                />
+              )}
+            </div>
 
-          <TestingItemsPanel
-            quotationId={quotation.id}
-            revisionId={revision.id}
-            canEdit={canEdit}
-            items={testingItems}
-            onChanged={refreshAll}
-          />
-
-          {revision.isCurrent && revision.status === "ACCEPTED" && (
-            <ConvertToWorkOrdersPanel
-              quotationId={quotation.id}
-              revisionId={revision.id}
-              quotationType={quotation.quotationType}
-              onConverted={refreshAll}
-            />
-          )}
+            <aside aria-label="Quotation summary and actions" className="min-w-0 space-y-4 xl:sticky xl:top-6">
+              <RevisionSummaryCard revision={revision} />
+              {revision.isCurrent && revision.status === "DRAFT" && (
+                <Card className="shadow-none">
+                  <CardHeader className="p-4 pb-2"><h2 className="text-base font-semibold">Approval readiness</h2></CardHeader>
+                  <CardContent className="space-y-2 px-4 pb-4 pt-0 text-sm">
+                    {lineItems.length === 0 ? (
+                      <p>At least one saved <a href="#quotation-line-items" className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">line item</a> is required to submit for internal approval.</p>
+                    ) : (
+                      <p>{lineItems.length} saved line {lineItems.length === 1 ? "item" : "items"} · ready for internal submission.</p>
+                    )}
+                    {revision.termsAndConditions?.includes("[PLACEHOLDER") && (
+                      <p className="border-t pt-2 text-muted-foreground">Before customer sending, replace the placeholder <a href="#quotation-commercial-terms" className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Terms &amp; Conditions</a>.</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">Readiness reflects saved quotation data. Save details and commercial terms before submitting.</p>
+                  </CardContent>
+                </Card>
+              )}
+              {revision.isCurrent && (
+                <LifecycleActionBar
+                  quotationId={quotation.id}
+                  revision={revision}
+                  lineItemCount={lineItems.length}
+                  hasUnsavedDetails={hasUnsavedDetails}
+                  onChanged={refreshAll}
+                  onConflict={handleConflict}
+                  onNextRevisionCreated={handleNextRevisionCreated}
+                />
+              )}
+            </aside>
+          </div>
         </div>
       )}
     </main>

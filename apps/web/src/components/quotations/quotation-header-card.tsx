@@ -26,8 +26,8 @@ export function QuotationHeaderCard({
   trade: Trade | null;
 }) {
   return (
-    <Card className="mb-4">
-      <CardContent className="grid grid-cols-2 gap-4 pt-6 sm:grid-cols-3 lg:grid-cols-6">
+    <Card className="mb-4 shadow-none">
+      <CardContent className="grid grid-cols-1 gap-x-6 gap-y-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Customer" value={customer.name} />
         <Field label="Site" value={site?.label ?? "—"} />
         <Field label="Type" value={QUOTATION_TYPE_LABEL[quotation.quotationType]} />
