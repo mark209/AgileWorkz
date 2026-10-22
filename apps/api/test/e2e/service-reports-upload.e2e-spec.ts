@@ -12,8 +12,7 @@ import { ExtractionQueueService } from "../../src/common/extraction/service-repo
 /**
  * Live E2E — Phase 5 Step 4 (Upload API). Exercises the real HTTP/guard/
  * RBAC/audit stack, the real StorageProvider (local disk), and the real
- * BullMQ queue. No Vertex AI credentials involved — EXTRACTION_PROVIDER
- * stays "stub" for this whole file, same as every other test in this repo.
+ * document-only approval handoff. No Vertex AI credentials are involved.
  */
 // /auth/login is throttled to 10 requests/60s (auth.controller.ts) — a real
 // brute-force-protection measure, not a test-env quirk to work around by
@@ -83,7 +82,7 @@ describe("Service Report upload API (live)", () => {
     return Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
   }
 
-  it("uploads a Service Report end-to-end: DB row, storage object, PENDING_EXTRACTION, and both audit entries", async () => {
+  it("uploads a Service Report for document-only review with its storage object and audit entries", async () => {
     const { customer, site } = await createCustomerSite("ok");
 
     const res = await request(app.getHttpServer())
@@ -95,7 +94,8 @@ describe("Service Report upload API (live)", () => {
       .attach("file", pngBuffer(), { filename: "report.png", contentType: "image/png" });
 
     expect(res.status).toBe(201);
-    expect(res.body.status).toBe("PENDING_EXTRACTION");
+    expect(res.body.status).toBe("PENDING_VERIFICATION");
+    expect(res.body.verificationBasis).toBe("DOCUMENT_ONLY");
     expect(res.body.uploadedBy).toBe(technician.user.id);
     expect(res.body.documentFileName).toBe("report.png");
     expect(res.body.documentFileKey).toBeUndefined(); // never exposed to the client
@@ -108,7 +108,7 @@ describe("Service Report upload API (live)", () => {
       where: { entityType: "ServiceReport", entityId: res.body.id },
       orderBy: { createdAt: "asc" },
     });
-    expect(auditEntries.map((e) => e.action)).toEqual(["service_report_uploaded", "service_report_extraction_enqueued"]);
+    expect(auditEntries.map((e) => e.action)).toEqual(["service_report_uploaded", "service_report_document_review_requested"]);
     // Audit entries record metadata only, never raw report contents.
     expect(JSON.stringify(auditEntries[0].afterData)).not.toContain("fake png bytes");
 
@@ -367,7 +367,7 @@ describe("Service Report upload API (live)", () => {
     }
   }, 20_000);
 
-  it("queue failure: rolls back the DB row and the storage object, leaving no orphaned state", async () => {
+  it("accepts document-only uploads when the extraction queue is unavailable", async () => {
     const failingQueue = { enqueueExtraction: async () => {
       throw new Error("simulated redis outage");
     } };
@@ -382,7 +382,7 @@ describe("Service Report upload API (live)", () => {
     await failingApp.init();
 
     try {
-      const { customer, site } = await createCustomerSite("queuefail");
+      const { customer, site } = await createCustomerSite("queue-unavailable");
 
       const res = await request(failingApp.getHttpServer())
         .post(`/customers/${customer.id}/service-reports`)
@@ -392,15 +392,11 @@ describe("Service Report upload API (live)", () => {
         .field("sourceType", "INTERNAL_SERVICE")
         .attach("file", pngBuffer(), { filename: "report.png", contentType: "image/png" });
 
-      expect(res.status).toBeGreaterThanOrEqual(500);
-      expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
-
-      const failureAudit = await prisma.auditLog.findMany({
-        where: { entityType: "ServiceReport", action: "service_report_extraction_enqueue_failed" },
-        orderBy: { createdAt: "desc" },
-        take: 1,
-      });
-      expect(failureAudit).toHaveLength(1);
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe("PENDING_VERIFICATION");
+      const stored = await prisma.serviceReport.findUniqueOrThrow({ where: { id: res.body.id } });
+      await expect(storage.objectExists(stored.documentFileKey)).resolves.toBe(true);
+      await storage.deleteObject(stored.documentFileKey);
     } finally {
       await failingApp.close();
     }

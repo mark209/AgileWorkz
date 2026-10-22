@@ -75,13 +75,15 @@ describe("Work Order Assignments — Step 4 (live)", () => {
     return loginHeader(user.email, user.password);
   }
 
-  // Deliberately grants ONLY read_own — matches §07's exact Technician
-  // column, isolated from whatever the real seeded Technician role also
-  // carries (start_own, Step 5) so this suite proves exactly the Step 4
-  // permission boundary, nothing more.
+  // Assignment now requires a Technician-capable role with start_own.
+  // Keep the fixture limited to the grants needed for assignment and
+  // reading the assigned Work Order.
   async function createTechnician(suffix: string) {
-    const perm = await fixtures.ensurePermission("work_orders", "read_own");
-    const role = await fixtures.createRole(`wo4-t-${suffix}`, [perm.id]);
+    const [readOwn, startOwn] = await Promise.all([
+      fixtures.ensurePermission("work_orders", "read_own"),
+      fixtures.ensurePermission("work_orders", "start_own"),
+    ]);
+    const role = await fixtures.createRole(`wo4-t-${suffix}`, [readOwn.id, startOwn.id]);
     const user = await fixtures.createUser(`wo4-t-${suffix}`, UserStatus.ACTIVE, [role.id]);
     const header = await loginHeader(user.email, user.password);
     return { header, userId: user.id };
