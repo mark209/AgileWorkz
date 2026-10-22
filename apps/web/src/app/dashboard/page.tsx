@@ -31,6 +31,14 @@ interface SectionState<T> {
 }
 const initialSection = { data: null, error: null };
 
+function technicianNextStep(status: WorkOrder["status"]): string {
+  if (status === "DRAFT") return "Waiting for scheduling before the job can be started.";
+  if (status === "SCHEDULED") return "Open AgileWorks Field to start this job.";
+  if (status === "IN_PROGRESS") return "Continue field work and check the report action in AgileWorks Field.";
+  if (status === "COMPLETED") return "Check AgileWorks Field for any permitted report upload.";
+  return "View the service for its current status.";
+}
+
 /**
  * Phase 6 (Dashboard) — a ground-up rebuild of what was a Phase 1 stub
  * (inline styles, no design-system components, stale "Sales and Operations
@@ -277,6 +285,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader><CardTitle>My Assigned Services</CardTitle></CardHeader>
           <CardContent>
+            {technicianView && <p className="mb-4 text-sm text-muted-foreground">This list includes all your currently assigned Work Orders, even Draft and Completed jobs. Start Job and Upload Service Report are available in AgileWorks Field when the job state permits them.</p>}
             {section(workOrders, (data) => data.length === 0 ? (
               <EmptyState title="No assigned services" description="Work Orders explicitly assigned to you will appear here." />
             ) : (
@@ -286,6 +295,7 @@ export default function DashboardPage() {
                     <div className="min-w-0">
                       <p className="font-medium">{workOrder.workOrderNumber}</p>
                       <p className="text-sm text-muted-foreground">{workOrder.customer.name} · {workOrder.site.label}</p>
+                      {technicianView && <p className="text-sm text-muted-foreground">{technicianNextStep(workOrder.status)}</p>}
                     </div>
                     <div className="flex items-center gap-3">
                       <StatusBadge status={workOrder.status} />
@@ -299,7 +309,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {(canReadCustomers || canReadServiceReports || canReadQuotations || canReadWorkOrders) && (
+      {(canReadCustomers || canReadServiceReports || canReadQuotations || (canReadWorkOrders && !technicianView)) && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {canReadCustomers &&
             section(customers, (data) => (
@@ -340,7 +350,7 @@ export default function DashboardPage() {
               </>
             ))}
 
-          {canReadWorkOrders &&
+          {canReadWorkOrders && !technicianView &&
             section(workOrders, (data) => (
               <>
                 <KpiCard

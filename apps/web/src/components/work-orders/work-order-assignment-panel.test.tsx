@@ -67,7 +67,7 @@ describe("WorkOrderAssignmentPanel", () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => false });
     render(<WorkOrderAssignmentPanel workOrder={workOrder()} onChanged={vi.fn()} />);
     expect(listTechniciansMock).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /^assign$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /assign technician/i })).not.toBeInTheDocument();
   });
 
   it("shows 'No technician assigned yet' when there are no active assignments", () => {
@@ -140,7 +140,7 @@ describe("WorkOrderAssignmentPanel", () => {
     const user = userEvent.setup();
     const select = await screen.findByRole("combobox");
     await user.selectOptions(select, "t2");
-    await user.click(screen.getByRole("button", { name: /^assign$/i }));
+    await user.click(screen.getByRole("button", { name: /assign technician/i }));
 
     await waitFor(() => expect(assignTechnicianMock).toHaveBeenCalledWith("token-1", "wo1", "t2"));
     expect(onChanged).toHaveBeenCalled();
@@ -172,5 +172,16 @@ describe("WorkOrderAssignmentPanel", () => {
     render(<WorkOrderAssignmentPanel workOrder={workOrder({ assignments: [] })} onChanged={vi.fn()} />);
 
     expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
+  });
+
+  it("explains when every eligible Technician is already assigned", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    listTechniciansMock.mockResolvedValue([technician()]);
+    render(<WorkOrderAssignmentPanel workOrder={workOrder({
+      assignments: [{ id: "a1", technicianId: "t1", assignedAt: "2026-08-30T00:00:00.000Z", technician: { id: "t1", fullName: "Jordan Lee" } }],
+    })} onChanged={vi.fn()} />);
+
+    expect(await screen.findByText(/no additional active technicians are available/i)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Add a Technician" })).toBeInTheDocument();
   });
 });

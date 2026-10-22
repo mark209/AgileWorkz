@@ -35,6 +35,7 @@ function WorkOrdersListPageContent() {
   const searchParams = useSearchParams();
   const status = searchParams.get("status") ?? undefined;
   const assignedOnly = searchParams.get("scope") === "assigned";
+  const createdOutsideScope = searchParams.get("created") === "outside-scope";
 
   const [workOrders, setWorkOrders] = useState<WorkOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +81,8 @@ function WorkOrdersListPageContent() {
         title="Work Orders"
         description={assignedScope ? "Work Orders assigned to you." : status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}
       />
+
+      {createdOutsideScope && <p role="status" className="mb-4 rounded-md border border-primary/30 bg-accent px-4 py-3 text-sm">Work Order created. It is not assigned to you, so it will not appear in this list. Super Admin can assign it to you if needed.</p>}
 
       <div className="relative mb-4 max-w-sm">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />

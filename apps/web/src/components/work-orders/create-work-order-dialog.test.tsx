@@ -87,4 +87,23 @@ describe("CreateWorkOrderDialog", () => {
     expect(await screen.findByText(/does not belong to this customer/i)).toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
   });
+
+  it("warns a Manager when the new Work Order will be outside their assigned view", async () => {
+    useAuthMock.mockReturnValue({
+      accessToken: "token-1",
+      user: { id: "manager-1", roles: ["Manager"] },
+      hasPermission: (module: string, action: string) => module === "work_orders" && action === "read_assigned",
+    });
+    createStandaloneWorkOrderMock.mockResolvedValue({ id: "wo-new" });
+    render(<CreateWorkOrderDialog customerId="c1" sites={sites} onCreated={vi.fn()} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /new work order/i }));
+    expect(screen.getByText(/will not appear in your assigned list/i)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/site/i), "s1");
+    await user.type(screen.getByLabelText(/reason details/i), "Direct service request");
+    await user.click(screen.getByRole("button", { name: /^create work order$/i }));
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/work-orders?created=outside-scope"));
+  });
 });

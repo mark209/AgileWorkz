@@ -134,7 +134,9 @@ describe("DashboardPage — role-based section visibility", () => {
     render(<DashboardPage />);
 
     expect(await screen.findByText("Technician Dashboard")).toBeInTheDocument();
-    expect(await screen.findByText("Work Orders — Scheduled")).toBeInTheDocument();
+    expect(await screen.findByText("My Assigned Services")).toBeInTheDocument();
+    expect(screen.getByText(/this list includes all your currently assigned work orders/i)).toBeInTheDocument();
+    expect(screen.queryByText("Work Orders — Scheduled")).not.toBeInTheDocument();
     expect(screen.queryByText("Active Customers")).not.toBeInTheDocument();
     expect(screen.queryByText(/service reports/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/quotations/i)).not.toBeInTheDocument();
