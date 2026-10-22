@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { listServiceReportTypes, uploadServiceReport, type ServiceReportType, type WorkOrder } from "@/lib/api";
-import { ApiError } from "@/lib/api-client";
+import { ApiError, ApiTimeoutError } from "@/lib/api-client";
 import { colors, dangerText, input, label, primaryButton, secondaryButton } from "@/lib/styles";
 
 const ACCEPTED_MIME_TYPES = "application/pdf,image/jpeg,image/png,image/webp";
@@ -41,9 +41,9 @@ function writeDraftReportType(workOrderId: string, reportTypeCode: string): void
 
 /**
  * Phase 4 Operations Frontend — uploads a Service Report against this Work
- * Order and hands off entirely into Phase 5's existing pipeline
- * (POST /customers/:id/service-reports -> upload -> extraction ->
- * verification -> confirmation -> lock). Nothing about that pipeline is
+ * Order and hands off to the document-only review workflow
+ * (POST /customers/:id/service-reports -> upload -> Super Admin approval).
+ * Nothing about that workflow is
  * duplicated here: this form's only job is collecting the three upload-time
  * fields the DTO actually accepts (reportTypeCode, siteId, workOrderId) plus
  * the file, then showing the resulting Service Report number.
@@ -106,7 +106,9 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
       setFile(null);
       setIdempotencyKey(crypto.randomUUID()); // this attempt is done — the next one gets its own key
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to upload Service Report.");
+      setError(e instanceof ApiTimeoutError
+        ? "The upload may have succeeded, but confirmation did not arrive. Keep this page open and try Upload Service Report again. The retry uses the same upload attempt."
+        : e instanceof ApiError ? e.message : "Failed to upload Service Report.");
     } finally {
       setSubmitting(false);
     }

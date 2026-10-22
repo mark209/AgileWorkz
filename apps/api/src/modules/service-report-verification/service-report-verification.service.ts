@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { ActorType, ExtractionConfidence, ExtractionReviewStatus, ServiceReportStatus } from "@prisma/client";
+import { ActorType, ExtractionConfidence, ExtractionReviewStatus, ServiceReportStatus, ServiceReportVerificationBasis } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { STORAGE_PROVIDER, StorageProvider } from "../../common/storage/storage-provider.interface";
@@ -64,6 +64,7 @@ export interface VerificationView {
   report: {
     id: string;
     status: ServiceReportStatus;
+    verificationBasis: ServiceReportVerificationBasis | null;
     reportTypeCode: string;
     documentFileName: string;
     documentMimeType: string;
@@ -117,7 +118,10 @@ export class ServiceReportVerificationService {
     return report;
   }
 
-  private assertPendingVerification(report: { status: ServiceReportStatus }): void {
+  private assertPendingVerification(report: { status: ServiceReportStatus; verificationBasis: ServiceReportVerificationBasis | null }): void {
+    if (report.verificationBasis === ServiceReportVerificationBasis.DOCUMENT_ONLY) {
+      throw new BadRequestException("This report requires document-only approval by Super Admin");
+    }
     if (report.status !== ServiceReportStatus.PENDING_VERIFICATION) {
       throw new BadRequestException(
         `Service Report is ${report.status}, not PENDING_VERIFICATION — verification actions are not available`,
@@ -168,6 +172,7 @@ export class ServiceReportVerificationService {
       report: {
         id: report.id,
         status: report.status,
+        verificationBasis: report.verificationBasis,
         reportTypeCode: report.reportTypeCode,
         documentFileName: report.documentFileName,
         documentMimeType: report.documentMimeType,
@@ -355,6 +360,47 @@ export class ServiceReportVerificationService {
     return counts.reduce((sum, n) => sum + n, 0);
   }
 
+  async approveDocumentOnly(serviceReportId: string, actor: ActorContext) {
+    const report = await this.findReportOrThrow(serviceReportId);
+    if (report.status !== ServiceReportStatus.PENDING_VERIFICATION && report.status !== ServiceReportStatus.EXTRACTION_FAILED) {
+      throw new BadRequestException("This Service Report is not awaiting document review");
+    }
+    const stagingCounts = await Promise.all(
+      STAGING_CATEGORIES.map((category) => this.delegateFor(category).count({ where: { serviceReportId } })),
+    );
+    if (stagingCounts.some((count) => count > 0)) {
+      throw new BadRequestException("This report has extracted fields and must use the existing field review workflow");
+    }
+    if (!(await this.storage.objectExists(report.documentFileKey))) {
+      throw new NotFoundException("Original Service Report document is unavailable");
+    }
+    const now = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.serviceReport.updateMany({
+        where: { id: serviceReportId, status: report.status, verificationBasis: report.verificationBasis },
+        data: {
+          status: ServiceReportStatus.VERIFIED,
+          verificationBasis: ServiceReportVerificationBasis.DOCUMENT_ONLY,
+          verifiedBy: actor.userId,
+          verifiedAt: now,
+        },
+      });
+      if (guarded.count !== 1) throw new ConflictException("This Service Report was already reviewed");
+      await this.audit.write({
+        actorType: ActorType.USER,
+        actorUserId: actor.userId,
+        action: "service_report_document_only_approved",
+        entityType: "ServiceReport",
+        entityId: serviceReportId,
+        afterData: { previousStatus: report.status, status: ServiceReportStatus.VERIFIED, verificationBasis: ServiceReportVerificationBasis.DOCUMENT_ONLY },
+        ipAddress: actor.ipAddress,
+        userAgent: actor.userAgent,
+      }, tx);
+      return tx.serviceReport.findUniqueOrThrow({ where: { id: serviceReportId } });
+    });
+    return updated;
+  }
+
   /**
    * PENDING_VERIFICATION -> VERIFIED. Completeness rule (approved Step 5
    * decision): every staging row across all six tables must carry a
@@ -368,6 +414,13 @@ export class ServiceReportVerificationService {
   async completeVerification(serviceReportId: string, actor: ActorContext) {
     const report = await this.findReportOrThrow(serviceReportId);
     this.assertPendingVerification(report);
+
+    const stagingCounts = await Promise.all(
+      STAGING_CATEGORIES.map((category) => this.delegateFor(category).count({ where: { serviceReportId } })),
+    );
+    if (stagingCounts.every((count) => count === 0)) {
+      throw new BadRequestException("No extracted fields exist; use document-only approval instead");
+    }
 
     const unreviewedCount = await this.countUnreviewed(serviceReportId);
     if (unreviewedCount > 0) {
@@ -395,7 +448,7 @@ export class ServiceReportVerificationService {
     const updated = await this.prisma.$transaction(async (tx) => {
       const guarded = await tx.serviceReport.updateMany({
         where: { id: serviceReportId, status: ServiceReportStatus.PENDING_VERIFICATION },
-        data: { status: ServiceReportStatus.VERIFIED, verifiedBy: actor.userId, verifiedAt: new Date() },
+        data: { status: ServiceReportStatus.VERIFIED, verificationBasis: ServiceReportVerificationBasis.EXTRACTED_FIELDS, verifiedBy: actor.userId, verifiedAt: new Date() },
       });
       if (guarded.count === 0) {
         throw new ConflictException(

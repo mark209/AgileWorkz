@@ -19,6 +19,7 @@ import {
   ServiceReport,
   ServiceReportSourceType,
   ServiceReportStatus,
+  ServiceReportVerificationBasis,
 } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -77,6 +78,7 @@ function toPublicServiceReport(report: ServiceReport): PublicServiceReport {
     reportTypeCode: report.reportTypeCode,
     sourceType: report.sourceType,
     status: report.status,
+    verificationBasis: report.verificationBasis,
     serviceDate: report.serviceDate,
     timeIn: report.timeIn,
     timeOut: report.timeOut,
@@ -319,7 +321,8 @@ export class ServiceReportsService {
             workOrderId,
             reportTypeCode: dto.reportTypeCode,
             sourceType: dto.sourceType ?? (workOrderId ? ServiceReportSourceType.WORK_ORDER_LINKED : null),
-            status: ServiceReportStatus.PENDING_EXTRACTION,
+            status: ServiceReportStatus.PENDING_VERIFICATION,
+            verificationBasis: ServiceReportVerificationBasis.DOCUMENT_ONLY,
             contactName: dto.contactName,
             contactPhone: dto.contactPhone,
             documentFileKey: fileKey,
@@ -360,42 +363,10 @@ export class ServiceReportsService {
       userAgent: actor.userAgent,
     });
 
-    try {
-      await this.extractionQueue.enqueueExtraction({
-        serviceReportId: report.id,
-        documentFileKey: report.documentFileKey,
-        documentMimeType: report.documentMimeType,
-      });
-    } catch (e) {
-      // A PENDING_EXTRACTION report with no job behind it would sit stuck
-      // forever — roll back the row and the storage object so the whole
-      // upload is atomic from the caller's perspective. Audit the failure
-      // first, while the row still exists, so there is a permanent record
-      // of what was attempted even though the row itself is gone
-      // afterward (audit_logs has no FK to service_reports — this is a
-      // genuine unwind of a failed multi-step operation, not a disable-via-
-      // status case like a confirmed business record).
-      await this.audit.write({
-        actorType: ActorType.USER,
-        actorUserId: actor.userId,
-        action: "service_report_extraction_enqueue_failed",
-        entityType: "ServiceReport",
-        entityId: report.id,
-        reason: e instanceof Error ? e.message : String(e),
-        ipAddress: actor.ipAddress,
-        userAgent: actor.userAgent,
-      });
-      await this.prisma.serviceReport.delete({ where: { id: report.id } }).catch(() => undefined);
-      await this.storage.deleteObject(fileKey).catch(() => undefined);
-      throw new InternalServerErrorException(
-        "Upload succeeded but the extraction job could not be enqueued; the upload has been rolled back. Please retry.",
-      );
-    }
-
     await this.audit.write({
       actorType: ActorType.USER,
       actorUserId: actor.userId,
-      action: "service_report_extraction_enqueued",
+      action: "service_report_document_review_requested",
       entityType: "ServiceReport",
       entityId: report.id,
       ipAddress: actor.ipAddress,

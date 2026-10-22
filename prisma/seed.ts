@@ -461,6 +461,7 @@ const PHASE5_PERMISSIONS: Array<{ module: string; action: string; description: s
   // existed until Step 5). Technician structurally lacks this permission
   // regardless of who uploaded what.
   { module: "service_reports", action: "verify", description: "Review/correct staged extraction fields and mark VERIFIED — role-based only, not restricted by uploader identity" },
+  { module: "service_reports", action: "document_approve", description: "Approve an original Service Report document without extracted fields — Admin/Owner only" },
   { module: "service_reports", action: "confirm", description: "Execute Confirm — populate canonical data from verified staging values (VERIFIED -> CONFIRMED)" },
   { module: "service_reports", action: "lock", description: "Final administrative lock (CONFIRMED -> LOCKED) — terminal, Manager/Admin-Owner only" },
 ];
@@ -879,6 +880,12 @@ async function main() {
   }
 
   console.log("Granting Office Staff its Phase 5 permission set (no lock, no Technician-only read_own)...");
+  const documentApprovalPermission = phase5Permissions.get("service_reports.document_approve")!;
+  await prisma.rolePermission.upsert({
+    where: { roleId_permissionId: { roleId: roles.get("Admin/Owner")!.id, permissionId: documentApprovalPermission.id } },
+    update: {},
+    create: { roleId: roles.get("Admin/Owner")!.id, permissionId: documentApprovalPermission.id },
+  });
   for (const key of OFFICE_STAFF_PHASE5_GRANTS) {
     const permission = phase5Permissions.get(key)!;
     await prisma.rolePermission.upsert({

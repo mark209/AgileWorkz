@@ -1365,6 +1365,11 @@ enum ServiceReportStatus {
   LOCKED
 }
 
+enum ServiceReportVerificationBasis {
+  DOCUMENT_ONLY
+  EXTRACTED_FIELDS
+}
+
 // Required (app-validated) when work_order_id is null — approved Rev 7 fact
 // ("source_type records why the service happened when there's no Work
 // Order"). Amended per your explicit instruction: a dedicated, independently
@@ -1471,6 +1476,7 @@ model ServiceReport {
   reportTypeCode      String                   @map("report_type_code") @db.VarChar(40)
   sourceType          ServiceReportSourceType? @map("source_type")
   status              ServiceReportStatus      @default(PENDING_EXTRACTION)
+  verificationBasis   ServiceReportVerificationBasis? @map("verification_basis")
 
   // Step 4 (Upload API) — the original uploaded document's storage
   // reference. Every Service Report row is created BY an upload (there is

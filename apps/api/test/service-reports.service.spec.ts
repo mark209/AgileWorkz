@@ -290,11 +290,12 @@ describe("ServiceReportsService.upload", () => {
 
     expect(storage.putObject).toHaveBeenCalled();
     expect(capturedData?.uploadedBy).toBe(actor.userId);
-    expect(capturedData?.status).toBe("PENDING_EXTRACTION");
+    expect(capturedData?.status).toBe("PENDING_VERIFICATION");
+    expect(capturedData?.verificationBasis).toBe("DOCUMENT_ONLY");
     expect((result as Record<string, unknown>).documentFileKey).toBeUndefined(); // never exposed to the client
   });
 
-  it("enqueues the extraction job after a successful upload and audits both steps", async () => {
+  it("requests document review without enqueuing extraction", async () => {
     const prismaOverrides = {
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
         fn({
@@ -312,14 +313,10 @@ describe("ServiceReportsService.upload", () => {
 
     await service.upload("cust-1", makeFile(), baseDto, actor);
 
-    expect(extractionQueue.enqueueExtraction).toHaveBeenCalledWith({
-      serviceReportId: "sr-1",
-      documentFileKey: "service-reports/sr-1.jpg",
-      documentMimeType: "image/jpeg",
-    });
+    expect(extractionQueue.enqueueExtraction).not.toHaveBeenCalled();
     expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ action: "service_report_uploaded", entityId: "sr-1" }));
     expect(audit.write).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "service_report_extraction_enqueued", entityId: "sr-1" }),
+      expect.objectContaining({ action: "service_report_document_review_requested", entityId: "sr-1" }),
     );
   });
 
@@ -340,7 +337,7 @@ describe("ServiceReportsService.upload", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("rolls back the DB row and storage object, and audits the failure, when the queue enqueue fails", async () => {
+  it("does not depend on Redis queue availability for document-only upload", async () => {
     const prismaOverrides = {
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
         fn({
@@ -355,39 +352,18 @@ describe("ServiceReportsService.upload", () => {
       ),
       serviceReport: { delete: jest.fn().mockResolvedValue(undefined) },
     };
-    const { service, prisma, storage, audit } = buildHarness({
+    const { service, prisma, storage, audit, extractionQueue } = buildHarness({
       prisma: prismaOverrides,
       extractionQueue: { enqueueExtraction: jest.fn().mockRejectedValue(new Error("redis unreachable")) },
     });
 
-    await expect(service.upload("cust-1", makeFile(), baseDto, actor)).rejects.toThrow(InternalServerErrorException);
-    expect(prisma.serviceReport.delete).toHaveBeenCalledWith({ where: { id: "sr-1" } });
-    expect(storage.deleteObject).toHaveBeenCalled();
+    await expect(service.upload("cust-1", makeFile(), baseDto, actor)).resolves.toBeDefined();
+    expect(extractionQueue.enqueueExtraction).not.toHaveBeenCalled();
+    expect(prisma.serviceReport.delete).not.toHaveBeenCalled();
+    expect(storage.deleteObject).not.toHaveBeenCalled();
     expect(audit.write).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "service_report_extraction_enqueue_failed", entityId: "sr-1" }),
+      expect.objectContaining({ action: "service_report_document_review_requested", entityId: "sr-1" }),
     );
-  });
-
-  it("does not fail the whole upload if the rollback's own storage cleanup fails after a queue failure", async () => {
-    const prismaOverrides = {
-      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({
-          serviceReport: {
-            create: jest.fn().mockResolvedValue({ id: "sr-1", documentFileKey: "service-reports/sr-1.jpg", documentMimeType: "image/jpeg" }),
-          },
-        }),
-      ),
-      serviceReport: { delete: jest.fn().mockResolvedValue(undefined) },
-    };
-    const { service } = buildHarness({
-      prisma: prismaOverrides,
-      storage: { deleteObject: jest.fn().mockRejectedValue(new Error("storage also down")) },
-      extractionQueue: { enqueueExtraction: jest.fn().mockRejectedValue(new Error("redis unreachable")) },
-    });
-
-    // Still surfaces the enqueue failure as the outward error, not the
-    // secondary storage-cleanup failure.
-    await expect(service.upload("cust-1", makeFile(), baseDto, actor)).rejects.toThrow(InternalServerErrorException);
   });
 });
 
