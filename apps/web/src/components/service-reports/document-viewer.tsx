@@ -8,12 +8,17 @@
 export function DocumentViewer({ url, mimeType, fileName }: { url: string; mimeType: string; fileName: string }) {
   if (mimeType === "application/pdf") {
     return (
-      <iframe
-        src={url}
-        title={fileName}
-        className="h-full w-full rounded-md border bg-muted"
-        style={{ minHeight: "70vh" }}
-      />
+      <div className="space-y-2">
+        <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary underline">
+          Open original PDF in a new tab
+        </a>
+        <iframe
+          src={url}
+          title={fileName}
+          className="h-full w-full rounded-md border bg-muted"
+          style={{ minHeight: "70vh" }}
+        />
+      </div>
     );
   }
 

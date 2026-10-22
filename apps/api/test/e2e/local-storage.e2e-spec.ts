@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
+import helmet from "helmet";
 import { AppModule } from "../../src/app.module";
 import { AllExceptionsFilter } from "../../src/common/filters/http-exception.filter";
 import { STORAGE_PROVIDER } from "../../src/common/storage/storage-provider.interface";
@@ -31,6 +32,7 @@ describe("Local storage resolver (live)", () => {
       .useValue(localDisk)
       .compile();
     app = moduleRef.createNestApplication();
+    app.use(helmet());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
     app.useGlobalFilters(new AllExceptionsFilter());
     await app.init();
@@ -50,6 +52,9 @@ describe("Local storage resolver (live)", () => {
     const res = await request(app.getHttpServer()).get(path); // deliberately no .set("Authorization", ...)
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("image/jpeg");
+    expect(res.headers["content-security-policy"]).toContain(`frame-ancestors 'self' ${new URL(process.env.WEB_APP_ORIGIN ?? "http://localhost:3000").origin}`);
+    expect(res.headers["x-frame-options"]).toBeUndefined();
+    expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
     expect(Buffer.isBuffer(res.body) ? res.body.toString() : res.text).toBe("fake jpeg bytes");
 
     await storage.deleteObject(key);
@@ -76,6 +81,7 @@ describe("Local storage resolver (live)", () => {
 
     const res = await request(app.getHttpServer()).get(path);
     expect(res.status).toBe(403);
+    expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");
 
     await storage.deleteObject(key);
   });
