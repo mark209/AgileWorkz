@@ -1,32 +1,26 @@
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { getQueueToken } from "@nestjs/bullmq";
 import request from "supertest";
-import { Queue } from "bullmq";
 import { UserStatus } from "@prisma/client";
 import { bootstrapTestApp, E2eFixtures } from "./support";
 import { AppModule } from "../../src/app.module";
 import { AllExceptionsFilter } from "../../src/common/filters/http-exception.filter";
 import { PrismaService } from "../../src/prisma/prisma.service";
 import { STORAGE_PROVIDER, StorageProvider } from "../../src/common/storage/storage-provider.interface";
-import { SERVICE_REPORT_EXTRACTION_QUEUE, ServiceReportExtractionJobData } from "../../src/common/extraction/service-report-extraction.processor";
 
 /**
  * Live E2E — Phase 7 (F7.1, approved mini-design:
  * docs/architecture/phase7-f7.1-idempotency-design.md). Proves the
- * Idempotency-Key contract against the real HTTP/guard/RBAC/DB/queue
+ * Idempotency-Key contract against the real HTTP/guard/RBAC/DB
  * stack — deliberately not unit-tested-only, per the explicit instruction
  * that database/concurrency behavior must be proven at the e2e level.
  *
- * service-reports-upload.e2e-spec.ts (all 10 tests, unmodified) remains
- * the proof that every caller NOT sending the header gets exactly the
- * pre-F7.1 behavior — this file only adds the new, header-driven paths.
+ * service-reports-upload.e2e-spec.ts covers callers without the header.
  */
 describe("Service Report upload idempotency (F7.1, live)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let storage: StorageProvider;
-  let queue: Queue<ServiceReportExtractionJobData>;
   let fixtures: E2eFixtures;
   let technician: { user: { id: string }; authHeader: string };
   let noUploadPermission: { authHeader: string };
@@ -46,7 +40,6 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
 
   beforeAll(async () => {
     ({ app, prisma, storage } = await bootstrapTestApp());
-    queue = app.get(getQueueToken(SERVICE_REPORT_EXTRACTION_QUEUE));
     fixtures = new E2eFixtures(prisma, storage);
     technician = await userWithPermissions("shared", [
       ["service_reports", "upload"],
@@ -85,24 +78,15 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
     return idempotencyKey ? req.set("Idempotency-Key", idempotencyKey) : req;
   }
 
-  // Counts real BullMQ jobs whose data.serviceReportId matches — a direct
-  // proof against the actual queue, not an inference from our own audit
-  // log. jobId is the serviceReportId itself (ExtractionQueueService), so
-  // this also implicitly proves BullMQ's own jobId-uniqueness guard never
-  // had to reject a second add() for the same report.
-  async function countExtractionJobsFor(serviceReportId: string): Promise<number> {
-    const jobs = await queue.getJobs(["waiting", "active", "completed", "failed", "delayed"]);
-    return jobs.filter((j) => j.data.serviceReportId === serviceReportId).length;
-  }
-
   describe("normal upload with an Idempotency-Key", () => {
-    it("succeeds, creates exactly one ServiceReport, one idempotency-key row (COMPLETED), and exactly one extraction job", async () => {
+    it("succeeds, creates one document-only Service Report and one completed idempotency-key row", async () => {
       const { customer, site } = await createCustomerSite("normal");
       const key = `key-normal-${Date.now()}`;
 
       const res = await uploadRequest(app, customer.id, site.id, technician.authHeader, key);
       expect(res.status).toBe(201);
-      expect(res.body.status).toBe("PENDING_EXTRACTION");
+      expect(res.body.status).toBe("PENDING_VERIFICATION");
+      expect(res.body.verificationBasis).toBe("DOCUMENT_ONLY");
 
       expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(1);
 
@@ -113,12 +97,12 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
       expect(keyRow!.status).toBe("COMPLETED");
       expect(keyRow!.serviceReportId).toBe(res.body.id);
 
-      expect(await countExtractionJobsFor(res.body.id)).toBe(1);
+      expect(await prisma.auditLog.count({ where: { entityType: "ServiceReport", entityId: res.body.id, action: "service_report_document_review_requested" } })).toBe(1);
     });
   });
 
   describe("retry with the same key", () => {
-    it("returns the ORIGINAL result, creates no second ServiceReport, and enqueues no second extraction job", async () => {
+    it("returns the original result without creating a second Service Report or review request", async () => {
       const { customer, site } = await createCustomerSite("retry");
       const key = `key-retry-${Date.now()}`;
 
@@ -131,7 +115,7 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
       expect(second.body.serviceReportNumber).toBe(first.body.serviceReportNumber);
 
       expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(1);
-      expect(await countExtractionJobsFor(first.body.id)).toBe(1);
+      expect(await prisma.auditLog.count({ where: { entityType: "ServiceReport", entityId: first.body.id, action: "service_report_document_review_requested" } })).toBe(1);
 
       const uploadedAudits = await prisma.auditLog.findMany({
         where: { entityType: "ServiceReport", entityId: first.body.id, action: "service_report_uploaded" },
@@ -141,7 +125,7 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
   });
 
   describe("simultaneous/concurrent requests using the same key", () => {
-    it("exactly one ServiceReport and one extraction job result, no matter which request 'wins'", async () => {
+    it("creates one Service Report and one review request, no matter which request wins", async () => {
       const { customer, site } = await createCustomerSite("concurrent");
       const key = `key-concurrent-${Date.now()}`;
 
@@ -166,7 +150,7 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
 
       expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(1);
       const [reportId] = [...reportIds];
-      expect(await countExtractionJobsFor(reportId)).toBe(1);
+      expect(await prisma.auditLog.count({ where: { entityType: "ServiceReport", entityId: reportId, action: "service_report_document_review_requested" } })).toBe(1);
 
       const uploadedAudits = await prisma.auditLog.findMany({
         where: { entityType: "ServiceReport", action: "service_report_uploaded", entityId: reportId },

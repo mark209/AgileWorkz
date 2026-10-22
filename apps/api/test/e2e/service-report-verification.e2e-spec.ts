@@ -22,6 +22,7 @@ describe("Service Report Human Verification Workflow (live)", () => {
 
   let technician: { user: { id: string }; authHeader: string };
   let officeStaff: { user: { id: string }; authHeader: string };
+  let documentApprover: { user: { id: string }; authHeader: string };
   let managerNoVerify: { user: { id: string }; authHeader: string };
 
   async function loginHeader(email: string, password: string) {
@@ -50,6 +51,10 @@ describe("Service Report Human Verification Workflow (live)", () => {
       ["service_reports", "upload"],
       ["service_reports", "read"],
       ["service_reports", "verify"],
+    ]);
+    documentApprover = await userWithPermissions("document-approver", [
+      ["service_reports", "read"],
+      ["service_reports", "document_approve"],
     ]);
     // A second verify-capable actor with a DIFFERENT permission set, to
     // confirm verify authorization really is role-based and not tied to
@@ -377,13 +382,34 @@ describe("Service Report Human Verification Workflow (live)", () => {
       expect(audit).not.toBeNull();
     });
 
-    it("allows verification to complete on a report with no measurement rows at all (blank technical-data report)", async () => {
+    it("rejects field verification when no extracted rows exist", async () => {
       const { report } = await createPendingVerificationReport("no-rows", technician.user.id, []);
       const res = await request(app.getHttpServer())
         .post(`/service-reports/${report.id}/verification/complete`)
         .set("Authorization", officeStaff.authHeader);
-      expect(res.status).toBe(201);
-      expect(res.body.status).toBe("VERIFIED");
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/document-only approval/i);
+    });
+
+    it("requires document approval permission and an acknowledgment for reports without extracted rows", async () => {
+      const { report } = await createPendingVerificationReport("document-only", technician.user.id, []);
+      await prisma.serviceReport.update({ where: { id: report.id }, data: { verificationBasis: "DOCUMENT_ONLY" } });
+      const url = `/service-reports/${report.id}/verification/document-approve`;
+
+      const forbidden = await request(app.getHttpServer()).post(url).set("Authorization", officeStaff.authHeader).send({ documentReviewed: true });
+      expect(forbidden.status).toBe(403);
+
+      const missingAcknowledgment = await request(app.getHttpServer()).post(url).set("Authorization", documentApprover.authHeader).send({});
+      expect(missingAcknowledgment.status).toBe(400);
+
+      const approved = await request(app.getHttpServer()).post(url).set("Authorization", documentApprover.authHeader).send({ documentReviewed: true });
+      expect(approved.status).toBe(201);
+      expect(approved.body.status).toBe("VERIFIED");
+      expect(approved.body.verificationBasis).toBe("DOCUMENT_ONLY");
+      expect(approved.body.verifiedBy).toBe(documentApprover.user.id);
+
+      const duplicate = await request(app.getHttpServer()).post(url).set("Authorization", documentApprover.authHeader).send({ documentReviewed: true });
+      expect(duplicate.status).toBe(400);
     });
 
     // Phase 7 Wave 1 (F3.1) — completeVerification() was hardened from a
