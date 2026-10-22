@@ -24,6 +24,7 @@ export default function ServiceReportsQueuePage() {
 
   const canRead = hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned");
   const canVerify = hasPermission("service_reports", "verify");
+  const canDocumentApprove = hasPermission("service_reports", "document_approve");
   const canConfirm = hasPermission("service_reports", "confirm");
   const canLock = hasPermission("service_reports", "lock");
 
@@ -40,11 +41,11 @@ export default function ServiceReportsQueuePage() {
     setError(null);
     setReports(null);
     try {
-      setReports(await listServiceReports(accessToken, "PENDING_VERIFICATION,VERIFIED,CONFIRMED"));
+      setReports(await listServiceReports(accessToken, canDocumentApprove ? "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED" : "PENDING_VERIFICATION,VERIFIED,CONFIRMED"));
     } catch (e) {
       setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Service Reports." : e instanceof ApiError ? e.message : "Failed to load Service Reports.");
     }
-  }, [accessToken, canRead]);
+  }, [accessToken, canRead, canDocumentApprove]);
 
   useEffect(() => {
     load();
@@ -112,7 +113,7 @@ export default function ServiceReportsQueuePage() {
                         </Link>
                       ) : canVerify ? (
                         <Link href={`/service-reports/${r.id}/verify`} className="text-sm font-medium text-primary hover:underline">
-                          {r.status === "VERIFIED" ? (canConfirm ? "Confirm →" : "View →") : "Verify →"}
+                          {r.status === "EXTRACTION_FAILED" ? "Review document →" : r.status === "VERIFIED" ? (canConfirm ? "Review →" : "View →") : "Review →"}
                         </Link>
                       ) : <span className="text-muted-foreground">No action</span>}
                     </TableCell>

@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Req } from "@nestjs/common";
+import { Equals } from "class-validator";
 import { Request } from "express";
 import { ServiceReportVerificationService } from "./service-report-verification.service";
 import { SubmitFieldReviewDto } from "./dto/submit-field-review.dto";
@@ -14,6 +15,11 @@ interface AuthedRequest extends Request {
 
 function actorFrom(req: AuthedRequest) {
   return { userId: req.user.userId, ipAddress: req.ip, userAgent: req.get("user-agent") ?? undefined };
+}
+
+class ApproveDocumentOnlyDto {
+  @Equals(true)
+  documentReviewed!: boolean;
 }
 
 /**
@@ -70,5 +76,13 @@ export class ServiceReportVerificationController {
   async complete(@Param("id") id: string, @Req() req: AuthedRequest) {
     await this.access.assertManagerScopedReportAction(id, req.user.userId);
     return this.verification.completeVerification(id, actorFrom(req));
+  }
+
+  @Permissions({ module: "service_reports", action: "document_approve" })
+  @Post("document-approve")
+  async approveDocumentOnly(@Param("id") id: string, @Body() dto: ApproveDocumentOnlyDto, @Req() req: AuthedRequest) {
+    if (dto?.documentReviewed !== true) throw new BadRequestException("Confirm that you reviewed the original document");
+    await this.access.assertManagerScopedReportAction(id, req.user.userId);
+    return this.verification.approveDocumentOnly(id, actorFrom(req));
   }
 }

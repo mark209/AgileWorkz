@@ -49,6 +49,7 @@ export interface VerificationView {
   report: {
     id: string;
     status: string;
+    verificationBasis: "DOCUMENT_ONLY" | "EXTRACTED_FIELDS" | null;
     reportTypeCode: string;
     documentFileName: string;
     documentMimeType: string;
@@ -112,6 +113,14 @@ export function bulkConfirm(accessToken: string, reportId: string) {
 export function completeVerification(accessToken: string, reportId: string) {
   return apiRequest<{ id: string; status: string }>(`/service-reports/${reportId}/verification/complete`, {
     method: "POST",
+    accessToken,
+  });
+}
+
+export function approveServiceReportDocument(accessToken: string, reportId: string) {
+  return apiRequest<{ id: string; status: string }>(`/service-reports/${reportId}/verification/document-approve`, {
+    method: "POST",
+    body: { documentReviewed: true },
     accessToken,
   });
 }

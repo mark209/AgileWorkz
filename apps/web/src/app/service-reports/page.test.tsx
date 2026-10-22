@@ -22,14 +22,14 @@ describe("ServiceReportsQueuePage", () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, isLoading: false });
   });
 
-  it("requests PENDING_VERIFICATION, VERIFIED, and CONFIRMED reports, so Confirm- and Lock-eligible reports are reachable too", async () => {
+  it("also requests failed extraction reports for Super Admin document review", async () => {
     listServiceReportsMock.mockResolvedValue([]);
     render(<ServiceReportsQueuePage />);
     await screen.findByText(/no reports to review/i);
-    expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "PENDING_VERIFICATION,VERIFIED,CONFIRMED");
+    expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED");
   });
 
-  it("labels each row's action link and target by status: Verify/PENDING_VERIFICATION, Confirm/VERIFIED, Lock/CONFIRMED", async () => {
+  it("labels review and lock destinations by status", async () => {
     listServiceReportsMock.mockResolvedValue([
       report({ id: "r1", status: "PENDING_VERIFICATION" }),
       report({ id: "r2", serviceReportNumber: "SR-0002", status: "VERIFIED" }),
@@ -37,10 +37,11 @@ describe("ServiceReportsQueuePage", () => {
     ]);
     render(<ServiceReportsQueuePage />);
 
-    const verifyLink = await screen.findByRole("link", { name: /verify →/i });
+    const reviewLinks = await screen.findAllByRole("link", { name: /review →/i });
+    const verifyLink = reviewLinks[0];
     expect(verifyLink).toHaveAttribute("href", "/service-reports/r1/verify");
 
-    const confirmLink = screen.getByRole("link", { name: /confirm →/i });
+    const confirmLink = reviewLinks[1];
     expect(confirmLink).toHaveAttribute("href", "/service-reports/r2/verify");
 
     const lockLink = screen.getByRole("link", { name: /lock →/i });

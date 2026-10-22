@@ -18,6 +18,7 @@ const {
   previewBulkConfirmMock,
   bulkConfirmMock,
   completeVerificationMock,
+  approveServiceReportDocumentMock,
   previewConfirmMock,
   confirmServiceReportMock,
 } = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const {
   previewBulkConfirmMock: vi.fn(),
   bulkConfirmMock: vi.fn(),
   completeVerificationMock: vi.fn(),
+  approveServiceReportDocumentMock: vi.fn(),
   previewConfirmMock: vi.fn(),
   confirmServiceReportMock: vi.fn(),
 }));
@@ -39,6 +41,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     previewBulkConfirm: previewBulkConfirmMock,
     bulkConfirm: bulkConfirmMock,
     completeVerification: completeVerificationMock,
+    approveServiceReportDocument: approveServiceReportDocumentMock,
     previewConfirm: previewConfirmMock,
     confirmServiceReport: confirmServiceReportMock,
   };
@@ -49,6 +52,7 @@ function baseView(): VerificationView {
     report: {
       id: "report-1",
       status: "PENDING_VERIFICATION",
+      verificationBasis: null,
       reportTypeCode: "MAINTENANCE_CLEANING",
       documentFileName: "report.jpg",
       documentMimeType: "image/jpeg",
@@ -91,6 +95,21 @@ describe("ServiceReportVerifyPage", () => {
     vi.clearAllMocks();
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, isLoading: false });
     getServiceReportVerificationMock.mockResolvedValue(baseView());
+  });
+
+  it("requires an explicit document review acknowledgment before approval", async () => {
+    const documentView = baseView();
+    documentView.report.verificationBasis = "DOCUMENT_ONLY";
+    documentView.fields.measurement = [];
+    getServiceReportVerificationMock.mockResolvedValue(documentView);
+    render(<ServiceReportVerifyPage />);
+    const approve = await screen.findByRole("button", { name: "Approve document" });
+    expect(approve).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: /reviewed the original/i }));
+    expect(approve).toBeEnabled();
+    await userEvent.setup().click(approve);
+    await waitFor(() => expect(approveServiceReportDocumentMock).toHaveBeenCalledWith("token-1", "report-1"));
+    expect(previewConfirmMock).not.toHaveBeenCalled();
   });
 
   it("shows an access-denied message when the caller lacks service_reports.verify", async () => {

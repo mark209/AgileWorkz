@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { ActorType, ServiceReport, ServiceReportStatus } from "@prisma/client";
+import { ActorType, ServiceReport, ServiceReportStatus, ServiceReportVerificationBasis } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ConfirmationPlan, ConfirmationPlanBuilderService } from "./confirmation-plan-builder.service";
@@ -55,7 +55,10 @@ export class ServiceReportConfirmationService {
    * confirm() — confirm() always re-reads and re-builds from scratch.
    */
   async preview(serviceReportId: string): Promise<ConfirmationPlan> {
-    await this.findReportOrThrow(serviceReportId);
+    const report = await this.findReportOrThrow(serviceReportId);
+    if (report.verificationBasis === ServiceReportVerificationBasis.DOCUMENT_ONLY) {
+      throw new BadRequestException("Document-only approved reports have no extracted fields to confirm");
+    }
     return this.planBuilder.buildPlan(this.prisma, serviceReportId);
   }
 
@@ -98,6 +101,10 @@ export class ServiceReportConfirmationService {
    */
   async confirm(serviceReportId: string, actor: ActorContext): Promise<ConfirmationResult> {
     return this.prisma.$transaction(async (tx) => {
+      const report = await tx.serviceReport.findUnique({ where: { id: serviceReportId } });
+      if (report?.verificationBasis === ServiceReportVerificationBasis.DOCUMENT_ONLY) {
+        throw new BadRequestException("Document-only approved reports have no extracted fields to confirm");
+      }
       // Steps 1-4: re-read, validate, resolve deterministic mappings.
       const plan = await this.planBuilder.buildPlan(tx, serviceReportId);
       if (!plan.isConfirmable) {

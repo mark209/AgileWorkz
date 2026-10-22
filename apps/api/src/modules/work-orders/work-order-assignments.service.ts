@@ -112,10 +112,22 @@ export class WorkOrderAssignmentsService {
   }
 
   private async assertTechnicianValid(technicianId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: technicianId }, select: { id: true, status: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: technicianId },
+      select: {
+        status: true,
+        userRoles: {
+          where: { role: { rolePermissions: { some: { permission: { module: "work_orders", action: "start_own" } } } } },
+          select: { roleId: true },
+        },
+      },
+    });
     if (!user) throw new NotFoundException("User not found");
     if (user.status !== UserStatus.ACTIVE) {
       throw new BadRequestException("Cannot assign an inactive/suspended user to a Work Order");
+    }
+    if (user.userRoles.length === 0) {
+      throw new BadRequestException("Selected user is not eligible for Technician assignment");
     }
   }
 }

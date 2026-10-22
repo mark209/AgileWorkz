@@ -38,6 +38,7 @@ export function ConvertToWorkOrdersPanel({
   const [converting, setConverting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const canCreate = hasPermission("work_orders", "create");
   const canGenerateVisits = hasPermission("work_orders", "generate_maintenance_visits");
@@ -54,6 +55,7 @@ export function ConvertToWorkOrdersPanel({
     if (!accessToken) return;
     setConverting(true);
     setError(null);
+    setSuccess(null);
     try {
       const created = await convertQuotationToWorkOrders(accessToken, quotationId, revisionId, {
         scheduledDate: scheduledDate || undefined,
@@ -62,6 +64,10 @@ export function ConvertToWorkOrdersPanel({
       onConverted();
       if (created.length === 1 && (hasPermission("work_orders", "read") || responsibleManagerId === user?.id)) {
         router.push(`/work-orders/${created[0].id}`);
+      } else if (created.length > 0 && !hasPermission("work_orders", "read") && responsibleManagerId !== user?.id) {
+        setSuccess("Work Order created. It will appear in your Work Orders list only if you are its responsible Manager. Super Admin can assign a Manager later.");
+      } else if (created.length > 0) {
+        setSuccess(`${created.length} Work Orders created. Open Work Orders to review them and assign Technicians.`);
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to convert to a work order.");
@@ -74,9 +80,11 @@ export function ConvertToWorkOrdersPanel({
     if (!accessToken || !startDate) return;
     setGenerating(true);
     setError(null);
+    setSuccess(null);
     try {
       await generateMaintenanceVisits(accessToken, quotationId, revisionId, startDate);
       onConverted();
+      setSuccess("Maintenance visits created without a responsible Manager or Technician. Super Admin can assign a Manager, then an authorized user can assign Technicians.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to generate maintenance visits.");
     } finally {
@@ -98,6 +106,7 @@ export function ConvertToWorkOrdersPanel({
                 <option value="">Unassigned</option>
                 {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.fullName}</option>)}
               </Select>
+              <p className="max-w-xs text-sm text-muted-foreground">Manager responsibility and Technician assignment are separate. A Manager sees this Work Order only when explicitly selected.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="convert-scheduled-date">Scheduled date (optional)</Label>
@@ -122,6 +131,7 @@ export function ConvertToWorkOrdersPanel({
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {success && <p role="status" className="text-sm text-foreground">{success}</p>}
       </CardContent>
     </Card>
   );

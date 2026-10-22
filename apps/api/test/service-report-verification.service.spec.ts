@@ -139,7 +139,7 @@ function buildHarness(opts: { report?: Record<string, unknown>; measurementRows?
   });
 
   const audit = mockOf<AuditService>({ write: jest.fn().mockResolvedValue(undefined) });
-  const storage = mockOf<StorageProvider>({ getSignedUrl: jest.fn().mockResolvedValue("https://signed.example/report.jpg") });
+  const storage = mockOf<StorageProvider>({ getSignedUrl: jest.fn().mockResolvedValue("https://signed.example/report.jpg"), objectExists: jest.fn().mockResolvedValue(true) });
 
   const service = new ServiceReportVerificationService(prisma, storage, audit);
   return { service, audit, storage, stores, reportUpdate };
@@ -332,10 +332,9 @@ describe("ServiceReportVerificationService.completeVerification", () => {
     expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ action: "service_report_verified" }));
   });
 
-  it("allows VERIFIED with zero measurement rows at all (an entirely blank technical-data report, fully reviewed elsewhere)", async () => {
+  it("rejects field verification when there are no extracted fields", async () => {
     const { service } = buildHarness({ measurementRows: [] });
-    const updated = await service.completeVerification("sr-1", actor);
-    expect(updated.status).toBe("VERIFIED");
+    await expect(service.completeVerification("sr-1", actor)).rejects.toThrow(BadRequestException);
   });
 
   it("rejects completing verification twice", async () => {
@@ -355,7 +354,7 @@ describe("ServiceReportVerificationService.completeVerification", () => {
     const report = { id: "sr-1", status: "PENDING_VERIFICATION" };
     const prisma = mockOf<PrismaService>({
       serviceReport: { findUnique: jest.fn().mockResolvedValue(report) },
-      extractionBasicInfo: { count: jest.fn().mockResolvedValue(0) },
+      extractionBasicInfo: { count: jest.fn(async ({ where }: { where: { reviewStatus?: unknown } }) => "reviewStatus" in where ? 0 : 1) },
       extractionEquipmentUnit: { count: jest.fn().mockResolvedValue(0) },
       extractionProblem: { count: jest.fn().mockResolvedValue(0) },
       extractionMeasurement: { count: jest.fn().mockResolvedValue(0) },
@@ -370,5 +369,28 @@ describe("ServiceReportVerificationService.completeVerification", () => {
     });
     const service = new ServiceReportVerificationService(prisma, mockOf<StorageProvider>({}), mockOf<AuditService>({}));
     await expect(service.completeVerification("sr-1", actor)).rejects.toThrow(ConflictException);
+  });
+});
+
+describe("ServiceReportVerificationService.approveDocumentOnly", () => {
+  it("approves a legacy extraction failure with no staged data and records the reviewer", async () => {
+    const { service, audit, storage } = buildHarness({ report: { status: "EXTRACTION_FAILED" } });
+    const approved = await service.approveDocumentOnly("sr-1", actor);
+    expect(storage.objectExists).toHaveBeenCalledWith("key-1");
+    expect(approved.status).toBe("VERIFIED");
+    expect(approved.verificationBasis).toBe("DOCUMENT_ONLY");
+    expect(approved.verifiedBy).toBe(actor.userId);
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ action: "service_report_document_only_approved" }), expect.anything());
+  });
+
+  it("rejects document-only approval when extracted fields exist", async () => {
+    const { service } = buildHarness({ measurementRows: [row()] });
+    await expect(service.approveDocumentOnly("sr-1", actor)).rejects.toThrow(BadRequestException);
+  });
+
+  it("does not approve a report whose original document is missing", async () => {
+    const { service, storage } = buildHarness();
+    jest.mocked(storage.objectExists).mockResolvedValue(false);
+    await expect(service.approveDocumentOnly("sr-1", actor)).rejects.toThrow(NotFoundException);
   });
 });

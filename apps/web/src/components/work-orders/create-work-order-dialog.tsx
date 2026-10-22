@@ -84,7 +84,7 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
       if (hasPermission("work_orders", "read") || responsibleManagerId === user?.id) {
         router.push(`/work-orders/${workOrder.id}`);
       } else {
-        router.push("/work-orders");
+        router.push("/work-orders?created=outside-scope");
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to create work order.");
@@ -121,6 +121,10 @@ export function CreateWorkOrderDialog({ customerId, sites, onCreated }: { custom
                 <option value="">Unassigned</option>
                 {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.fullName}</option>)}
               </Select>
+              <p className="text-sm text-muted-foreground">The selected Manager is responsible for this Work Order. A Technician is assigned separately on the Work Order page.</p>
+              {hasPermission("work_orders", "read_assigned") && !hasPermission("work_orders", "read") && responsibleManagerId !== user?.id && (
+                <p className="text-sm text-muted-foreground">This Work Order will not appear in your assigned list unless you explicitly select yourself as the responsible Manager. Super Admin can assign a Manager later.</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="wo-site">Site</Label>

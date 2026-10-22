@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServiceReportType, WorkOrder } from "@/lib/api";
-import { ApiError } from "@/lib/api-client";
+import { ApiError, ApiTimeoutError } from "@/lib/api-client";
 import { ServiceReportUploadForm } from "./service-report-upload-form";
 
 const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
@@ -16,7 +16,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, listServiceReportTypes: listServiceReportTypesMock, uploadServiceReport: uploadServiceReportMock };
 });
-
 function job(overrides: Partial<WorkOrder> = {}): WorkOrder {
   return {
     id: "wo1",
@@ -66,7 +65,7 @@ describe("ServiceReportUploadForm", () => {
 
   it("uploads with the work order's own customerId/siteId/workOrderId and the chosen type/file", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
-    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const user = userEvent.setup();
@@ -107,6 +106,23 @@ describe("ServiceReportUploadForm", () => {
     expect(screen.getByLabelText(/report type/i)).toBeInTheDocument();
   });
 
+  it("explains that a timed-out upload may have succeeded and retries the same attempt", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockRejectedValue(new ApiTimeoutError());
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    expect(await screen.findByText(/upload may have succeeded/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledTimes(2));
+    expect(uploadServiceReportMock.mock.calls[1][2].idempotencyKey).toBe(uploadServiceReportMock.mock.calls[0][2].idempotencyKey);
+  });
+
   it("surfaces a report-types load error", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     listServiceReportTypesMock.mockRejectedValue(new ApiError(403, "Forbidden"));
@@ -122,7 +138,7 @@ describe("ServiceReportUploadForm", () => {
   it("reuses the SAME idempotency key when retrying after a failed upload", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockRejectedValueOnce(new ApiError(500, "Internal server error"));
-    uploadServiceReportMock.mockResolvedValueOnce({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    uploadServiceReportMock.mockResolvedValueOnce({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const user = userEvent.setup();
@@ -142,7 +158,7 @@ describe("ServiceReportUploadForm", () => {
 
   it("draws a NEW idempotency key for the next attempt after a successful upload", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
-    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const user = userEvent.setup();
@@ -188,7 +204,7 @@ describe("ServiceReportUploadForm", () => {
 
   it("clears the persisted draft once an upload succeeds", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
-    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_EXTRACTION" });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const user = userEvent.setup();

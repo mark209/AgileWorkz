@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import {
   bulkConfirm,
+  approveServiceReportDocument,
   completeVerification,
   confirmServiceReport,
   getServiceReportVerification,
@@ -28,6 +29,7 @@ import { DocumentViewer } from "@/components/service-reports/document-viewer";
 import { FieldSection } from "@/components/service-reports/field-section";
 import { VerificationToolbar } from "@/components/service-reports/verification-toolbar";
 import { ConfirmationPanel } from "@/components/service-reports/confirmation-panel";
+import { Button } from "@/components/ui/button";
 
 export default function ServiceReportVerifyPage() {
   const params = useParams<{ id: string }>();
@@ -38,9 +40,12 @@ export default function ServiceReportVerifyPage() {
   const [error, setError] = useState<string | null>(null);
   const [bulkEligibleCount, setBulkEligibleCount] = useState<number | null>(null);
   const [completedNotice, setCompletedNotice] = useState<string | null>(null);
+  const [documentReviewed, setDocumentReviewed] = useState(false);
+  const [approvingDocument, setApprovingDocument] = useState(false);
 
   const canVerify = hasPermission("service_reports", "verify");
   const canConfirm = hasPermission("service_reports", "confirm");
+  const canDocumentApprove = hasPermission("service_reports", "document_approve");
 
   const load = useCallback(async () => {
     if (!accessToken || !canVerify) return;
@@ -60,6 +65,26 @@ export default function ServiceReportVerifyPage() {
   const allFields = useMemo(() => (view ? STAGING_CATEGORIES.flatMap((c) => view.fields[c]) : []), [view]);
   const progress = useMemo(() => computeReviewProgress(allFields), [allFields]);
   const disabled = view ? view.report.status !== "PENDING_VERIFICATION" : true;
+  const documentOnly = view?.report.verificationBasis === "DOCUMENT_ONLY" ||
+    (view?.report.verificationBasis == null &&
+      (view?.report.status === "EXTRACTION_FAILED" || view?.report.status === "PENDING_VERIFICATION") &&
+      allFields.length === 0);
+
+  async function handleDocumentApproval() {
+    if (!accessToken || !documentReviewed) return;
+    setApprovingDocument(true);
+    setError(null);
+    try {
+      await approveServiceReportDocument(accessToken, params.id);
+      setCompletedNotice("Document approved. The original report is verified without extracted fields.");
+      setDocumentReviewed(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not approve this document.");
+    } finally {
+      setApprovingDocument(false);
+    }
+  }
 
   async function handleFieldSubmit(
     category: StagingCategory,
@@ -137,16 +162,40 @@ export default function ServiceReportVerifyPage() {
 
       {view && (
         <>
-          <VerificationToolbar
+          {!documentOnly && <VerificationToolbar
             progress={progress}
             bulkEligibleCount={bulkEligibleCount}
             onLoadBulkPreview={handleLoadBulkPreview}
             onBulkConfirm={handleBulkConfirm}
             onComplete={handleComplete}
             disabled={disabled}
-          />
+          />}
 
-          {disabled && view.report.status === "VERIFIED" && (
+          {documentOnly && (view.report.status === "PENDING_VERIFICATION" || view.report.status === "EXTRACTION_FAILED") && (
+            <div className="rounded-md border border-input bg-card p-4">
+              <h2 className="text-base font-semibold">Original document review</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Review the uploaded document before approving it. Approval verifies the document only; no report fields are extracted or confirmed.</p>
+              {canDocumentApprove ? (
+                <div className="mt-4 flex flex-col gap-3">
+                  <label className="flex items-start gap-2 text-sm">
+                    <input type="checkbox" className="mt-0.5" checked={documentReviewed} onChange={(event) => setDocumentReviewed(event.target.checked)} />
+                    I have reviewed the original Service Report document.
+                  </label>
+                  <Button type="button" className="self-start" disabled={!documentReviewed || approvingDocument} onClick={handleDocumentApproval}>
+                    {approvingDocument ? "Approving…" : "Approve document"}
+                  </Button>
+                </div>
+              ) : <p className="mt-3 text-sm text-muted-foreground">Super Admin approval is required.</p>}
+            </div>
+          )}
+
+          {documentOnly && view.report.status === "VERIFIED" && (
+            <div className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              Document approved. No structured report fields were extracted or confirmed.
+            </div>
+          )}
+
+          {!documentOnly && disabled && view.report.status === "VERIFIED" && (
             <ConfirmationPanel canConfirm={canConfirm} onLoadPreview={handleLoadConfirmPreview} onConfirm={handleConfirm} />
           )}
 
@@ -159,7 +208,7 @@ export default function ServiceReportVerifyPage() {
             </div>
           )}
 
-          {disabled && view.report.status !== "VERIFIED" && view.report.status !== "CONFIRMED" && view.report.status !== "LOCKED" && (
+          {!documentOnly && disabled && view.report.status !== "VERIFIED" && view.report.status !== "CONFIRMED" && view.report.status !== "LOCKED" && (
             <div className="rounded-md border border-input bg-muted px-4 py-3 text-sm text-muted-foreground">
               This report is {view.report.status}, not PENDING_VERIFICATION — verification actions are unavailable. The data below is
               read-only.
@@ -168,11 +217,14 @@ export default function ServiceReportVerifyPage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-2rem)]">
-              <h2 className="mb-2 text-base font-semibold">Original uploaded document</h2>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold">Original uploaded document</h2>
+                <Button type="button" variant="outline" size="sm" onClick={load}>Refresh document link</Button>
+              </div>
               <DocumentViewer url={view.documentUrl} mimeType={view.report.documentMimeType} fileName={view.report.documentFileName} />
             </div>
 
-            <div className="flex flex-col gap-4">
+            {!documentOnly && <div className="flex flex-col gap-4">
               <div>
                 <h2 className="text-base font-semibold">Extracted fields for review</h2>
                 <p className="text-sm text-muted-foreground">AI values are provisional until a reviewer confirms or corrects them against the original document.</p>
@@ -187,7 +239,7 @@ export default function ServiceReportVerifyPage() {
                   onSubmit={handleFieldSubmit}
                 />
               ))}
-            </div>
+            </div>}
           </div>
         </>
       )}

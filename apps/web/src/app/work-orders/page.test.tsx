@@ -76,6 +76,20 @@ describe("WorkOrdersListPage", () => {
     expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", "SCHEDULED,IN_PROGRESS");
   });
 
+  it("confirms creation when the new Work Order is outside the Manager's assigned view", async () => {
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("created=outside-scope"));
+    useAuthMock.mockReturnValue({
+      accessToken: "token-1",
+      hasPermission: (module: string, action: string) => module === "work_orders" && action === "read_assigned",
+      isLoading: false,
+    });
+    listWorkOrdersMock.mockResolvedValue([]);
+    render(<WorkOrdersListPage />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Work Order created");
+    expect(await screen.findByText("No assigned services")).toBeInTheDocument();
+  });
+
   it("shows an empty state when no work orders match", async () => {
     listWorkOrdersMock.mockResolvedValue([]);
     render(<WorkOrdersListPage />);

@@ -74,6 +74,18 @@ export default function WorkOrderDetailPage() {
             actions={<StatusBadge status={workOrder.status} />}
           />
 
+          {hasPermission("work_orders", "read_own") && !canManageWorkOrder && <Card>
+            <CardHeader><CardTitle>Technician next step</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p>{workOrder.status === "DRAFT" ? "This Work Order is awaiting scheduling. Its date alone does not make it ready to start."
+                : workOrder.status === "SCHEDULED" ? "This job is ready to start in AgileWorks Field."
+                : workOrder.status === "IN_PROGRESS" ? "Continue the job and check the report action in AgileWorks Field."
+                : workOrder.status === "COMPLETED" ? "Check AgileWorks Field for any permitted Service Report upload."
+                : "Review this Work Order's current status."}</p>
+              <p className="text-muted-foreground">Sign in to AgileWorks Field with this account to use Start Job or Upload Service Report when available.</p>
+            </CardContent>
+          </Card>}
+
           {canManageWorkOrder && <Card>
             <CardHeader>
               <CardTitle>Available actions</CardTitle>

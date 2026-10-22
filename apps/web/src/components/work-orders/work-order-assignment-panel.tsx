@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { assignTechnician, listTechnicians, unassignTechnician, type TechnicianOption, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { LoadingState } from "@/components/shared/states";
 
@@ -73,6 +74,7 @@ export function WorkOrderAssignmentPanel({ workOrder, onChanged }: { workOrder: 
 
   return (
     <div className="flex flex-col gap-3">
+      <p className="text-sm text-muted-foreground">Technicians assigned here can see this Work Order in My Assigned Services. They can start it once the Work Order is scheduled.</p>
       {workOrder.assignments.length === 0 && <p className="text-sm text-muted-foreground">No technician assigned yet.</p>}
       {workOrder.assignments.map((a) => (
         <div key={a.id} className="flex items-center justify-between rounded-md border p-2 text-sm">
@@ -86,25 +88,31 @@ export function WorkOrderAssignmentPanel({ workOrder, onChanged }: { workOrder: 
       ))}
 
       {canAssign && (
-        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+        <div className="flex flex-col gap-2 border-t pt-3">
           {technicianError && <p className="text-sm text-destructive">{technicianError}</p>}
           {!technicianError && technicians === null && <LoadingState label="Loading technicians…" />}
           {!technicianError && technicians !== null && (
             <>
-              <Select value={selectedTechnicianId} onChange={(e) => setSelectedTechnicianId(e.target.value)} className="h-9 w-auto">
-                <option value="" disabled>
-                  Select a technician…
-                </option>
-                {availableTechnicians.map((t) => (
-                  <option key={t.id} value={t.id} disabled={t.status !== "ACTIVE"}>
-                    {t.fullName}
-                    {t.status !== "ACTIVE" ? ` (${t.status})` : ""}
+              <Label htmlFor="work-order-technician">Add a Technician</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Select id="work-order-technician" value={selectedTechnicianId} onChange={(e) => setSelectedTechnicianId(e.target.value)} className="h-9 w-auto">
+                  <option value="" disabled>
+                    Select a technician…
                   </option>
-                ))}
-              </Select>
-              <Button size="sm" disabled={busy || !selectedTechnicianId} onClick={handleAssign}>
-                Assign
-              </Button>
+                  {availableTechnicians.map((t) => (
+                    <option key={t.id} value={t.id} disabled={t.status !== "ACTIVE"}>
+                      {t.fullName}
+                      {t.status !== "ACTIVE" ? ` (${t.status})` : ""}
+                    </option>
+                  ))}
+                </Select>
+                <Button size="sm" disabled={busy || !selectedTechnicianId} onClick={handleAssign}>
+                  Assign Technician
+                </Button>
+              </div>
+              {!availableTechnicians.some((t) => t.status === "ACTIVE") && (
+                <p className="text-sm text-muted-foreground">No additional active Technicians are available to assign.</p>
+              )}
             </>
           )}
         </div>

@@ -38,6 +38,7 @@ export function ResponsibleManagerPanel({ workOrder, onChanged }: { workOrder: W
 
   return <div className="space-y-3 text-sm">
     <p>Responsible Manager: <strong>{workOrder.responsibleManager?.fullName ?? "Unassigned"}</strong></p>
+    <p className="text-muted-foreground">The responsible Manager can see and manage this Work Order. Technician assignments are separate.</p>
     {canReassign && <div className="flex flex-wrap items-center gap-2">
       <Select aria-label="Responsible Manager" value={selected} onChange={(event) => setSelected(event.target.value)}>
         <option value="">Unassigned</option>

@@ -52,6 +52,19 @@ export class LocalStorageController {
     const body = await this.localDisk.getObject(key);
     res.setHeader("Content-Type", guessContentType(key));
     res.setHeader("Cache-Control", "private, max-age=60");
+    // The web app runs on a separate origin in local development. Allow its
+    // verification screen to embed this signed document without relaxing
+    // Helmet's framing policy for any other API response.
+    const webOrigin = new URL(process.env.WEB_APP_ORIGIN ?? "http://localhost:3000").origin;
+    const existingCsp = res.getHeader("Content-Security-Policy");
+    const directives = typeof existingCsp === "string" ? existingCsp.split(";").map((directive) => directive.trim()).filter(Boolean) : [];
+    const frameAncestors = `frame-ancestors 'self' ${webOrigin}`;
+    const frameAncestorsIndex = directives.findIndex((directive) => directive.startsWith("frame-ancestors "));
+    if (frameAncestorsIndex >= 0) directives[frameAncestorsIndex] = frameAncestors;
+    else directives.push(frameAncestors);
+    res.setHeader("Content-Security-Policy", directives.join("; "));
+    res.removeHeader("X-Frame-Options");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     res.send(body);
   }
 }
