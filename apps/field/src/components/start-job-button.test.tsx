@@ -38,6 +38,7 @@ function job(overrides: Partial<WorkOrder> = {}): WorkOrder {
 describe("StartJobButton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   it("renders nothing without work_orders.start_own", () => {
@@ -69,6 +70,17 @@ describe("StartJobButton", () => {
 
     await waitFor(() => expect(startWorkOrderMock).toHaveBeenCalledWith("token-1", "wo1"));
     expect(onStarted).toHaveBeenCalled();
+  });
+
+  it("does not allow starting a job while offline", async () => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    render(<StartJobButton workOrder={job({ status: "SCHEDULED" })} onStarted={vi.fn()} />);
+
+    const button = await screen.findByRole("button", { name: /connect to continue/i });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/server must confirm job status changes/i)).toBeInTheDocument();
+    expect(startWorkOrderMock).not.toHaveBeenCalled();
   });
 
   it("surfaces an error and does not call onStarted when starting fails", async () => {

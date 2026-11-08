@@ -1,5 +1,7 @@
 import { ReactNode } from "react";
 import { AuthProvider } from "../lib/auth-context";
+import { OfflineSyncStatus } from "../components/offline-sync-status";
+import { ServiceWorkerRegistration } from "../components/service-worker-registration";
 
 export const metadata = {
   title: "AgileWorks Field",
@@ -24,7 +26,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <style>{"*, *::before, *::after { box-sizing: border-box; }"}</style>
       </head>
       <body style={{ fontFamily: "system-ui, sans-serif", margin: 0 }}>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <ServiceWorkerRegistration />
+          <OfflineSyncStatus />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

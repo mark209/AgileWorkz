@@ -3,11 +3,13 @@
 For the Supabase database and owner's Render account migration, see
 [the cutover runbook](docs/architecture/supabase-render-cutover.md).
 
-Custom HVAC service management ERP for AgileWorks Solutions OPC. This repo
-currently contains **Phase 1 only** — the platform foundation (auth, RBAC,
-audit log, system settings) — per the approved Rev 7 architecture blueprint.
-Customers, Sites, Work Orders, Quotations, and the entire Service Report
-intake/verification pipeline are **not yet built**; they land in Phases 2–5.
+Custom HVAC service management ERP for AgileWorks Solutions OPC. The current
+repository includes the platform foundation and substantial customer,
+equipment, sales, work-order, technician, service-report, and dashboard
+functionality. The phase-by-phase status in the original blueprint is historical;
+see [the current implementation audit](docs/audits/2026-11-02-implementation-audit.md)
+for what is present, what is operationally configured, and what remains missing
+or unverified.
 
 ## Stack
 
@@ -99,17 +101,23 @@ apps/
   web/     office app (Next.js) — login + role/permission dashboard shell
   field/   technician PWA shell (Next.js) — login only this phase
   api/     NestJS backend — the actual Phase 1 build
-    src/modules/identity/   users, user_roles, roles, permissions, auth
+    src/modules/identity/   users, roles, permissions, auth, registration
+    src/modules/customers/  customers, contacts, sites, inquiries
+    src/modules/equipment/  equipment systems, assets, reference data
+    src/modules/quotations/ revisions, approval, pricing, PDF generation
+    src/modules/work-orders/ work orders, assignments, maintenance visits
+    src/modules/service-reports/ uploads and report records
+    src/modules/service-report-{verification,confirmation}/ review and confirmation
     src/modules/settings/   system_settings
     src/modules/audit/      append-only audit log
-    src/common/storage/     StorageProvider interface + local-disk adapter
-    src/common/extraction/  ExtractionProvider interface + stub (no OCR/AI vendor yet)
-    src/common/queue/       BullMQ wiring + a health-check job
+    src/common/storage/     StorageProvider interface + local/S3 adapters
+    src/common/extraction/  staging pipeline + Vertex Gemini adapter + stub
+    src/common/queue/       BullMQ wiring + background processors
 packages/
   shared-types/   DTOs and enums shared by api, web, field
   config/         shared tsconfig/eslint base
 prisma/
-  schema.prisma   the Phase 1 schema (7 tables)
+  schema.prisma   current ERP schema
   migrations/      generated migration SQL
   seed.ts         roles, Phase 1 permissions, system settings, bootstrap admin
 infra/
@@ -117,7 +125,7 @@ infra/
   sql/provision-roles.sql             role creation — pre-migration
   sql/grant-runtime-privileges.sql    app_runtime table grants — post-migration
   sql/test-audit-log-permissions.sql  proves audit_logs append-only at the DB level
-docs/architecture/         Rev 7 blueprint, Phase 1 plan, OCR isolation policy
+docs/architecture/         blueprints, implementation baselines, OCR isolation policy
 ```
 
 ## Running checks
@@ -128,14 +136,15 @@ pnpm typecheck
 pnpm test                 # unit tests — no live DB/Redis required
 ```
 
-Integration/E2E tests that need a live database, Redis, or the DB-grant
-enforcement test for `audit_logs` require Docker (or equivalent local
-services) and are not run automatically in every environment — see the
-Phase 1 completion report for exactly what was and wasn't executed in this
-build.
+Database-backed E2E tests require an isolated test database and Redis. They
+must not be pointed at production data: the test fixtures create and delete
+records in their `e2e-verify` namespace. See the audit linked above for the
+current verification results and environment blockers. The OCR provider is
+configured separately from the extraction pipeline; `stub` does not perform
+OCR and is the current Render deployment setting.
 
 ## What's next
 
-See `docs/architecture/` for the full Rev 7 blueprint and the Phase 1 plan.
-Phase 2 (Customer Data: customers, contacts, sites, assets) is scoped but
-not started.
+See `docs/architecture/` for the Rev 7 blueprint and phase baselines. Major
+business areas such as purchasing/inventory, customer billing/collections, and
+employee timekeeping are not part of the current implementation.

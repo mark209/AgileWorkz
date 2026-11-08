@@ -320,6 +320,90 @@ describe("ServiceReportsService.upload", () => {
     );
   });
 
+  it("enqueues extraction when the real extraction provider is configured", async () => {
+    const previousProvider = process.env.EXTRACTION_PROVIDER;
+    process.env.EXTRACTION_PROVIDER = "vertex-gemini";
+    try {
+      const created: Record<string, unknown> = {};
+      const prismaOverrides = {
+        $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+          fn({
+            serviceReport: {
+              create: jest.fn((args: { data: Record<string, unknown> }) => {
+                Object.assign(created, args.data);
+                return Promise.resolve({ id: "sr-1", ...args.data });
+              }),
+            },
+          }),
+        ),
+      };
+      const { service, extractionQueue, audit } = buildHarness({ prisma: prismaOverrides });
+      const file = makeFile();
+
+      const result = await service.upload("cust-1", file, baseDto, actor);
+
+      expect(created.status).toBe("PENDING_EXTRACTION");
+      expect(created.verificationBasis).toBe("EXTRACTED_FIELDS");
+      expect(extractionQueue.enqueueExtraction).toHaveBeenCalledWith({
+        serviceReportId: result.id,
+        documentFileKey: created.documentFileKey,
+        documentMimeType: file.mimetype,
+      });
+      expect(result.status).toBe("PENDING_EXTRACTION");
+      expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ action: "service_report_extraction_queued" }));
+      expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ action: "service_report_document_review_requested" }));
+    } finally {
+      if (previousProvider === undefined) delete process.env.EXTRACTION_PROVIDER;
+      else process.env.EXTRACTION_PROVIDER = previousProvider;
+    }
+  });
+
+  it("retains the uploaded report and marks extraction failed if queueing fails", async () => {
+    const previousProvider = process.env.EXTRACTION_PROVIDER;
+    process.env.EXTRACTION_PROVIDER = "vertex-gemini";
+    try {
+      const update = jest.fn().mockResolvedValue({
+        id: "sr-1",
+        status: "EXTRACTION_FAILED",
+        verificationBasis: "EXTRACTED_FIELDS",
+      });
+      const prismaOverrides = {
+        serviceReport: { update },
+        $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+          fn({
+            serviceReport: {
+              create: jest.fn().mockResolvedValue({
+                id: "sr-1",
+                status: "PENDING_EXTRACTION",
+                verificationBasis: "EXTRACTED_FIELDS",
+                documentFileKey: "service-reports/sr-1.jpg",
+                documentMimeType: "image/jpeg",
+              }),
+            },
+          }),
+        ),
+      };
+      const { service, extractionQueue, audit, storage } = buildHarness({
+        prisma: prismaOverrides,
+        extractionQueue: { enqueueExtraction: jest.fn().mockRejectedValue(new Error("redis unreachable")) },
+      });
+
+      const result = await service.upload("cust-1", makeFile(), baseDto, actor);
+
+      expect(result.status).toBe("EXTRACTION_FAILED");
+      expect(update).toHaveBeenCalledWith({ where: { id: "sr-1" }, data: { status: "EXTRACTION_FAILED" } });
+      expect(storage.deleteObject).not.toHaveBeenCalled();
+      expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({
+        action: "service_report_extraction_enqueue_failed",
+        entityId: "sr-1",
+        reason: "redis unreachable",
+      }));
+    } finally {
+      if (previousProvider === undefined) delete process.env.EXTRACTION_PROVIDER;
+      else process.env.EXTRACTION_PROVIDER = previousProvider;
+    }
+  });
+
   it("rolls back the storage object if the DB write fails", async () => {
     const prismaOverrides = {
       $transaction: jest.fn().mockRejectedValue(new Error("db exploded")),

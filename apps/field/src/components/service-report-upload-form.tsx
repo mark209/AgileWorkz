@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { listServiceReportTypes, uploadServiceReport, type ServiceReportType, type WorkOrder } from "@/lib/api";
 import { ApiError, ApiTimeoutError } from "@/lib/api-client";
+import { getCachedServiceReportTypes, queueServiceReport, saveServiceReportTypes } from "@/lib/offline-store";
+import { OFFLINE_QUEUE_UPDATED_EVENT } from "@/lib/offline-sync";
+import { useNetworkStatus } from "@/lib/use-network-status";
 import { colors, dangerText, input, label, primaryButton, secondaryButton } from "@/lib/styles";
 
 const ACCEPTED_MIME_TYPES = "application/pdf,image/jpeg,image/png,image/webp";
@@ -49,16 +52,19 @@ function writeDraftReportType(workOrderId: string, reportTypeCode: string): void
  * the file, then showing the resulting Service Report number.
  */
 export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder }) {
-  const { accessToken, hasPermission } = useAuth();
+  const { user, accessToken, hasPermission } = useAuth();
+  const online = useNetworkStatus();
   const canUpload = hasPermission("service_reports", "upload");
 
   const [types, setTypes] = useState<ServiceReportType[] | null>(null);
   const [typesError, setTypesError] = useState<string | null>(null);
+  const [offlineTypes, setOfflineTypes] = useState(false);
   const [reportTypeCode, setReportTypeCodeState] = useState(() => readDraftReportType(workOrder.id));
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [queued, setQueued] = useState(false);
   // Phase 7 (F7.1) — generated once per logical upload attempt, not once
   // per submit click: a retry (button click again after a timeout/error)
   // reuses the SAME key on purpose, so the server can recognize it as the
@@ -76,11 +82,24 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
     if (!accessToken || !canUpload) return;
     setTypesError(null);
     try {
-      setTypes(await listServiceReportTypes(accessToken));
+      const reportTypes = await listServiceReportTypes(accessToken);
+      setTypes(reportTypes);
+      setOfflineTypes(false);
+      if (user) await saveServiceReportTypes(user.id, reportTypes).catch(() => undefined);
     } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        setTypesError(e.message);
+        return;
+      }
+      const cached = user ? await getCachedServiceReportTypes(user.id).catch(() => null) : null;
+      if (cached) {
+        setTypes(cached);
+        setOfflineTypes(true);
+        return;
+      }
       setTypesError(e instanceof ApiError ? e.message : "Failed to load report types.");
     }
-  }, [accessToken, canUpload]);
+  }, [accessToken, canUpload, user]);
 
   useEffect(() => {
     loadTypes();
@@ -90,25 +109,63 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!accessToken || !reportTypeCode || !file) return;
+    if (!accessToken || !user || !reportTypeCode || !file) return;
     setSubmitting(true);
     setError(null);
-    try {
-      const result = await uploadServiceReport(accessToken, workOrder.customerId, {
+    setUploaded(null);
+    setQueued(false);
+
+    const saveForLater = async () => {
+      await queueServiceReport({
+        idempotencyKey,
+        userId: user.id,
+        customerId: workOrder.customerId,
         siteId: workOrder.siteId,
         workOrderId: workOrder.id,
         reportTypeCode,
         file,
-        idempotencyKey,
+        fileName: file.name,
+        fileType: file.type,
       });
-      setUploaded(result.serviceReportNumber);
-      setReportTypeCode(""); // also clears the persisted draft, via the wrapper above
+      setQueued(true);
       setFile(null);
-      setIdempotencyKey(crypto.randomUUID()); // this attempt is done — the next one gets its own key
-    } catch (e) {
-      setError(e instanceof ApiTimeoutError
-        ? "The upload may have succeeded, but confirmation did not arrive. Keep this page open and try Upload Service Report again. The retry uses the same upload attempt."
-        : e instanceof ApiError ? e.message : "Failed to upload Service Report.");
+      setReportTypeCode("");
+      setIdempotencyKey(crypto.randomUUID());
+      window.dispatchEvent(new Event(OFFLINE_QUEUE_UPDATED_EVENT));
+    };
+
+    try {
+      if (!online) {
+        try {
+          await saveForLater();
+        } catch (queueError) {
+          setError(queueError instanceof Error ? queueError.message : "Could not save this report on this device.");
+        }
+        return;
+      }
+      try {
+        const result = await uploadServiceReport(accessToken, workOrder.customerId, {
+          siteId: workOrder.siteId,
+          workOrderId: workOrder.id,
+          reportTypeCode,
+          file,
+          idempotencyKey,
+        });
+        setUploaded(result.serviceReportNumber);
+        setReportTypeCode(""); // also clears the persisted draft, via the wrapper above
+        setFile(null);
+        setIdempotencyKey(crypto.randomUUID()); // this attempt is done — the next one gets its own key
+      } catch (e) {
+        if (e instanceof ApiTimeoutError || e instanceof TypeError || !navigator.onLine) {
+          try {
+            await saveForLater();
+          } catch (queueError) {
+            setError(queueError instanceof Error ? queueError.message : "The connection failed and this report could not be saved on this device.");
+          }
+        } else {
+          setError(e instanceof ApiError ? e.message : "Failed to upload Service Report.");
+        }
+      }
     } finally {
       setSubmitting(false);
     }
@@ -122,6 +179,18 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
         </p>
       )}
 
+      {queued && (
+        <p role="status" style={{ color: colors.textMuted, fontWeight: 600 }}>
+          Saved on this device — not confirmed as received by the office. It will sync after you reconnect and sign in as this technician.
+        </p>
+      )}
+
+      {!online && !queued && (
+        <p style={{ color: colors.textMuted, fontSize: 14 }}>
+          Offline uploads are stored on this device until you reconnect. Do not clear this app’s site data while reports are waiting to send.
+        </p>
+      )}
+
       {typesError && (
         <div>
           <p role="alert" style={dangerText}>{typesError}</p>
@@ -130,6 +199,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
       )}
       {!typesError && types === null && <p style={{ color: colors.textMuted }}>Loading report types…</p>}
       {!typesError && types?.length === 0 && <p style={{ color: colors.textMuted }}>No report types are available for upload.</p>}
+      {offlineTypes && <p style={{ color: colors.textMuted, fontSize: 13 }}>Using recently saved report types.</p>}
 
       {!typesError && types !== null && types.length > 0 && (
         <>

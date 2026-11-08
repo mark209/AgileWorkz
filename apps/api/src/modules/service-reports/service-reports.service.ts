@@ -114,6 +114,10 @@ export class ServiceReportsService {
     private readonly extractionQueue: ExtractionQueueService,
   ) {}
 
+  private get extractionEnabled(): boolean {
+    return process.env.EXTRACTION_PROVIDER === "vertex-gemini";
+  }
+
   /**
    * POST /customers/:customerId/service-reports (multipart). Phase 7
    * (F7.1, approved mini-design) — the public entry point now branches on
@@ -309,6 +313,7 @@ export class ServiceReportsService {
     await this.storage.putObject({ key: fileKey, body: file.buffer, contentType: file.mimetype });
 
     let report: ServiceReport;
+    const extractionEnabled = this.extractionEnabled;
     try {
       report = await this.prisma.$transaction(async (tx) => {
         const serviceReportNumber = await this.numbering.generateNumber(tx, NumberSeries.SERVICE_REPORT);
@@ -321,8 +326,10 @@ export class ServiceReportsService {
             workOrderId,
             reportTypeCode: dto.reportTypeCode,
             sourceType: dto.sourceType ?? (workOrderId ? ServiceReportSourceType.WORK_ORDER_LINKED : null),
-            status: ServiceReportStatus.PENDING_VERIFICATION,
-            verificationBasis: ServiceReportVerificationBasis.DOCUMENT_ONLY,
+            status: extractionEnabled ? ServiceReportStatus.PENDING_EXTRACTION : ServiceReportStatus.PENDING_VERIFICATION,
+            verificationBasis: extractionEnabled
+              ? ServiceReportVerificationBasis.EXTRACTED_FIELDS
+              : ServiceReportVerificationBasis.DOCUMENT_ONLY,
             contactName: dto.contactName,
             contactPhone: dto.contactPhone,
             documentFileKey: fileKey,
@@ -363,15 +370,58 @@ export class ServiceReportsService {
       userAgent: actor.userAgent,
     });
 
-    await this.audit.write({
-      actorType: ActorType.USER,
-      actorUserId: actor.userId,
-      action: "service_report_document_review_requested",
-      entityType: "ServiceReport",
-      entityId: report.id,
-      ipAddress: actor.ipAddress,
-      userAgent: actor.userAgent,
-    });
+    if (extractionEnabled) {
+      let enqueueFailed = false;
+      let enqueueError: unknown;
+      try {
+        await this.extractionQueue.enqueueExtraction({
+          serviceReportId: report.id,
+          documentFileKey: fileKey,
+          documentMimeType: file.mimetype,
+        });
+      } catch (error) {
+        enqueueFailed = true;
+        enqueueError = error;
+      }
+
+      if (enqueueFailed) {
+        const reason = enqueueError instanceof Error ? enqueueError.message : String(enqueueError);
+        report = await this.prisma.serviceReport.update({
+          where: { id: report.id },
+          data: { status: ServiceReportStatus.EXTRACTION_FAILED },
+        });
+        await this.audit.write({
+          actorType: ActorType.USER,
+          actorUserId: actor.userId,
+          action: "service_report_extraction_enqueue_failed",
+          entityType: "ServiceReport",
+          entityId: report.id,
+          reason,
+          ipAddress: actor.ipAddress,
+          userAgent: actor.userAgent,
+        });
+      } else {
+        await this.audit.write({
+          actorType: ActorType.USER,
+          actorUserId: actor.userId,
+          action: "service_report_extraction_queued",
+          entityType: "ServiceReport",
+          entityId: report.id,
+          ipAddress: actor.ipAddress,
+          userAgent: actor.userAgent,
+        });
+      }
+    } else {
+      await this.audit.write({
+        actorType: ActorType.USER,
+        actorUserId: actor.userId,
+        action: "service_report_document_review_requested",
+        entityType: "ServiceReport",
+        entityId: report.id,
+        ipAddress: actor.ipAddress,
+        userAgent: actor.userAgent,
+      });
+    }
 
     return toPublicServiceReport(report);
   }

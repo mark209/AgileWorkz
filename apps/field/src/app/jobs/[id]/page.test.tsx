@@ -23,6 +23,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, getWorkOrder: getWorkOrderMock };
 });
 
+const { getCachedAssignedWorkOrderMock, saveAssignedWorkOrderMock } = vi.hoisted(() => ({
+  getCachedAssignedWorkOrderMock: vi.fn(),
+  saveAssignedWorkOrderMock: vi.fn(),
+}));
+vi.mock("@/lib/offline-store", () => ({
+  getCachedAssignedWorkOrder: getCachedAssignedWorkOrderMock,
+  saveAssignedWorkOrder: saveAssignedWorkOrderMock,
+}));
+
 // StartJobButton and ServiceReportUploadForm each have their own dedicated
 // test files (and their own API calls) — stub them here so this page test
 // stays focused on the shell: loading/error states and which section shows
@@ -56,6 +65,8 @@ function job(overrides: Partial<WorkOrder> = {}): WorkOrder {
 describe("JobDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getCachedAssignedWorkOrderMock.mockResolvedValue(null);
+    saveAssignedWorkOrderMock.mockResolvedValue(undefined);
     useParamsMock.mockReturnValue({ id: "wo1" });
     useAuthMock.mockReturnValue({ user: { id: "u1", fullName: "Jordan Lee" }, accessToken: "token-1", hasPermission: () => true });
   });
@@ -101,9 +112,21 @@ describe("JobDetailPage", () => {
 
   it("surfaces a load error with a retry option (e.g. no longer assigned)", async () => {
     getWorkOrderMock.mockRejectedValue(new ApiError(403, "You are not currently assigned to this Work Order"));
+    getCachedAssignedWorkOrderMock.mockResolvedValue({ workOrder: job(), savedAt: Date.now() });
     render(<JobDetailPage />);
     expect(await screen.findByText(/no longer assigned/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(getCachedAssignedWorkOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a recent cached job after a network failure and labels it stale", async () => {
+    getWorkOrderMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    getCachedAssignedWorkOrderMock.mockResolvedValue({ workOrder: job(), savedAt: Date.now() - 60_000 });
+    render(<JobDetailPage />);
+
+    expect(await screen.findByRole("heading", { name: "WO-2026-08-00001" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/offline copy/i);
+    expect(screen.getByText(/inspect condenser unit/i)).toBeInTheDocument();
   });
 
   it("navigates back to My Jobs", async () => {
