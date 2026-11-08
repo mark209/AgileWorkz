@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { listMyWorkOrders, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { StatusBadge } from "@/components/status-badge";
+import { getCachedAssignedWorkOrders, getQueuedServiceReports, saveAssignedWorkOrders } from "@/lib/offline-store";
 import { card, colors, dangerText, page, pageHeader, heading, secondaryButton, subheading } from "@/lib/styles";
 
 /**
@@ -22,19 +23,33 @@ export default function HomePage() {
 
   const [jobs, setJobs] = useState<WorkOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [offlineSavedAt, setOfflineSavedAt] = useState<number | null>(null);
 
   const canReadOwn = hasPermission("work_orders", "read_own");
 
   const load = useCallback(async () => {
     if (!accessToken || !canReadOwn) return;
     setError(null);
+    setOfflineSavedAt(null);
     setJobs(null);
     try {
-      setJobs(await listMyWorkOrders(accessToken));
+      const assignedJobs = await listMyWorkOrders(accessToken);
+      setJobs(assignedJobs);
+      if (user) await saveAssignedWorkOrders(user.id, assignedJobs).catch(() => undefined);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 403 ? "Your account cannot view assigned jobs." : e instanceof ApiError ? e.message : "Failed to load your jobs.");
+      if (e instanceof ApiError && e.status !== 0) {
+        setError(e.status === 403 ? "Your account cannot view assigned jobs." : e.message);
+        return;
+      }
+      const cached = user ? await getCachedAssignedWorkOrders(user.id).catch(() => null) : null;
+      if (cached) {
+        setJobs(cached.workOrders);
+        setOfflineSavedAt(cached.savedAt);
+      } else {
+        setError(e instanceof ApiError ? e.message : "Failed to load your jobs. No recent offline copy is available.");
+      }
     }
-  }, [accessToken, canReadOwn]);
+  }, [accessToken, canReadOwn, user]);
 
   useEffect(() => {
     if (!user) router.replace("/login");
@@ -43,6 +58,15 @@ export default function HomePage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function signOut() {
+    const queued = user ? await getQueuedServiceReports(user.id).catch(() => []) : [];
+    if (queued.length > 0 && !window.confirm(
+      `${queued.length} unsent service ${queued.length === 1 ? "report is" : "reports are"} saved on this device. They will stay here and sync only after this same technician signs in again. Continue signing out?`,
+    )) return;
+    await logout();
+    router.push("/login");
+  }
 
   if (!user) return null;
 
@@ -55,10 +79,7 @@ export default function HomePage() {
         </div>
         <button
           style={secondaryButton}
-          onClick={async () => {
-            await logout();
-            router.push("/login");
-          }}
+          onClick={signOut}
         >
           Sign out
         </button>
@@ -76,6 +97,12 @@ export default function HomePage() {
       )}
 
       {canReadOwn && !error && jobs === null && <p style={subheading}>Loading your jobs…</p>}
+
+      {offlineSavedAt !== null && (
+        <p role="status" style={{ ...subheading, color: colors.textMuted }}>
+          Offline copy — last refreshed {new Date(offlineSavedAt).toLocaleString()}. Job changes require a connection.
+        </p>
+      )}
 
       {canReadOwn && !error && jobs !== null && jobs.length === 0 && (
         <p style={subheading}>No assigned jobs right now. New assignments will show up here.</p>

@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api-client";
 import { StatusBadge } from "@/components/status-badge";
 import { StartJobButton } from "@/components/start-job-button";
 import { ServiceReportUploadForm } from "@/components/service-report-upload-form";
+import { getCachedAssignedWorkOrder, saveAssignedWorkOrder } from "@/lib/offline-store";
 import { colors, dangerText, page, pageHeader, heading, secondaryButton, subheading } from "@/lib/styles";
 
 /**
@@ -25,17 +26,31 @@ export default function JobDetailPage() {
 
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [offlineSavedAt, setOfflineSavedAt] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
     setError(null);
+    setOfflineSavedAt(null);
     setWorkOrder(null);
     try {
-      setWorkOrder(await getWorkOrder(accessToken, params.id));
+      const freshWorkOrder = await getWorkOrder(accessToken, params.id);
+      setWorkOrder(freshWorkOrder);
+      if (user) await saveAssignedWorkOrder(user.id, freshWorkOrder).catch(() => undefined);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 403 ? "Access denied: this job is no longer assigned to you." : e instanceof ApiError ? e.message : "Failed to load this job.");
+      if (e instanceof ApiError && e.status !== 0) {
+        setError(e.status === 403 ? "Access denied: this job is no longer assigned to you." : e.message);
+        return;
+      }
+      const cached = user ? await getCachedAssignedWorkOrder(user.id, params.id).catch(() => null) : null;
+      if (cached) {
+        setWorkOrder(cached.workOrder);
+        setOfflineSavedAt(cached.savedAt);
+      } else {
+        setError(e instanceof ApiError ? e.message : "Failed to load this job. No recent offline copy is available.");
+      }
     }
-  }, [accessToken, params.id]);
+  }, [accessToken, params.id, user]);
 
   useEffect(() => {
     if (!user) router.replace("/login");
@@ -75,6 +90,12 @@ export default function JobDetailPage() {
           <p style={subheading}>
             {workOrder.customer.name} — {workOrder.site.label}
           </p>
+
+          {offlineSavedAt !== null && (
+            <p role="status" style={{ ...subheading, color: colors.textMuted }}>
+              Offline copy — last refreshed {new Date(offlineSavedAt).toLocaleString()}. Job changes require a connection.
+            </p>
+          )}
 
           <section style={{ marginTop: 20 }}>
             <p style={{ color: colors.textMuted, fontSize: 14 }}>Service location: {workOrder.site.label}</p>

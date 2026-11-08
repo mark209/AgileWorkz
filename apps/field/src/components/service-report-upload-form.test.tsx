@@ -16,6 +16,19 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, listServiceReportTypes: listServiceReportTypesMock, uploadServiceReport: uploadServiceReportMock };
 });
+
+const { queueServiceReportMock, networkStatusMock, getCachedTypesMock, saveReportTypesMock } = vi.hoisted(() => ({
+  queueServiceReportMock: vi.fn(),
+  networkStatusMock: vi.fn(() => true),
+  getCachedTypesMock: vi.fn(),
+  saveReportTypesMock: vi.fn(),
+}));
+vi.mock("@/lib/offline-store", () => ({
+  queueServiceReport: queueServiceReportMock,
+  getCachedServiceReportTypes: getCachedTypesMock,
+  saveServiceReportTypes: saveReportTypesMock,
+}));
+vi.mock("@/lib/use-network-status", () => ({ useNetworkStatus: networkStatusMock }));
 function job(overrides: Partial<WorkOrder> = {}): WorkOrder {
   return {
     id: "wo1",
@@ -45,18 +58,22 @@ describe("ServiceReportUploadForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    networkStatusMock.mockReturnValue(true);
+    queueServiceReportMock.mockResolvedValue(undefined);
+    getCachedTypesMock.mockResolvedValue(null);
+    saveReportTypesMock.mockResolvedValue(undefined);
     listServiceReportTypesMock.mockResolvedValue([reportType()]);
   });
 
   it("renders nothing without service_reports.upload, and never fetches report types", () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => false });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => false });
     const { container } = render(<ServiceReportUploadForm workOrder={job()} />);
     expect(container).toBeEmptyDOMElement();
     expect(listServiceReportTypesMock).not.toHaveBeenCalled();
   });
 
   it("loads report types and disables submit until both a type and a file are chosen", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const submit = await screen.findByRole("button", { name: /upload service report/i });
@@ -64,7 +81,7 @@ describe("ServiceReportUploadForm", () => {
   });
 
   it("uploads with the work order's own customerId/siteId/workOrderId and the chosen type/file", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
@@ -93,7 +110,7 @@ describe("ServiceReportUploadForm", () => {
   });
 
   it("surfaces an upload error without losing the loaded report types", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockRejectedValue(new ApiError(400, "Unsupported file type"));
     render(<ServiceReportUploadForm workOrder={job()} />);
 
@@ -106,8 +123,8 @@ describe("ServiceReportUploadForm", () => {
     expect(screen.getByLabelText(/report type/i)).toBeInTheDocument();
   });
 
-  it("explains that a timed-out upload may have succeeded and retries the same attempt", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+  it("saves a timed-out upload for an idempotent retry after reconnecting", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockRejectedValue(new ApiTimeoutError());
     render(<ServiceReportUploadForm workOrder={job()} />);
 
@@ -116,15 +133,15 @@ describe("ServiceReportUploadForm", () => {
     await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
 
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
-    expect(await screen.findByText(/upload may have succeeded/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /upload service report/i }));
-    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledTimes(2));
-    expect(uploadServiceReportMock.mock.calls[1][2].idempotencyKey).toBe(uploadServiceReportMock.mock.calls[0][2].idempotencyKey);
+    expect(await screen.findByText(/not confirmed as received/i)).toBeInTheDocument();
+    expect(queueServiceReportMock).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: uploadServiceReportMock.mock.calls[0][2].idempotencyKey,
+    }));
+    expect(uploadServiceReportMock).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a report-types load error", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     listServiceReportTypesMock.mockRejectedValue(new ApiError(403, "Forbidden"));
     render(<ServiceReportUploadForm workOrder={job()} />);
     expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
@@ -136,7 +153,7 @@ describe("ServiceReportUploadForm", () => {
   // second Service Report.
 
   it("reuses the SAME idempotency key when retrying after a failed upload", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockRejectedValueOnce(new ApiError(500, "Internal server error"));
     uploadServiceReportMock.mockResolvedValueOnce({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
@@ -157,7 +174,7 @@ describe("ServiceReportUploadForm", () => {
   });
 
   it("draws a NEW idempotency key for the next attempt after a successful upload", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
@@ -185,7 +202,7 @@ describe("ServiceReportUploadForm", () => {
 
   it("restores a previously-selected report type from sessionStorage on mount", async () => {
     sessionStorage.setItem("sr-upload-draft:wo1", "MAINTENANCE_CLEANING");
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
     const select = (await screen.findByLabelText(/report type/i)) as HTMLSelectElement;
@@ -193,7 +210,7 @@ describe("ServiceReportUploadForm", () => {
   });
 
   it("persists the report-type selection to sessionStorage, scoped to this Work Order", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     render(<ServiceReportUploadForm workOrder={job({ id: "wo-42" })} />);
 
     const user = userEvent.setup();
@@ -203,7 +220,7 @@ describe("ServiceReportUploadForm", () => {
   });
 
   it("clears the persisted draft once an upload succeeds", async () => {
-    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
     render(<ServiceReportUploadForm workOrder={job()} />);
 
@@ -213,5 +230,40 @@ describe("ServiceReportUploadForm", () => {
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
 
     await waitFor(() => expect(sessionStorage.getItem("sr-upload-draft:wo1")).toBeNull());
+  });
+
+  it("saves an offline report to this technician's device queue instead of uploading it", async () => {
+    networkStatusMock.mockReturnValue(false);
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    const file = new File(["service report"], "report.jpg", { type: "image/jpeg" });
+    await user.upload(screen.getByLabelText(/photo or document/i), file);
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+
+    expect(await screen.findByText(/saved on this device — not confirmed as received/i)).toBeInTheDocument();
+    expect(queueServiceReportMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u1",
+      customerId: "c1",
+      siteId: "s1",
+      workOrderId: "wo1",
+      reportTypeCode: "MAINTENANCE_CLEANING",
+      file,
+      idempotencyKey: expect.any(String),
+    }));
+    expect(uploadServiceReportMock).not.toHaveBeenCalled();
+  });
+
+  it("uses recently saved report types when the network is unavailable", async () => {
+    networkStatusMock.mockReturnValue(false);
+    listServiceReportTypesMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    getCachedTypesMock.mockResolvedValue([reportType()]);
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    expect(await screen.findByLabelText(/report type/i)).toBeInTheDocument();
+    expect(await screen.findByText(/using recently saved report types/i)).toBeInTheDocument();
   });
 });

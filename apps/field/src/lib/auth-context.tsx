@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, ReactNode } from "react";
 import { AuthenticatedUser, LoginResponseDto } from "@agileworks/shared-types";
 import { apiRequest } from "./api-client";
+import { clearCachedAssignedWorkOrders } from "./offline-store";
 
 interface AuthState {
   user: AuthenticatedUser | null;
@@ -43,7 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setAccessToken(null);
     setUser(null);
-  }, [accessToken]);
+    if (user) await clearCachedAssignedWorkOrders(user.id).catch(() => undefined);
+  }, [accessToken, user]);
 
   // Phase 4 Operations Frontend — added now that the field app has its
   // first permission-gated screens (My Jobs, Work Order actions). Mirrors

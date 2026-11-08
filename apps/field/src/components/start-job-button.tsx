@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { startWorkOrder, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
+import { useNetworkStatus } from "@/lib/use-network-status";
 import { dangerText, primaryButton } from "@/lib/styles";
 
 /**
@@ -16,6 +17,7 @@ import { dangerText, primaryButton } from "@/lib/styles";
  */
 export function StartJobButton({ workOrder, onStarted }: { workOrder: WorkOrder; onStarted: () => void }) {
   const { accessToken, hasPermission } = useAuth();
+  const online = useNetworkStatus();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,9 +40,10 @@ export function StartJobButton({ workOrder, onStarted }: { workOrder: WorkOrder;
 
   return (
     <div>
-      <button style={{ ...primaryButton, width: "100%" }} disabled={submitting} onClick={handleStart}>
-        {submitting ? "Starting…" : "Start Job"}
+      <button style={{ ...primaryButton, width: "100%" }} disabled={submitting || !online} onClick={handleStart}>
+        {submitting ? "Starting…" : online ? "Start Job" : "Start Job — connect to continue"}
       </button>
+      {!online && <p style={{ color: "#63736f", fontSize: 14, marginTop: 8 }}>The server must confirm job status changes.</p>}
       {error && <p style={{ ...dangerText, marginTop: 8 }}>{error}</p>}
     </div>
   );
