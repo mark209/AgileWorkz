@@ -24,6 +24,7 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
 import { WorkflowOverview } from "@/components/dashboard/workflow-overview";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { ContentReveal, DashboardSkeleton, Skeleton } from "@/components/shared/skeleton";
 
 interface SectionState<T> {
   data: T | null;
@@ -118,7 +119,7 @@ export default function DashboardPage() {
     load();
   }, [load]);
 
-  if (authLoading || !user) return <LoadingState />;
+  if (authLoading || !user) return <DashboardSkeleton />;
 
   const hasAnySection = canReadCustomers || canReadServiceReports || canReadQuotations || canReadWorkOrders || canReadAudit;
 
@@ -127,8 +128,8 @@ export default function DashboardPage() {
   // sections the viewer DOES have working data for.
   function section<T>(state: SectionState<T>, render: (data: T) => ReactNode): ReactNode {
     if (state.error) return <ErrorState message={state.error} onRetry={load} />;
-    if (state.data === null) return <LoadingState label="Loading…" />;
-    return render(state.data);
+    if (state.data === null) return <div role="status" aria-label="Loading section" className="space-y-3 py-2"><Skeleton className="h-5 w-2/3" /><Skeleton className="h-5 w-full" /><Skeleton className="h-5 w-4/5" /></div>;
+    return <ContentReveal>{render(state.data)}</ContentReveal>;
   }
 
   const attentionItems = [

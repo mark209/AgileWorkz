@@ -40,10 +40,13 @@ export class S3StorageProvider implements StorageProvider, OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // Dev convenience only: MinIO doesn't auto-create buckets. A real
-    // production bucket is provisioned out-of-band, not by the app; this
-    // is a no-op there (CreateBucket on an existing bucket you own is
-    // treated as success/ignored below).
+    // MinIO doesn't auto-create buckets, so create one for local development.
+    // Production buckets are provisioned out of band; do not issue a create
+    // request against providers such as Supabase Storage at API startup.
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+
     try {
       await this.client.send(new CreateBucketCommand({ Bucket: this.bucket }));
       this.logger.log(`Created bucket "${this.bucket}"`);

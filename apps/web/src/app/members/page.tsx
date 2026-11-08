@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContentReveal, SkeletonTable } from "@/components/shared/skeleton";
 
 const statusLabels: Record<Member["status"], string> = { ACTIVE: "Active", INACTIVE: "Inactive", SUSPENDED: "Suspended" };
 const statusVariants: Record<Member["status"], "success" | "neutral" | "warning"> = { ACTIVE: "success", INACTIVE: "neutral", SUSPENDED: "warning" };
@@ -115,11 +116,12 @@ export default function MembersPage() {
             </Select>
           </div>
           <div className="overflow-hidden rounded-lg border bg-card">
-            {members === null && !error ? <LoadingState label="Loading members…" /> : members?.length === 0 ? (
+            {members === null && !error ? <div className="p-4"><SkeletonTable columns={5} /></div> : members?.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">No members found. Add a member to get started.</p>
             ) : filteredMembers?.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">No members match your search or filters.</p>
             ) : (
+              <ContentReveal>
               <Table className="min-w-[620px]">
                 <TableHeader><TableRow><TableHead className="w-[38%] px-4">Member</TableHead><TableHead className="w-[32%]">Assigned Roles</TableHead><TableHead>Account Status</TableHead><TableHead className="w-16 text-right">Actions</TableHead></TableRow></TableHeader>
                 <TableBody>{filteredMembers?.map((member) => (
@@ -131,21 +133,24 @@ export default function MembersPage() {
                   </TableRow>
                 ))}</TableBody>
               </Table>
+              </ContentReveal>
             )}
           </div>
         </TabsContent>
 
         <TabsContent value="requests">
           <div className="overflow-hidden rounded-lg border bg-card">
-            {pending === null && !error ? <LoadingState label="Loading registration requests…" /> : pending?.length === 0 ? (
+            {pending === null && !error ? <div className="p-4"><SkeletonTable columns={4} /></div> : pending?.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">No requests are awaiting review.</p>
             ) : (
+              <ContentReveal>
               <Table className="min-w-[680px]">
                 <TableHeader><TableRow><TableHead className="px-4">Applicant</TableHead><TableHead>Requested Designation</TableHead><TableHead>Final Role</TableHead><TableHead className="text-right">Review</TableHead></TableRow></TableHeader>
                 <TableBody>{pending?.map((request) => <PendingRegistrationRow key={request.id} request={request} roles={roles} busy={busy}
                   onApprove={(roleId) => accessToken ? act(() => approveRegistration(accessToken, request.id, roleId), "Registration approved. The member can now sign in.") : Promise.resolve(false)}
                   onDecline={() => accessToken ? act(() => declineRegistration(accessToken, request.id), "Registration declined and removed.") : Promise.resolve(false)} />)}</TableBody>
               </Table>
+              </ContentReveal>
             )}
           </div>
         </TabsContent>

@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
@@ -16,15 +17,20 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setError(null);
     try {
       await login(email, password);
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Sign in failed. Please try again.");
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -41,7 +47,7 @@ export default function LoginPage() {
             <div className="space-y-2"><Label htmlFor="login-email">Email</Label><Input id="login-email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></div>
             <div className="space-y-2"><Label htmlFor="login-password">Password</Label><Input id="login-password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></div>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? "Signing in…" : "Sign in"}</Button>
+            <Button type="submit" className="w-full" disabled={isLoading} aria-busy={isLoading}>{isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}{isLoading ? "Signing in…" : "Sign in"}</Button>
           </form>
           <p className="mt-6 text-center text-sm text-muted-foreground">New to AgileWorks? <Link href="/signup" className="font-medium text-primary underline underline-offset-2">Request an account</Link></p>
         </CardContent>

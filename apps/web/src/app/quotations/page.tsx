@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ContentReveal, SkeletonTable } from "@/components/shared/skeleton";
 
 /**
  * Phase 6 (Dashboard) addition — a minimal, global quotation index, added
@@ -49,7 +50,6 @@ function QuotationsListPageContent() {
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
     setError(null);
-    setQuotations(null);
     try {
       setQuotations(await listQuotations(accessToken, status));
     } catch (e) {
@@ -89,7 +89,7 @@ function QuotationsListPageContent() {
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
-      {!quotations && !error && <LoadingState label="Loading quotations…" />}
+      {!quotations && !error && <div className="rounded-lg border p-5"><SkeletonTable columns={6} /></div>}
       {quotations && quotations.length === 0 && (
         <div className="space-y-3">
           <EmptyState title="No quotations found" description="No quotations match the current filter." />
@@ -101,7 +101,7 @@ function QuotationsListPageContent() {
       )}
 
       {visibleQuotations.length > 0 && (
-        <Card>
+        <ContentReveal><Card>
           <CardContent className="pt-6">
             <Table>
               <TableHeader>
@@ -134,7 +134,7 @@ function QuotationsListPageContent() {
               </TableBody>
             </Table>
           </CardContent>
-        </Card>
+        </Card></ContentReveal>
       )}
     </div>
   );
