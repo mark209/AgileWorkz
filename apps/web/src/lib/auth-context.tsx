@@ -8,6 +8,8 @@ interface AuthState {
   user: AuthenticatedUser | null;
   accessToken: string | null;
   isLoading: boolean;
+  welcome: { firstName: string; isFirstLogin: boolean } | null;
+  dismissWelcome: () => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (module: string, action: string) => boolean;
@@ -24,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [welcome, setWelcome] = useState<AuthState["welcome"]>(null);
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
@@ -34,10 +37,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       setAccessToken(response.accessToken);
       setUser(response.user);
+      setWelcome({ firstName: response.user.fullName.trim().split(/\s+/)[0], isFirstLogin: response.isFirstLogin });
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const dismissWelcome = useCallback(() => setWelcome(null), []);
 
   const logout = useCallback(async () => {
     if (accessToken) {
@@ -54,8 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, accessToken, isLoading, login, logout, hasPermission }),
-    [user, accessToken, isLoading, login, logout, hasPermission],
+    () => ({ user, accessToken, isLoading, welcome, dismissWelcome, login, logout, hasPermission }),
+    [user, accessToken, isLoading, welcome, dismissWelcome, login, logout, hasPermission],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

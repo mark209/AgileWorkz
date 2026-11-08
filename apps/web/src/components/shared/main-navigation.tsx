@@ -7,6 +7,7 @@ import { BriefcaseBusiness, ChevronLeft, ChevronRight, ClipboardList, FileText, 
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { WelcomeToast } from "@/components/shared/welcome-toast";
 
 interface NavigationItem {
   label: string;
@@ -29,10 +30,15 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
   { label: "Administration", items: [{ label: "Member Management", href: "/members", icon: Users, permission: ["users", "manage"] }] },
 ];
 
+function ProfileName({ fullName }: { fullName: string }) {
+  const [firstName, ...remainingName] = fullName.trim().split(/\s+/);
+  return <><span data-profile-name>{firstName}</span>{remainingName.length > 0 ? ` ${remainingName.join(" ")}` : ""}</>;
+}
+
 export function MainNavigation({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, hasPermission, logout } = useAuth();
+  const { user, hasPermission, logout, welcome, dismissWelcome } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [tabletWidth, setTabletWidth] = useState(false);
   const [tabletExpanded, setTabletExpanded] = useState(false);
@@ -51,7 +57,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
     return () => tablet.removeEventListener("change", updateTabletWidth);
   }, []);
 
-  if (!user || pathname === "/login") return <>{children}</>;
+  if (!user || pathname === "/login") return <>{children}{welcome && <WelcomeToast {...welcome} onComplete={dismissWelcome} />}</>;
   const userName = user.fullName;
   const sidebarCollapsed = collapsed || (tabletWidth && !tabletExpanded);
 
@@ -118,7 +124,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
         </nav>
         <div className="shrink-0 border-t p-3">
           {isCollapsed && <Button variant="ghost" size="icon" onClick={toggleCollapsed} aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar" className="mb-2 w-full"><ChevronRight className="h-4 w-4" /></Button>}
-          {!isCollapsed && <p className="truncate px-3 pb-2 text-xs text-muted-foreground" title={userName}>{userName}</p>}
+          {!isCollapsed && <p className="truncate px-3 pb-2 text-xs text-muted-foreground" title={userName}><ProfileName fullName={userName} /></p>}
           <Button variant="ghost" className={`w-full ${isCollapsed ? "justify-center px-2" : "justify-start"}`} onClick={signOut} aria-label={isCollapsed ? "Sign out" : undefined} title={isCollapsed ? "Sign out" : undefined}><LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />{!isCollapsed && <span className="ml-3">Sign out</span>}</Button>
         </div>
       </>
@@ -126,6 +132,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
   }
 
   return (
+    <>
     <div className="min-h-screen md:flex">
       <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background md:flex ${sidebarCollapsed ? "w-[72px]" : "w-[244px]"}`}>
         {navigationContent(sidebarCollapsed)}
@@ -140,10 +147,13 @@ export function MainNavigation({ children }: { children: ReactNode }) {
               {navigationContent(false, () => setMobileMenuOpen(false))}
             </DialogContent>
           </Dialog>
-          <span className="font-semibold">AgileWorks HVAC ERP</span>
+          <span className="min-w-0 flex-1 truncate font-semibold">AgileWorks HVAC ERP</span>
+          <span className="max-w-[35vw] truncate text-sm text-muted-foreground" aria-label="Signed in user"><ProfileName fullName={userName} /></span>
         </div>
-        {children}
+        <div key={pathname} className="page-content-enter">{children}</div>
       </div>
     </div>
+    {welcome && <WelcomeToast {...welcome} onComplete={dismissWelcome} />}
+    </>
   );
 }
