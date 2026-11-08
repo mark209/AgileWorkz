@@ -90,6 +90,7 @@ export class AuthService {
     return {
       ...(await this.issueTokens(user.id)),
       user: authenticatedUser,
+      isFirstLogin: user.lastLoginAt === null,
     };
   }
 

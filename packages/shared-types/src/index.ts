@@ -56,6 +56,7 @@ export interface LoginResponseDto {
   accessToken: string;
   refreshToken: string;
   user: AuthenticatedUser;
+  isFirstLogin: boolean;
 }
 
 export interface SystemSettingDto {
