@@ -1005,7 +1005,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
         quotationTypeOther: params.content.quotationTypeOther?.trim() || null,
         primaryTradeCode: params.content.primaryTradeCode,
         primaryTradeOther: params.content.primaryTradeOther?.trim() || null,
-        customerReferenceNo: quotationNumber,
+        customerReferenceNo: params.customerReferenceNo ?? null,
       },
     });
 

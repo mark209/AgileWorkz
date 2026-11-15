@@ -43,7 +43,7 @@ export class InquiriesService {
     const inquiry = await this.prisma.$transaction(async (tx) => {
       const inquiryNumber = await this.numbering.generateNumber(tx, NumberSeries.INQUIRY);
       const created = await tx.inquiry.create({
-        data: { ...dto, ...normalizePreferredServiceDate(dto), customerId, createdBy: actor.userId, inquiryNumber, customerReferenceNo: inquiryNumber },
+        data: { ...dto, ...normalizePreferredServiceDate(dto), customerId, createdBy: actor.userId, inquiryNumber },
       });
       await this.submitOtherChoices(tx, created.id, dto, actor.userId);
       return created;

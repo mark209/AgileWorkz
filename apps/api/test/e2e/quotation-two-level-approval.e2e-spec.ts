@@ -392,24 +392,20 @@ describe("Quotations — two-level approval correction (live)", () => {
 
   // --- PDF: DRAFT watermark vs. final approval section ----------------------
 
-  it("PDF: a non-final revision is retrievable but must be treated as DRAFT by the caller (no approval section server-side)", async () => {
+  it("PDF: a non-final revision is unavailable until final approval", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("pdf-draft", 1000);
     await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader); // PENDING_APPROVAL, not final
 
     const pdf = await fetchPdf(pdfUrl(quotationId, revisionId), managerHeader);
-    expect(pdf.status).toBe(200);
-    expect(pdf.contentType).toContain("application/pdf");
-    expect(pdf.body.subarray(0, 5).toString()).toBe("%PDF-");
-    expect(pdf.body.length).toBeGreaterThan(500);
+    expect(pdf.status).toBe(403);
   });
 
-  it("PDF: Office Staff (quotations.read) can view the PDF even before approval — export-while-draft is allowed", async () => {
+  it("PDF: Office Staff cannot export a quotation before final approval", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("pdf-office-draft", 1000);
     await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
 
     const pdf = await fetchPdf(pdfUrl(quotationId, revisionId), officeHeader);
-    expect(pdf.status).toBe(200);
-    expect(pdf.body.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf.status).toBe(403);
   });
 
   it("PDF: a fully two-level-approved revision renders successfully with both approval levels available to the document", async () => {
