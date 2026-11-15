@@ -7,14 +7,26 @@ describe("RecentActivityList", () => {
     render(
       <RecentActivityList
         entries={[
-          { id: "a1", actorType: "USER", actorUserId: "u1", action: "service_report_locked", entityType: "ServiceReport", entityId: "sr-1", createdAt: "2026-08-30T00:00:00.000Z" },
+          { id: "a1", actorType: "USER", actorUserId: "u1", actorUser: { fullName: "Elijah Cubing" }, action: "service_report_locked", entityType: "ServiceReport", entityId: "sr-1", createdAt: "2026-08-30T00:00:00.000Z" },
         ]}
       />,
     );
     expect(screen.getByText(/service report locked/i)).toBeInTheDocument();
+    expect(screen.getByText(/Elijah Cubing · Service report locked/i)).toBeInTheDocument();
     fireEvent.click(screen.getByText("Details"));
     expect(screen.getByText("Record type: Service Report")).toBeInTheDocument();
     expect(screen.getByText("Record ID: sr-1")).toBeInTheDocument();
+    expect(screen.queryByText(/Actor: USER|\(u1\)/)).not.toBeInTheDocument();
+  });
+
+  it("uses readable labels when no person is linked to an activity", () => {
+    render(<RecentActivityList entries={[
+      { id: "a1", actorType: "SYSTEM", actorUserId: null, action: "report_queued", entityType: "ServiceReport", entityId: null, createdAt: "2026-08-30T00:00:00.000Z" },
+      { id: "a2", actorType: "USER", actorUserId: "u2", actorUser: null, action: "login", entityType: "User", entityId: null, createdAt: "2026-08-30T00:00:00.000Z" },
+    ]} />);
+    expect(screen.getByText("System · Report queued")).toBeInTheDocument();
+    expect(screen.getByText("Unknown user · Login")).toBeInTheDocument();
+    expect(screen.queryByText(/u2/)).not.toBeInTheDocument();
   });
 
   it("keeps older fetched activity available without crowding the initial dashboard", () => {

@@ -33,11 +33,11 @@ interface SectionState<T> {
 const initialSection = { data: null, error: null };
 
 function technicianNextStep(status: WorkOrder["status"]): string {
-  if (status === "DRAFT") return "Waiting for scheduling before the job can be started.";
-  if (status === "SCHEDULED") return "Open AgileWorks Field to start this job.";
-  if (status === "IN_PROGRESS") return "Continue field work and check the report action in AgileWorks Field.";
-  if (status === "COMPLETED") return "Check AgileWorks Field for any permitted report upload.";
-  return "View the service for its current status.";
+  if (status === "DRAFT") return "Draft Work Order. Ask the responsible team to move it to Scheduled before starting.";
+  if (status === "SCHEDULED") return "Open this Work Order to start the job.";
+  if (status === "IN_PROGRESS") return "Open this Work Order to upload your Service Report when work is done.";
+  if (status === "COMPLETED") return "Open this Work Order if another Service Report is needed while your assignment remains active.";
+  return "View the Work Order for its current status.";
 }
 
 /**
@@ -72,6 +72,7 @@ export default function DashboardPage() {
   const canApproveQuotations = hasPermission("quotations", "approve");
   const canApproveFinal = hasPermission("quotations", "approve_final");
   const canVerifyReports = canReadServiceReports && hasPermission("service_reports", "verify");
+  const canApproveReportDocuments = hasPermission("service_reports", "document_approve");
   const canCancelWorkOrders = hasPermission("work_orders", "cancel");
 
   const [customers, setCustomers] = useState<SectionState<Customer[]>>(initialSection);
@@ -139,18 +140,18 @@ export default function DashboardPage() {
     ...(canApproveFinal ? (quotations.data ?? []).filter((q) => q.status === "PENDING_OWNER_APPROVAL").map((q) => ({
       id: q.id, label: `${q.quotationNumber} · Owner review`, href: `/quotations/${q.id}`,
     })) : []),
-    ...(canVerifyReports ? (serviceReports.data ?? []).filter((r) => r.status === "PENDING_VERIFICATION").map((r) => ({
-      id: r.id, label: `${r.serviceReportNumber} · Verify report`, href: `/service-reports/${r.id}/verify`,
+    ...(canApproveReportDocuments ? (serviceReports.data ?? []).filter((r) => r.status === "PENDING_VERIFICATION").map((r) => ({
+      id: r.id, label: `${r.serviceReportNumber} · Review report`, href: `/service-reports/${r.id}/verify`,
     })) : []),
     ...(canCancelWorkOrders ? (workOrders.data ?? []).filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).map((w) => ({
       id: w.id, label: `${w.workOrderNumber} · Cancellation request`, href: `/work-orders/${w.id}`,
     })) : []),
   ].slice(0, 6);
   const attentionLoading = (canApproveQuotations || canApproveFinal) && quotations.data === null && !quotations.error
-    || canVerifyReports && serviceReports.data === null && !serviceReports.error
+    || canApproveReportDocuments && serviceReports.data === null && !serviceReports.error
     || canCancelWorkOrders && workOrders.data === null && !workOrders.error;
   const attentionError = (canApproveQuotations || canApproveFinal) && quotations.error
-    || canVerifyReports && serviceReports.error
+    || canApproveReportDocuments && serviceReports.error
     || canCancelWorkOrders && workOrders.error;
 
   if (adminView) {
@@ -181,7 +182,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders) && (
+        {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders) && (
           <Card className="shadow-none">
             <CardHeader className="p-4 pb-2 sm:px-5"><h2 className="text-base font-semibold">Needs Attention</h2></CardHeader>
             <CardContent className="space-y-2 px-4 pb-4 pt-0 text-sm sm:px-5">
@@ -244,7 +245,7 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">
-      <PageHeader title={managerView ? "Manager Dashboard" : officeView ? "Office Staff Dashboard" : technicianView ? "Technician Dashboard" : adminView ? "Super Admin Dashboard" : "Dashboard"} description={`Welcome, ${user.fullName}. ${managerView || technicianView ? "Review services assigned to you." : "Review current work and recent changes."}`} actions={managerView && hasPermission("work_orders", "create") ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Choose customer to create Service</Link> : technicianView && canReadWorkOrders ? <Link href="/work-orders" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">View assigned services</Link> : undefined} />
+      <PageHeader title={managerView ? "Manager Dashboard" : officeView ? "Office Staff Dashboard" : technicianView ? "Technician Dashboard" : "Dashboard"} description={`Welcome, ${user.fullName}. ${managerView || technicianView ? "Review Work Orders assigned to you." : "Review your authorized work."}`} actions={managerView && hasPermission("work_orders", "create") ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Choose a customer to create a Work Order</Link> : officeView && canReadCustomers ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">View customers</Link> : undefined} />
 
       {!hasAnySection && (
         <p className="text-sm text-muted-foreground">
@@ -252,9 +253,9 @@ export default function DashboardPage() {
         </p>
       )}
 
-      {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders || canReadAudit) && (
+      {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders || canReadAudit) && (
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-          {(canApproveQuotations || canApproveFinal || canVerifyReports || canCancelWorkOrders) && (
+          {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders) && (
             <Card>
               <CardHeader><CardTitle>Needs Attention</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
@@ -284,11 +285,11 @@ export default function DashboardPage() {
 
       {(managerView || technicianView) && canReadWorkOrders && (
         <Card>
-          <CardHeader><CardTitle>My Assigned Services</CardTitle></CardHeader>
+          <CardHeader><CardTitle>My Assigned Work Orders</CardTitle></CardHeader>
           <CardContent>
-            {technicianView && <p className="mb-4 text-sm text-muted-foreground">This list includes all your currently assigned Work Orders, even Draft and Completed jobs. Start Job and Upload Service Report are available in AgileWorks Field when the job state permits them.</p>}
+            {technicianView && <p className="mb-4 text-sm text-muted-foreground">Open a Work Order to start a scheduled job or upload a report when its status permits. You can also use AgileWorks Field.</p>}
             {section(workOrders, (data) => data.length === 0 ? (
-              <EmptyState title="No assigned services" description="Work Orders explicitly assigned to you will appear here." />
+              <EmptyState title="No assigned Work Orders" description="Work Orders explicitly assigned to you will appear here." />
             ) : (
               <ul className="space-y-2">
                 {data.slice(0, 5).map((workOrder) => (
@@ -300,7 +301,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <StatusBadge status={workOrder.status} />
-                      <Link href={`/work-orders/${workOrder.id}`} className="text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View Service</Link>
+                      <Link href={`/work-orders/${workOrder.id}`} className="text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View Work Order</Link>
                     </div>
                   </li>
                 ))}
@@ -325,8 +326,8 @@ export default function DashboardPage() {
                   value={data.filter((r) => r.status === "PENDING_VERIFICATION").length}
                   href="/service-reports"
                 />
-                <KpiCard label="Service Reports — Verified" value={data.filter((r) => r.status === "VERIFIED").length} href="/service-reports" />
-                <KpiCard label="Service Reports — Confirmed" value={data.filter((r) => r.status === "CONFIRMED").length} href="/service-reports" />
+                {!officeView && <KpiCard label="Service Reports — Verified" value={data.filter((r) => r.status === "VERIFIED").length} href="/service-reports" />}
+                {!officeView && <KpiCard label="Service Reports — Confirmed" value={data.filter((r) => r.status === "CONFIRMED").length} href="/service-reports" />}
               </>
             ))}
 
@@ -338,16 +339,16 @@ export default function DashboardPage() {
                   value={data.filter((q) => q.status === "PENDING_APPROVAL").length}
                   href="/quotations?status=PENDING_APPROVAL"
                 />
-                <KpiCard
+                {!officeView && <KpiCard
                   label="Quotations — Pending Owner Approval"
                   value={data.filter((q) => q.status === "PENDING_OWNER_APPROVAL").length}
                   href="/quotations?status=PENDING_OWNER_APPROVAL"
-                />
-                <KpiCard
+                />}
+                {!officeView && <KpiCard
                   label="Quotations — Awaiting Customer Decision"
                   value={data.filter((q) => q.status === "SENT").length}
                   href="/quotations?status=SENT"
-                />
+                />}
               </>
             ))}
 
@@ -359,16 +360,16 @@ export default function DashboardPage() {
                   value={data.filter((w) => w.status === "SCHEDULED").length}
                   href={`/work-orders?status=SCHEDULED${managerView ? "&scope=assigned" : ""}`}
                 />
-                <KpiCard
+                {!officeView && <KpiCard
                   label="Work Orders — In Progress"
                   value={data.filter((w) => w.status === "IN_PROGRESS").length}
                   href={`/work-orders?status=IN_PROGRESS${managerView ? "&scope=assigned" : ""}`}
-                />
-                <KpiCard
+                />}
+                {!officeView && <KpiCard
                   label="Work Orders — Cancellation Requested"
                   value={data.filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).length}
                   href={`/work-orders?status=SCHEDULED,IN_PROGRESS${managerView ? "&scope=assigned" : ""}`}
-                />
+                />}
               </>
             ))}
         </div>

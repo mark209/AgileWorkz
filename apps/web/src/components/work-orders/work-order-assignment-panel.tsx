@@ -74,7 +74,7 @@ export function WorkOrderAssignmentPanel({ workOrder, onChanged }: { workOrder: 
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">Technicians assigned here can see this Work Order in My Assigned Services. They can start it once the Work Order is scheduled.</p>
+      <p className="text-sm text-muted-foreground">Technicians assigned here can see this Work Order in My Assigned Work Orders. They can start it once the Work Order is Scheduled.</p>
       {workOrder.assignments.length === 0 && <p className="text-sm text-muted-foreground">No technician assigned yet.</p>}
       {workOrder.assignments.map((a) => (
         <div key={a.id} className="flex items-center justify-between rounded-md border p-2 text-sm">

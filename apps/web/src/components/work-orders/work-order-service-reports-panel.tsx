@@ -39,7 +39,7 @@ export function WorkOrderServiceReportsPanel({ workOrderId }: { workOrderId: str
   if (error) return <ErrorState message={error} onRetry={load} />;
   if (reports === null) return <LoadingState label="Loading linked Service Reports…" />;
   if (reports.length === 0) {
-    return <EmptyState title="No Service Reports yet" description="A technician can upload one against this work order from the field app." />;
+    return <EmptyState title="No Service Reports yet" description="An assigned technician can upload one against this Work Order from the web or Field app." />;
   }
 
   return (

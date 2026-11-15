@@ -17,6 +17,13 @@ function humanizeAction(action: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+function actorName(entry: AuditLogEntry): string {
+  if (entry.actorType === "USER") return entry.actorUser?.fullName?.trim() || "Unknown user";
+  if (entry.actorType === "WORKER") return "Background worker";
+  if (entry.actorType === "INTEGRATION") return "Integration";
+  return "System";
+}
+
 export function RecentActivityList({ entries }: { entries: AuditLogEntry[] }) {
   const [showAll, setShowAll] = useState(false);
   const visibleEntries = showAll ? entries : entries.slice(0, 5);
@@ -26,7 +33,7 @@ export function RecentActivityList({ entries }: { entries: AuditLogEntry[] }) {
         {visibleEntries.map((entry) => (
           <li key={entry.id} className="py-3 first:pt-0 last:pb-0">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <span className="font-medium">{humanizeAction(entry.action)}</span>
+              <span className="font-medium">{actorName(entry)} · {humanizeAction(entry.action)}</span>
               <time dateTime={entry.createdAt} className="text-xs text-muted-foreground">{dateTimeFormatter.format(new Date(entry.createdAt))}</time>
             </div>
             <details className="mt-1 text-xs text-muted-foreground">
@@ -34,7 +41,6 @@ export function RecentActivityList({ entries }: { entries: AuditLogEntry[] }) {
               <div className="mt-1 space-y-0.5">
                 <p>Record type: {entry.entityType.replace(/([a-z])([A-Z])/g, "$1 $2")}</p>
                 {entry.entityId && <p>Record ID: {entry.entityId}</p>}
-                <p>Actor: {entry.actorType}{entry.actorUserId ? ` (${entry.actorUserId})` : ""}</p>
               </div>
             </details>
           </li>
