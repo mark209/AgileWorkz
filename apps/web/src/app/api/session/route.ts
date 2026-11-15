@@ -12,7 +12,16 @@ const cookieOptions = {
 
 function sameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
+  if (!origin) return true;
+  const host = request.headers.get("host");
+  if (!host) return false;
+  try {
+    const parsed = new URL(origin);
+    const expectedProtocol = process.env.NODE_ENV === "production" ? "https:" : new URL(request.url).protocol;
+    return parsed.origin === origin && parsed.host.toLowerCase() === host.toLowerCase() && parsed.protocol === expectedProtocol;
+  } catch {
+    return false;
+  }
 }
 
 function noStore(response: NextResponse): NextResponse {
