@@ -274,17 +274,18 @@ describe("Work Orders — Step 3 creation (live)", () => {
     }
   });
 
-  it("blocks conversion of a PROJECT revision with zero sections", async () => {
+  it("blocks submission of a PROJECT revision with zero sections", async () => {
     const { customer, site } = await createCustomerAndSite("convert-project-no-sections");
     const { quotationId, revisionId } = await createQuotation(customer.id, site.id, "PROJECT");
     await request(app.getHttpServer())
       .post(linesUrl(quotationId, revisionId))
       .set("Authorization", officeHeader)
       .send({ description: "Orphan line, no section", quantity: 1, unit: "lot", unitPriceBeforeVat: 1000, taxTreatment: "VAT_EXEMPT" });
-    await acceptRevision(quotationId, revisionId);
-
-    const res = await request(app.getHttpServer()).post(convertUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({});
-    expect(res.status).toBe(400);
+    const submitRes = await request(app.getHttpServer())
+      .patch(`${revisionUrl(quotationId, revisionId)}/submit`)
+      .set("Authorization", officeHeader);
+    expect(submitRes.status).toBe(400);
+    expect(submitRes.body.message).toContain("at least one section");
   });
 
   it("refuses PREVENTIVE_MAINTENANCE conversion through this endpoint and directs callers to maintenance visit generation", async () => {

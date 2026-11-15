@@ -33,6 +33,18 @@ export class QuotationSectionsController {
   }
 
   @Permissions({ module: "quotations", action: "update" })
+  @Post("accepted-project-correction")
+  async correctAcceptedProject(
+    @Param("quotationId") quotationId: string,
+    @Param("revisionId") revisionId: string,
+    @Body() dto: CreateSectionDto,
+    @Req() req: AuthedRequest,
+  ) {
+    await this.quotationsService.findRevisionOrThrow(quotationId, revisionId);
+    return this.sectionsService.correctAcceptedProject(revisionId, dto, actorFrom(req));
+  }
+
+  @Permissions({ module: "quotations", action: "update" })
   @Post()
   async create(
     @Param("quotationId") quotationId: string,

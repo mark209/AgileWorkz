@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsOptional, IsString, MinLength } from "class-validator";
+import { IsDateString, IsEnum, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { QuotationType, TaxTreatment } from "@prisma/client";
 
 // siteId and quotationType are always required explicitly — never silently
@@ -14,9 +14,15 @@ export class ConvertInquiryToQuotationDto {
   @IsEnum(QuotationType)
   quotationType!: QuotationType;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  quotationTypeOther?: string;
+
   @IsOptional()
   @IsString()
   primaryTradeCode?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  primaryTradeOther?: string;
 
   // Overrides Inquiry.customerReferenceNo when provided; falls back to it
   // when omitted.

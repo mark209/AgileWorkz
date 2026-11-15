@@ -93,7 +93,7 @@ function WorkOrdersListPageContent() {
       {!workOrders && !error && <LoadingState label="Loading work orders…" />}
       {workOrders && workOrders.length === 0 && (
         <div className="space-y-3">
-          <EmptyState title={assignedScope ? "No assigned services" : "No work orders found"} description={assignedScope ? "Work Orders assigned to you will appear here." : "No work orders match the current filter."} />
+          <EmptyState title={assignedScope ? "No assigned Work Orders" : "No work orders found"} description={assignedScope ? "Work Orders assigned to you will appear here." : "No work orders match the current filter."} />
           {status && <Link href="/work-orders" className="inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
         </div>
       )}
@@ -102,7 +102,30 @@ function WorkOrdersListPageContent() {
       )}
 
       {visibleWorkOrders.length > 0 && (
-        <Card>
+        <>
+        <div className="space-y-3 lg:hidden">
+          {visibleWorkOrders.map((wo) => (
+            <Card key={wo.id}>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <Link href={`/work-orders/${wo.id}`} className="font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{wo.workOrderNumber}</Link>
+                  <StatusBadge status={wo.status} />
+                </div>
+                <div className="text-sm">
+                  <p className="font-medium">{wo.customer.name}</p>
+                  <p className="text-muted-foreground">{wo.site.label}</p>
+                </div>
+                <dl className="grid gap-1 text-sm text-muted-foreground">
+                  <div><dt className="inline">Scheduled: </dt><dd className="inline text-foreground">{wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : "—"}</dd></div>
+                  <div><dt className="inline">Responsible Manager: </dt><dd className="inline text-foreground">{wo.responsibleManager?.fullName ?? "Unassigned"}</dd></div>
+                  <div><dt className="inline">Technician(s): </dt><dd className="inline text-foreground">{wo.assignments.length > 0 ? wo.assignments.map((a) => a.technician.fullName).join(", ") : "Unassigned"}</dd></div>
+                </dl>
+                <Link href={`/work-orders/${wo.id}`} className="inline-flex min-h-10 items-center font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View Work Order →</Link>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Card className="hidden lg:block">
           <CardContent className="overflow-x-auto pt-6">
             <Table>
               <TableHeader>
@@ -113,6 +136,7 @@ function WorkOrdersListPageContent() {
                   <TableHead>Type</TableHead>
                   <TableHead>Scheduled</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Responsible Manager</TableHead>
                   <TableHead>Technician(s)</TableHead>
                   <TableHead />
                 </TableRow>
@@ -128,6 +152,7 @@ function WorkOrdersListPageContent() {
                     <TableCell>
                       <StatusBadge status={wo.status} />
                     </TableCell>
+                    <TableCell>{wo.responsibleManager?.fullName ?? "Unassigned"}</TableCell>
                     <TableCell>
                       {wo.assignments.length > 0 ? wo.assignments.map((a) => a.technician.fullName).join(", ") : "—"}
                     </TableCell>
@@ -142,6 +167,7 @@ function WorkOrdersListPageContent() {
             </Table>
           </CardContent>
         </Card>
+        </>
       )}
     </div>
   );

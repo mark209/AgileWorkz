@@ -147,6 +147,7 @@ export default function CustomerDetailPage() {
       </Card>
 
       <Tabs defaultValue={defaultTab}>
+        <p className="mb-1 text-xs text-muted-foreground sm:hidden">Swipe the tabs to see more sections →</p>
         <div className="max-w-full overflow-x-auto pb-1">
           <TabsList>
             {canReadSites && <TabsTrigger value="sites">Sites {sites ? `(${sites.length})` : ""}</TabsTrigger>}

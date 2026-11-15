@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString } from "class-validator";
+import { IsDateString, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class UpdateInquiryDto {
   @IsOptional()
@@ -21,13 +21,22 @@ export class UpdateInquiryDto {
   @IsString()
   sourceCode?: string;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  sourceOther?: string;
+
   @IsOptional()
   @IsString()
   tradeCode?: string;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  tradeOther?: string;
+
   @IsOptional()
   @IsString()
   inquiryTypeCode?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  inquiryTypeOther?: string;
 
   @IsOptional()
   @IsString()

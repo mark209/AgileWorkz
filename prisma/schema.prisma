@@ -85,6 +85,12 @@ enum ReferenceStatus {
   INACTIVE
 }
 
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
 enum DocumentRelatedType {
   CUSTOMER
   SITE
@@ -740,7 +746,9 @@ model Quotation {
   siteId              String                  @map("site_id")
   quotationNumber     String                  @unique @map("quotation_number") @db.VarChar(30)
   quotationType       QuotationType           @map("quotation_type")
+  quotationTypeOther  String?                 @map("quotation_type_other") @db.VarChar(80)
   primaryTradeCode    String                  @map("primary_trade_code") @db.VarChar(20)
+  primaryTradeOther   String?                 @map("primary_trade_other") @db.VarChar(80)
   // Step 5 — the customer's own RFQ/PO/reference number. Header-level (not
   // per-revision) because it identifies the customer's request itself, the
   // same category of fact as quotation_number — stable across every
@@ -1043,8 +1051,11 @@ model Inquiry {
   siteId               String?       @map("site_id")
   contactId            String?       @map("contact_id")
   sourceCode           String?       @map("source_code") @db.VarChar(30)
+  sourceOther          String?       @map("source_other") @db.VarChar(80)
   tradeCode            String?       @map("trade_code") @db.VarChar(20)
+  tradeOther           String?       @map("trade_other") @db.VarChar(80)
   inquiryTypeCode      String?       @map("inquiry_type_code") @db.VarChar(30)
+  inquiryTypeOther     String?       @map("inquiry_type_other") @db.VarChar(80)
   subject              String        @db.VarChar(200)
   description          String?       @db.Text
   customerReferenceNo  String?       @map("customer_reference_no") @db.VarChar(100)
@@ -1082,6 +1093,40 @@ model Inquiry {
   @@index([inquiryTypeCode])
   @@index([status])
   @@map("inquiries")
+}
+
+model ReferenceSuggestion {
+  id              String           @id @default(uuid())
+  kind            String           @db.VarChar(30)
+  label           String           @db.VarChar(80)
+  operationalType QuotationType?   @map("operational_type")
+  sourceEntityId  String?          @map("source_entity_id")
+  submittedBy     String?          @map("submitted_by")
+  status          SuggestionStatus @default(PENDING)
+  targetCode      String?          @map("target_code") @db.VarChar(30)
+  reviewedBy      String?          @map("reviewed_by")
+  reviewedAt      DateTime?        @map("reviewed_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  @@index([status, kind])
+  @@map("reference_suggestions")
+}
+
+model QuotationLineCatalogItem {
+  id                 String          @id @default(uuid())
+  description        String          @db.VarChar(255)
+  specification      String?         @db.Text
+  brand              String?         @db.VarChar(100)
+  model              String?         @db.VarChar(100)
+  unit               String          @db.VarChar(30)
+  unitPriceBeforeVat Decimal         @map("unit_price_before_vat") @db.Decimal(14, 2)
+  taxTreatment       TaxTreatment    @map("tax_treatment")
+  status             ReferenceStatus @default(ACTIVE)
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("quotation_line_catalog_items")
 }
 
 // ---------------------------------------------------------------------------

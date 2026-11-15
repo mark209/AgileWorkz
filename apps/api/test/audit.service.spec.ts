@@ -41,4 +41,17 @@ describe("AuditService — append-only by construction", () => {
 
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(2);
   });
+
+  it("loads the actor's name when listing audit entries", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = mockOf<PrismaService>({ auditLog: { findMany } });
+    const service = new AuditService(prisma);
+
+    await service.query({ take: 8 });
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: { actorUser: { select: { fullName: true } } },
+      take: 8,
+    }));
+  });
 });

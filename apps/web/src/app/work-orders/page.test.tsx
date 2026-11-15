@@ -64,7 +64,7 @@ describe("WorkOrdersListPage", () => {
   it("loads with no status filter by default", async () => {
     listWorkOrdersMock.mockResolvedValue([workOrder()]);
     render(<WorkOrdersListPage />);
-    expect(await screen.findByText("WO-2026-08-00001")).toBeInTheDocument();
+    expect((await screen.findAllByText("WO-2026-08-00001")).length).toBe(2);
     expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", undefined);
   });
 
@@ -72,7 +72,7 @@ describe("WorkOrdersListPage", () => {
     useSearchParamsMock.mockReturnValue(new URLSearchParams("status=SCHEDULED,IN_PROGRESS"));
     listWorkOrdersMock.mockResolvedValue([workOrder()]);
     render(<WorkOrdersListPage />);
-    await screen.findByText("WO-2026-08-00001");
+    await screen.findAllByText("WO-2026-08-00001");
     expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", "SCHEDULED,IN_PROGRESS");
   });
 
@@ -87,7 +87,7 @@ describe("WorkOrdersListPage", () => {
     render(<WorkOrdersListPage />);
 
     expect(await screen.findByRole("status")).toHaveTextContent("Work Order created");
-    expect(await screen.findByText("No assigned services")).toBeInTheDocument();
+    expect(await screen.findByText("No assigned Work Orders")).toBeInTheDocument();
   });
 
   it("shows an empty state when no work orders match", async () => {
@@ -105,11 +105,11 @@ describe("WorkOrdersListPage", () => {
       }),
     ]);
     render(<WorkOrdersListPage />);
-    await screen.findByText("WO-2026-08-00001");
+    await screen.findAllByText("WO-2026-08-00001");
 
-    expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-    expect(screen.getByText("Main Building")).toBeInTheDocument();
-    expect(screen.getByText("Jordan Lee")).toBeInTheDocument();
+    expect(screen.getAllByText("Acme Corp")).toHaveLength(2);
+    expect(screen.getAllByText("Main Building")).toHaveLength(2);
+    expect(screen.getAllByText("Jordan Lee")).toHaveLength(2);
     // Exactly one call for the whole list — no N+1 follow-up fetches.
     expect(listWorkOrdersMock).toHaveBeenCalledTimes(1);
   });
@@ -117,8 +117,8 @@ describe("WorkOrdersListPage", () => {
   it("shows an em dash when no technician is assigned", async () => {
     listWorkOrdersMock.mockResolvedValue([workOrder({ assignments: [] })]);
     render(<WorkOrdersListPage />);
-    await screen.findByText("WO-2026-08-00001");
-    expect(screen.getByText("—")).toBeInTheDocument();
+    await screen.findAllByText("WO-2026-08-00001");
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
   it("links each row to its detail page", async () => {

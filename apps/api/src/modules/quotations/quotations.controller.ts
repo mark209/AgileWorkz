@@ -45,6 +45,12 @@ export class QuotationsController {
   }
 
   @Permissions({ module: "quotations", action: "read" })
+  @Get("payment-terms")
+  async paymentTerms() {
+    return this.quotationsService.listPaymentTerms();
+  }
+
+  @Permissions({ module: "quotations", action: "read" })
   @Get(":id")
   async get(@Param("id") id: string) {
     return this.quotationsService.findByIdOrThrow(id);

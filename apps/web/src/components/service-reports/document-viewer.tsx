@@ -12,6 +12,7 @@ export function DocumentViewer({ url, mimeType, fileName }: { url: string; mimeT
         <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary underline">
           Open original PDF in a new tab
         </a>
+        <p className="text-xs text-muted-foreground">If the preview below is blank, open the original PDF in a new tab or refresh the document link.</p>
         <iframe
           src={url}
           title={fileName}

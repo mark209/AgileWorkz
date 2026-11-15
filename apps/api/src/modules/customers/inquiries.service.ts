@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { ActorType, InquiryStatus, NumberSeries } from "@prisma/client";
+import { ActorType, InquiryStatus, NumberSeries, Prisma, SuggestionStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NumberingService } from "../../common/numbering/numbering.service";
@@ -34,6 +34,7 @@ export class InquiriesService {
     if (dto.sourceCode) await this.assertSourceValid(dto.sourceCode);
     if (dto.tradeCode) await this.assertTradeValid(dto.tradeCode);
     if (dto.inquiryTypeCode) await this.assertInquiryTypeValid(dto.inquiryTypeCode);
+    this.validateOtherChoices(dto);
 
     // The number is generated inside the SAME transaction as the row
     // insert, so a failed create never leaves an issued-then-abandoned
@@ -41,9 +42,11 @@ export class InquiriesService {
     // design, now shared via NumberingService (§05a / Step 3 correction).
     const inquiry = await this.prisma.$transaction(async (tx) => {
       const inquiryNumber = await this.numbering.generateNumber(tx, NumberSeries.INQUIRY);
-      return tx.inquiry.create({
+      const created = await tx.inquiry.create({
         data: { ...dto, ...normalizePreferredServiceDate(dto), customerId, createdBy: actor.userId, inquiryNumber },
       });
+      await this.submitOtherChoices(tx, created.id, dto, actor.userId);
+      return created;
     });
 
     await this.audit.write({
@@ -74,26 +77,38 @@ export class InquiriesService {
     if (dto.sourceCode) await this.assertSourceValid(dto.sourceCode);
     if (dto.tradeCode) await this.assertTradeValid(dto.tradeCode);
     if (dto.inquiryTypeCode) await this.assertInquiryTypeValid(dto.inquiryTypeCode);
+    this.validateOtherChoices({
+      ...dto,
+      sourceCode: dto.sourceCode ?? before.sourceCode ?? undefined,
+      sourceOther: dto.sourceCode && dto.sourceCode !== "OTHER" ? undefined : dto.sourceOther ?? before.sourceOther ?? undefined,
+      tradeCode: dto.tradeCode ?? before.tradeCode ?? undefined,
+      tradeOther: dto.tradeCode && dto.tradeCode !== "OTHER" ? undefined : dto.tradeOther ?? before.tradeOther ?? undefined,
+    });
 
     const changedKeys = changedKeysOf(dto);
-    const after = await this.prisma.inquiry.update({
-      where: { id },
-      data: { ...dto, ...normalizePreferredServiceDate(dto) },
+    return this.prisma.$transaction(async (tx) => {
+      const after = await tx.inquiry.update({
+        where: { id },
+        data: {
+          ...dto, ...normalizePreferredServiceDate(dto),
+          ...(dto.sourceCode && dto.sourceCode !== "OTHER" ? { sourceOther: null } : {}),
+          ...(dto.tradeCode && dto.tradeCode !== "OTHER" ? { tradeOther: null } : {}),
+          ...(dto.inquiryTypeCode ? { inquiryTypeOther: null } : {}),
+        },
+      });
+      await this.submitOtherChoices(tx, id, {
+        sourceOther: dto.sourceOther !== before.sourceOther ? dto.sourceOther : undefined,
+        tradeOther: dto.tradeOther !== before.tradeOther ? dto.tradeOther : undefined,
+        inquiryTypeOther: dto.inquiryTypeOther !== before.inquiryTypeOther ? dto.inquiryTypeOther : undefined,
+      }, actor.userId);
+      await this.audit.write({
+        actorType: ActorType.USER, actorUserId: actor.userId, action: "inquiry_updated",
+        entityType: "inquiry", entityId: id,
+        beforeData: pickDefined(before, changedKeys), afterData: pickDefined(after, changedKeys),
+        ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+      }, tx);
+      return after;
     });
-
-    await this.audit.write({
-      actorType: ActorType.USER,
-      actorUserId: actor.userId,
-      action: "inquiry_updated",
-      entityType: "inquiry",
-      entityId: id,
-      beforeData: pickDefined(before, changedKeys),
-      afterData: pickDefined(after, changedKeys),
-      ipAddress: actor.ipAddress,
-      userAgent: actor.userAgent,
-    });
-
-    return after;
   }
 
   // Explicit "lost lead" terminal transition, distinct from CONVERTED (which
@@ -130,6 +145,32 @@ export class InquiriesService {
   private async assertCustomerExists(customerId: string) {
     const exists = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
     if (!exists) throw new NotFoundException("Customer not found");
+  }
+
+  private validateOtherChoices(dto: { sourceCode?: string; sourceOther?: string; tradeCode?: string; tradeOther?: string; inquiryTypeOther?: string }) {
+    if (dto.sourceCode === "OTHER" && !dto.sourceOther?.trim()) throw new BadRequestException("Enter the custom source when Other is selected");
+    if (dto.tradeCode === "OTHER" && !dto.tradeOther?.trim()) throw new BadRequestException("Enter the custom trade when Other is selected");
+    if (dto.sourceOther?.trim() && dto.sourceCode !== "OTHER") throw new BadRequestException("Choose Other as the source before entering a custom source");
+    if (dto.tradeOther?.trim() && dto.tradeCode !== "OTHER") throw new BadRequestException("Choose Other as the trade before entering a custom trade");
+  }
+
+  private async submitOtherChoices(
+    tx: PrismaService | Prisma.TransactionClient,
+    entityId: string,
+    dto: { sourceOther?: string; tradeOther?: string; inquiryTypeOther?: string },
+    userId: string,
+  ) {
+    const choices = [
+      ["INQUIRY_SOURCE", dto.sourceOther], ["TRADE", dto.tradeOther], ["INQUIRY_TYPE", dto.inquiryTypeOther],
+    ] as const;
+    for (const [kind, label] of choices) {
+      if (!label?.trim()) continue;
+      const existing = await tx.referenceSuggestion.findFirst({ where: {
+        kind, label: { equals: label.trim(), mode: "insensitive" },
+        status: { in: [SuggestionStatus.PENDING, SuggestionStatus.APPROVED] },
+      } });
+      if (!existing) await tx.referenceSuggestion.create({ data: { kind, label: label.trim(), sourceEntityId: entityId, submittedBy: userId } });
+    }
   }
 
   private async assertSiteValid(customerId: string, siteId: string) {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import {
   ActorType,
   InquiryStatus,
@@ -9,6 +9,7 @@ import {
   QuotationTermTemplate,
   QuotationType,
   ReferenceStatus,
+  SuggestionStatus,
   TaxTreatment,
 } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -64,7 +65,9 @@ const PLACEHOLDER_TC_MARKER = "[PLACEHOLDER";
 // between the routes").
 interface Revision0Content {
   quotationType: QuotationType;
+  quotationTypeOther?: string;
   primaryTradeCode: string;
+  primaryTradeOther?: string;
   scopeOfWork?: string;
   defaultTaxTreatment?: TaxTreatment;
   paymentTerms?: string;
@@ -76,7 +79,65 @@ interface Revision0Content {
 }
 
 @Injectable()
-export class QuotationsService {
+export class QuotationsService implements OnModuleInit, OnModuleDestroy {
+  private expirationTimer: ReturnType<typeof setInterval> | null = null;
+  private expiring = false;
+
+  onModuleInit() {
+    void this.expireDueRevisions().catch(() => undefined);
+    this.expirationTimer = setInterval(() => { void this.expireDueRevisions().catch(() => undefined); }, 5 * 60_000);
+    this.expirationTimer.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.expirationTimer) clearInterval(this.expirationTimer);
+  }
+
+  async expireDueRevisions(): Promise<void> {
+    if (this.expiring) return;
+    this.expiring = true;
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+      const part = (type: string) => parts.find((item) => item.type === type)?.value;
+      const today = `${part("year")}-${part("month")}-${part("day")}`;
+      const startOfToday = new Date(`${today}T00:00:00.000Z`);
+      const due = await this.prisma.quotationRevision.findMany({
+        where: { status: QuotationRevisionStatus.SENT, isCurrent: true, validUntil: { lt: startOfToday } },
+        select: { id: true, quotationId: true, validUntil: true },
+        take: 100,
+      });
+      for (const row of due) {
+        await this.prisma.$transaction(async (tx) => {
+          const guarded = await tx.quotationRevision.updateMany({
+            where: { id: row.id, status: QuotationRevisionStatus.SENT, isCurrent: true, validUntil: { lt: startOfToday } },
+            data: { status: QuotationRevisionStatus.EXPIRED, expiredAt: new Date() },
+          });
+          if (!guarded.count) return;
+          await tx.quotation.update({ where: { id: row.quotationId }, data: { status: QuotationRevisionStatus.EXPIRED } });
+          await this.audit.write({
+            actorType: ActorType.SYSTEM,
+            action: "revision_expired",
+            entityType: "quotation_revision",
+            entityId: row.id,
+            beforeData: { status: QuotationRevisionStatus.SENT },
+            afterData: { status: QuotationRevisionStatus.EXPIRED, validUntil: row.validUntil },
+            reason: "Quotation validity date passed",
+          }, tx);
+        });
+      }
+    } finally {
+      this.expiring = false;
+    }
+  }
+  async listPaymentTerms(): Promise<string[]> {
+    const rows = await this.prisma.quotationRevision.findMany({
+      where: { paymentTerms: { not: null } },
+      select: { paymentTerms: true },
+      distinct: ["paymentTerms"],
+      take: 100,
+    });
+    return rows.map((row) => row.paymentTerms?.trim() ?? "").filter(Boolean).sort();
+  }
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -86,12 +147,14 @@ export class QuotationsService {
   ) {}
 
   async findByIdOrThrow(id: string) {
+    await this.expireDueRevisions();
     const quotation = await this.prisma.quotation.findUnique({ where: { id } });
     if (!quotation) throw new NotFoundException("Quotation not found");
     return quotation;
   }
 
   async listForCustomer(customerId: string) {
+    await this.expireDueRevisions();
     await this.assertCustomerExists(customerId);
     return this.prisma.quotation.findMany({ where: { customerId }, orderBy: { createdAt: "desc" } });
   }
@@ -107,6 +170,7 @@ export class QuotationsService {
    * queue-specific default.
    */
   async listAllOrByStatus(statuses?: QuotationRevisionStatus[]) {
+    await this.expireDueRevisions();
     return this.prisma.quotation.findMany({
       where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
       orderBy: { createdAt: "desc" },
@@ -415,6 +479,15 @@ export class QuotationsService {
         "This revision has no line items — add at least one before submitting it for approval",
       );
     }
+    const quotation = await this.prisma.quotation.findUniqueOrThrow({
+      where: { id: before.quotationId }, select: { quotationType: true },
+    });
+    if (quotation.quotationType === QuotationType.PROJECT) {
+      const sectionCount = await this.prisma.quotationSection.count({ where: { quotationRevisionId: revisionId } });
+      if (sectionCount === 0) {
+        throw new BadRequestException("Add at least one section to a PROJECT quotation before submitting for approval");
+      }
+    }
 
     const after = await this.prisma.$transaction(async (tx) => {
       const guarded = await tx.quotationRevision.updateMany({
@@ -704,6 +777,7 @@ export class QuotationsService {
   // itself is what distinguishes which outcome occurred. reason is optional
   // for both (C6).
   async recordRevisionDecision(revisionId: string, dto: RecordDecisionDto, actor: ActorContext) {
+    await this.expireDueRevisions();
     const before = await this.findRevisionByIdOrThrow(revisionId);
     if (before.status !== QuotationRevisionStatus.SENT) {
       throw new BadRequestException(
@@ -745,14 +819,8 @@ export class QuotationsService {
     return after;
   }
 
-  // PATCH .../revisions/:revisionId/expire — quotations.update. Manual-only
-  // for V1 (C4) — only valid from SENT, not date-gated against validUntil
-  // (C5, may fire before the stated deadline), reason mandatory (C5) as the
-  // compensating record for why. The actual state mutation lives in
-  // transitionRevisionToExpired() below specifically so a future scheduled
-  // auto-expiry process (not built in this step) can call the same domain
-  // logic for each eligible SENT-and-past-validUntil revision it finds,
-  // instead of duplicating this transition.
+  // Legacy manual expiry endpoint remains for API compatibility. The UI now
+  // relies on expireDueRevisions for SENT quotations past their validity date.
   async expireRevision(revisionId: string, dto: ExpireRevisionDto, actor: ActorContext) {
     if (!dto.reason?.trim()) {
       throw new BadRequestException("A reason is required to mark a revision as expired");
@@ -817,6 +885,7 @@ export class QuotationsService {
     await this.assertCustomerExists(customerId);
     await this.assertSiteValid(customerId, dto.siteId);
     await this.assertTradeValid(dto.primaryTradeCode);
+    this.validateCustomQuotationChoice(dto);
 
     const { quotation, revision, template } = await this.prisma.$transaction((tx) =>
       this.createQuotationAndRevision0(tx, {
@@ -857,6 +926,7 @@ export class QuotationsService {
       );
     }
     await this.assertTradeValid(primaryTradeCode);
+    this.validateCustomQuotationChoice({ ...dto, primaryTradeCode, primaryTradeOther: dto.primaryTradeOther ?? inquiry.tradeOther ?? undefined });
 
     const { quotation, revision, template } = await this.prisma.$transaction(async (tx) => {
       const guarded = await tx.inquiry.updateMany({
@@ -878,6 +948,7 @@ export class QuotationsService {
         content: {
           ...dto,
           primaryTradeCode,
+          primaryTradeOther: dto.primaryTradeOther ?? (primaryTradeCode === "OTHER" ? inquiry.tradeOther ?? undefined : undefined),
           scopeOfWork: dto.scopeOfWork ?? inquiry.description ?? inquiry.subject,
         },
       });
@@ -931,10 +1002,27 @@ export class QuotationsService {
         inquiryId: params.inquiryId,
         quotationNumber,
         quotationType: params.content.quotationType,
+        quotationTypeOther: params.content.quotationTypeOther?.trim() || null,
         primaryTradeCode: params.content.primaryTradeCode,
-        customerReferenceNo: params.customerReferenceNo,
+        primaryTradeOther: params.content.primaryTradeOther?.trim() || null,
+        customerReferenceNo: params.customerReferenceNo ?? null,
       },
     });
+
+    for (const [kind, label] of [
+      ["QUOTATION_TYPE", params.content.quotationTypeOther],
+      ["TRADE", params.content.primaryTradeOther],
+    ] as const) {
+      if (!label?.trim()) continue;
+      const existingSuggestion = await tx.referenceSuggestion.findFirst({ where: {
+        kind, label: { equals: label.trim(), mode: "insensitive" },
+        status: { in: [SuggestionStatus.PENDING, SuggestionStatus.APPROVED] },
+        ...(kind === "QUOTATION_TYPE" ? { operationalType: params.content.quotationType } : {}),
+      } });
+      if (!existingSuggestion) await tx.referenceSuggestion.create({
+        data: { kind, label: label.trim(), sourceEntityId: quotation.id, operationalType: kind === "QUOTATION_TYPE" ? params.content.quotationType : null },
+      });
+    }
 
     const revision = await tx.quotationRevision.create({
       data: {
@@ -955,6 +1043,15 @@ export class QuotationsService {
     });
 
     return { quotation, revision, template };
+  }
+
+  private validateCustomQuotationChoice(dto: { quotationTypeOther?: string; primaryTradeOther?: string; primaryTradeCode: string }) {
+    if (dto.primaryTradeCode === "OTHER" && !dto.primaryTradeOther?.trim()) {
+      throw new BadRequestException("Enter the custom trade when Other is selected");
+    }
+    if (dto.primaryTradeOther?.trim() && dto.primaryTradeCode !== "OTHER") {
+      throw new BadRequestException("Choose Other as the trade before entering a custom trade");
+    }
   }
 
   private async writeCreationAudit(

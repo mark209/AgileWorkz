@@ -1,5 +1,20 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
+let sessionRefresher: (() => Promise<string | null>) | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function setSessionRefresher(refresher: (() => Promise<string | null>) | null) {
+  sessionRefresher = refresher;
+}
+
+async function renewAccessToken(): Promise<string | null> {
+  if (!sessionRefresher) return null;
+  if (!refreshInFlight) {
+    refreshInFlight = sessionRefresher().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -13,14 +28,19 @@ export async function apiRequest<T>(
   path: string,
   options: { method?: string; body?: unknown; accessToken?: string } = {},
 ): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const send = (accessToken?: string) => fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
-      ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  let res = await send(options.accessToken);
+  if (res.status === 401 && options.accessToken) {
+    const renewed = await renewAccessToken();
+    if (renewed) res = await send(renewed);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
@@ -39,7 +59,12 @@ export async function apiRequest<T>(
 }
 
 export async function apiPdf(path: string, accessToken: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE_URL}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const send = (token: string) => fetch(`${API_BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  let res = await send(accessToken);
+  if (res.status === 401) {
+    const renewed = await renewAccessToken();
+    if (renewed) res = await send(renewed);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
     throw new ApiError(res.status, Array.isArray(body.message) ? body.message.join(", ") : body.message);
@@ -59,10 +84,10 @@ export function uploadFileWithProgress<T>(
   onProgress?: (percent: number) => void,
   idempotencyKey?: string,
 ): Promise<T> {
-  return new Promise((resolve, reject) => {
+  const send = (token: string, mayRetry: boolean): Promise<T> => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}${path}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     if (idempotencyKey) xhr.setRequestHeader("Idempotency-Key", idempotencyKey);
 
     xhr.upload.onprogress = (event) => {
@@ -72,6 +97,13 @@ export function uploadFileWithProgress<T>(
     };
 
     xhr.onload = () => {
+      if (xhr.status === 401 && mayRetry) {
+        renewAccessToken().then((renewed) => {
+          if (renewed) send(renewed, false).then(resolve, reject);
+          else reject(new ApiError(401, "Your session has expired. Please sign in again."));
+        }, reject);
+        return;
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve((xhr.responseText ? JSON.parse(xhr.responseText) : undefined) as T);
         return;
@@ -90,4 +122,5 @@ export function uploadFileWithProgress<T>(
 
     xhr.send(formData);
   });
+  return send(accessToken, true);
 }

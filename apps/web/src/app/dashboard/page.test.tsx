@@ -99,7 +99,8 @@ describe("DashboardPage — role-based section visibility", () => {
     render(<DashboardPage />);
 
     expect(await screen.findByText("Active Customers")).toBeInTheDocument();
-    expect(screen.getByText("Service Reports — Confirmed")).toBeInTheDocument();
+    expect(screen.getByText("Service Reports — Pending Verification")).toBeInTheDocument();
+    expect(screen.queryByText("Service Reports — Confirmed")).not.toBeInTheDocument();
     expect(screen.getByText("Quotations — Pending Approval")).toBeInTheDocument();
     expect(screen.getByText("Work Orders — Scheduled")).toBeInTheDocument();
 
@@ -112,7 +113,7 @@ describe("DashboardPage — role-based section visibility", () => {
     render(<DashboardPage />);
 
     expect(await screen.findByText("Manager Dashboard")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Choose customer to create Service" })).toHaveAttribute("href", "/customers");
+    expect(screen.getByRole("link", { name: "Choose a customer to create a Work Order" })).toHaveAttribute("href", "/customers");
     await waitFor(() => expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", undefined, true));
     expect(listCustomersMock).not.toHaveBeenCalled();
     expect(listServiceReportsMock).not.toHaveBeenCalled();
@@ -134,8 +135,8 @@ describe("DashboardPage — role-based section visibility", () => {
     render(<DashboardPage />);
 
     expect(await screen.findByText("Technician Dashboard")).toBeInTheDocument();
-    expect(await screen.findByText("My Assigned Services")).toBeInTheDocument();
-    expect(screen.getByText(/this list includes all your currently assigned work orders/i)).toBeInTheDocument();
+    expect(await screen.findByText("My Assigned Work Orders")).toBeInTheDocument();
+    expect(screen.getByText(/Open a Work Order to start a scheduled job/i)).toBeInTheDocument();
     expect(screen.queryByText("Work Orders — Scheduled")).not.toBeInTheDocument();
     expect(screen.queryByText("Active Customers")).not.toBeInTheDocument();
     expect(screen.queryByText(/service reports/i)).not.toBeInTheDocument();

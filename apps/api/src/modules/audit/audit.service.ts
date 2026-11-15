@@ -75,6 +75,7 @@ export class AuditService {
 
   async query(filter: AuditQuery) {
     return this.prisma.auditLog.findMany({
+      include: { actorUser: { select: { fullName: true } } },
       where: {
         entityType: filter.entityType,
         entityId: filter.entityId,

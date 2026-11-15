@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, ApiTimeoutError, apiRequest, apiUpload } from "./api-client";
+import { ApiError, ApiTimeoutError, apiRequest, apiUpload, setSessionRefresher } from "./api-client";
 
 // Phase 7 Wave 1 (F6.1) — apps/field previously had no request timeout at
 // all. These tests prove a hung fetch() is aborted after the configured
@@ -12,6 +12,7 @@ describe("api-client timeouts", () => {
   });
 
   afterEach(() => {
+    setSessionRefresher(null);
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -89,5 +90,20 @@ describe("api-client timeouts", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(0);
     expect(err.message).toMatch(/timed out/i);
+  });
+
+  it("renews an expired access token and retries the assigned-jobs request once", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 401, ok: false })
+      .mockResolvedValueOnce({ status: 200, ok: true, json: () => Promise.resolve([{ id: "job-1" }]) });
+    vi.stubGlobal("fetch", fetchMock);
+    const refresh = vi.fn().mockResolvedValue("new-token");
+    setSessionRefresher(refresh);
+
+    await expect(apiRequest("/work-orders/mine", { accessToken: "expired-token" }))
+      .resolves.toEqual([{ id: "job-1" }]);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer new-token");
   });
 });

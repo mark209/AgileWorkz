@@ -30,9 +30,9 @@ export function QuotationHeaderCard({
       <CardContent className="grid grid-cols-1 gap-x-6 gap-y-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Customer" value={customer.name} />
         <Field label="Site" value={site?.label ?? "—"} />
-        <Field label="Type" value={QUOTATION_TYPE_LABEL[quotation.quotationType]} />
-        <Field label="Trade" value={trade?.label ?? quotation.primaryTradeCode} />
-        <Field label="Customer reference no." value={quotation.customerReferenceNo ?? "—"} />
+        <Field label="Type" value={quotation.quotationTypeOther || QUOTATION_TYPE_LABEL[quotation.quotationType]} />
+        <Field label="Trade" value={quotation.primaryTradeOther || trade?.label || quotation.primaryTradeCode} />
+        <Field label="Reference number" value={quotation.quotationNumber} />
         <Field label="Created" value={formatDate(quotation.createdAt)} />
       </CardContent>
     </Card>

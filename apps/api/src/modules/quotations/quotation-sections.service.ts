@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { ActorType } from "@prisma/client";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ActorType, Prisma, QuotationRevisionStatus, QuotationType } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ActorContext } from "../identity/users.service";
@@ -50,6 +50,52 @@ export class QuotationSectionsService {
       userAgent: actor.userAgent,
     });
 
+    return section;
+  }
+
+  // One-time correction for legacy accepted PROJECT revisions with no sections.
+  // It changes grouping only; amounts, line contents, and approvals stay fixed.
+  async correctAcceptedProject(revisionId: string, dto: CreateSectionDto, actor: ActorContext) {
+    if (!dto.name?.trim()) throw new BadRequestException("Section name is required");
+    const section = await this.prisma.$transaction(async (tx) => {
+      const revision = await tx.quotationRevision.findUnique({
+        where: { id: revisionId }, include: { quotation: true },
+      });
+      if (!revision) throw new NotFoundException("Quotation revision not found");
+      if (!revision.isCurrent || revision.status !== QuotationRevisionStatus.ACCEPTED || revision.quotation.quotationType !== QuotationType.PROJECT) {
+        throw new BadRequestException("Only the current accepted PROJECT revision can use this correction");
+      }
+      const [sectionCount, workOrderCount] = await Promise.all([
+        tx.quotationSection.count({ where: { quotationRevisionId: revisionId } }),
+        tx.workOrder.count({ where: { quotationRevisionId: revisionId } }),
+      ]);
+      if (sectionCount || workOrderCount) throw new ConflictException("This revision already has sections or Work Orders");
+      const created = await tx.quotationSection.create({
+        data: {
+          quotationRevisionId: revisionId,
+          name: dto.name.trim(),
+          sortOrder: 0,
+          netAmount: revision.netAmount,
+          vatAmount: revision.vatAmount,
+          finalAmount: revision.totalAmount,
+        },
+      });
+      await tx.quotationLineItem.updateMany({
+        where: { quotationRevisionId: revisionId, sectionId: null },
+        data: { sectionId: created.id },
+      });
+      await this.audit.write({
+        actorType: ActorType.USER,
+        actorUserId: actor.userId,
+        action: "accepted_project_section_corrected",
+        entityType: "quotation_section",
+        entityId: created.id,
+        afterData: { quotationRevisionId: revisionId, name: created.name },
+        ipAddress: actor.ipAddress,
+        userAgent: actor.userAgent,
+      }, tx);
+      return created;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return section;
   }
 

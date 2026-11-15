@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@/lib/api-client";
 import { ConvertToWorkOrdersPanel } from "./convert-to-work-orders-panel";
@@ -65,8 +65,9 @@ describe("ConvertToWorkOrdersPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /convert to work order/i }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Convert to Work Order" }));
 
-    await waitFor(() => expect(convertQuotationToWorkOrdersMock).toHaveBeenCalledWith("token-1", "q1", "r1", { scheduledDate: undefined }));
+    await waitFor(() => expect(convertQuotationToWorkOrdersMock).toHaveBeenCalledWith("token-1", "q1", "r1", { scheduledDate: undefined, responsibleManagerId: undefined }));
     expect(onConverted).toHaveBeenCalled();
     expect(pushMock).toHaveBeenCalledWith("/work-orders/wo-new");
   });
@@ -78,6 +79,7 @@ describe("ConvertToWorkOrdersPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^convert to work order$/i }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Convert to Work Order" }));
 
     await waitFor(() => expect(convertQuotationToWorkOrdersMock).toHaveBeenCalled());
     expect(pushMock).not.toHaveBeenCalled();
@@ -98,6 +100,7 @@ describe("ConvertToWorkOrdersPanel", () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/first visit date/i), "2026-09-01");
     await user.click(screen.getByRole("button", { name: /generate maintenance visits/i }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Generate visits" }));
 
     await waitFor(() => expect(generateMaintenanceVisitsMock).toHaveBeenCalledWith("token-1", "q1", "r1", "2026-09-01"));
     expect(onConverted).toHaveBeenCalled();
@@ -110,6 +113,7 @@ describe("ConvertToWorkOrdersPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /convert to work order/i }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Convert to Work Order" }));
 
     expect(await screen.findByText(/not the current ACCEPTED revision/i)).toBeInTheDocument();
   });

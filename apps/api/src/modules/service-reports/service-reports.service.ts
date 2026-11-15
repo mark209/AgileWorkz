@@ -518,6 +518,23 @@ export class ServiceReportsService {
     });
   }
 
+  async listDirectReportTargets(search?: string) {
+    const term = search?.trim() ?? "";
+    if (term.length < 2 || term.length > 100) {
+      throw new BadRequestException("Enter 2 to 100 characters to search customers");
+    }
+    return this.prisma.customer.findMany({
+      where: { status: "ACTIVE", name: { contains: term, mode: "insensitive" }, sites: { some: { status: "ACTIVE" } } },
+      select: {
+        id: true,
+        name: true,
+        sites: { where: { status: "ACTIVE" }, select: { id: true, label: true }, orderBy: { label: "asc" } },
+      },
+      orderBy: { name: "asc" },
+      take: 20,
+    });
+  }
+
   private async assertCustomerExists(customerId: string) {
     const exists = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
     if (!exists) throw new NotFoundException("Customer not found");

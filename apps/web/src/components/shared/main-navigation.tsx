@@ -27,7 +27,12 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
       { label: "Service Reports", href: "/service-reports", icon: ClipboardList },
     ],
   },
-  { label: "Administration", items: [{ label: "Member Management", href: "/members", icon: Users, permission: ["users", "manage"] }] },
+  { label: "Administration", items: [
+    { label: "Member Management", href: "/members", icon: Users, permission: ["users", "manage"] },
+    { label: "Terms Templates", href: "/quotation-templates", icon: FileText, permission: ["quotation_templates", "manage"] },
+    { label: "Saved Line Items", href: "/quotation-line-catalog", icon: ClipboardList, permission: ["system_settings", "manage"] },
+    { label: "Review Choices", href: "/reference-suggestions", icon: FileText, permission: ["system_settings", "manage"] },
+  ] },
 ];
 
 function ProfileName({ fullName }: { fullName: string }) {
@@ -68,7 +73,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
       : item.href === "/members"
         ? user.roles?.includes("Admin/Owner") && hasPermission("users", "manage")
         : item.href === "/service-reports"
-          ? hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned")
+          ? hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned") || hasPermission("service_reports", "read_own")
         : !item.permission || hasPermission(item.permission[0], item.permission[1])),
   })).filter((group) => group.items.length > 0);
 
@@ -95,8 +100,12 @@ export function MainNavigation({ children }: { children: ReactNode }) {
 
   async function signOut() {
     setMobileMenuOpen(false);
-    await logout();
-    router.push("/login");
+    try {
+      await logout();
+      router.push("/login");
+    } catch {
+      window.alert("Could not sign out. Please try again.");
+    }
   }
 
   function navigationContent(isCollapsed: boolean, onNavigate?: () => void) {
