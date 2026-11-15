@@ -17,8 +17,8 @@ export function CustomerRecordDialog({ kind, customer, record, onSaved }: { kind
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(kind === "customer" ? customer.name : record ? "label" in record ? record.label : record.fullName : "");
   const [address, setAddress] = useState(kind === "customer" ? customer.billingAddress : record && "addressLine" in record ? record.addressLine : "");
-  const [phone, setPhone] = useState(kind === "customer" ? customer.phone ?? "" : record && "phone" in record ? record.phone ?? "" : "");
-  const [email, setEmail] = useState(kind === "customer" ? customer.email ?? "" : record && "email" in record ? record.email ?? "" : "");
+  const [phone, setPhone] = useState(kind === "customer" ? customer.phone ?? "" : record && "phone" in record ? record.phone ?? "" : kind === "contact" ? customer.phone ?? "" : "");
+  const [email, setEmail] = useState(kind === "customer" ? customer.email ?? "" : record && "email" in record ? record.email ?? "" : kind === "contact" ? customer.email ?? "" : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const title = kind === "customer" ? "Edit customer" : `${record ? "Edit" : "Add"} ${kind}`;
@@ -57,8 +57,8 @@ export function CustomerRecordDialog({ kind, customer, record, onSaved }: { kind
       if (next) {
         setName(kind === "customer" ? customer.name : record ? "label" in record ? record.label : record.fullName : "");
         setAddress(kind === "customer" ? customer.billingAddress : record && "addressLine" in record ? record.addressLine : "");
-        setPhone(kind === "customer" ? customer.phone ?? "" : record && "phone" in record ? record.phone ?? "" : "");
-        setEmail(kind === "customer" ? customer.email ?? "" : record && "email" in record ? record.email ?? "" : "");
+        setPhone(kind === "customer" ? customer.phone ?? "" : record && "phone" in record ? record.phone ?? "" : kind === "contact" ? customer.phone ?? "" : "");
+        setEmail(kind === "customer" ? customer.email ?? "" : record && "email" in record ? record.email ?? "" : kind === "contact" ? customer.email ?? "" : "");
       }
     }}>
       <DialogTrigger asChild><Button variant="outline" size="sm">{title}</Button></DialogTrigger>
@@ -80,7 +80,7 @@ export function CustomerRecordDialog({ kind, customer, record, onSaved }: { kind
             </>}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </div>
-          <DialogFooter className="mt-6"><Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</Button></DialogFooter>
+          <DialogFooter className="mt-6"><Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
