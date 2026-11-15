@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsOptional, IsString, MinLength } from "class-validator";
+import { IsDateString, IsEnum, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { QuotationType, TaxTreatment } from "@prisma/client";
 
 // No vatRatePercent field, deliberately — the VAT rate is always taken from
@@ -15,9 +15,15 @@ export class CreateQuotationDto {
   @IsEnum(QuotationType)
   quotationType!: QuotationType;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  quotationTypeOther?: string;
+
   @IsString()
   @MinLength(1)
   primaryTradeCode!: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  primaryTradeOther?: string;
 
   @IsOptional()
   @IsString()

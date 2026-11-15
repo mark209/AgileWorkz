@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString, MinLength } from "class-validator";
+import { IsDateString, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 // No inquiryNumber here — it's system-generated (NumberingService), never
 // client-supplied. See inquiries.service.ts.
@@ -23,13 +23,22 @@ export class CreateInquiryDto {
   @IsString()
   sourceCode?: string;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  sourceOther?: string;
+
   @IsOptional()
   @IsString()
   tradeCode?: string;
 
+  @IsOptional() @IsString() @MaxLength(80)
+  tradeOther?: string;
+
   @IsOptional()
   @IsString()
   inquiryTypeCode?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  inquiryTypeOther?: string;
 
   @IsOptional()
   @IsString()

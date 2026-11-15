@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { ActorType, ReferenceStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -23,15 +23,26 @@ export class QuotationTermTemplatesService {
 
   async create(dto: CreateQuotationTermTemplateDto, actor: ActorContext) {
     if (dto.tradeCode) await this.assertTradeValid(dto.tradeCode);
+    if (dto.isDefault && dto.body.includes("[PLACEHOLDER")) {
+      throw new BadRequestException("An official default template cannot contain placeholder text");
+    }
 
-    const template = await this.prisma.quotationTermTemplate.create({
-      data: {
-        name: dto.name,
-        quotationType: dto.quotationType,
-        tradeCode: dto.tradeCode,
-        body: dto.body,
-        isDefault: dto.isDefault ?? false,
-      },
+    const template = await this.prisma.$transaction(async (tx) => {
+      if (dto.isDefault && !dto.quotationType && !dto.tradeCode) {
+        await tx.quotationTermTemplate.updateMany({
+          where: { isDefault: true, quotationType: null, tradeCode: null, status: ReferenceStatus.ACTIVE },
+          data: { status: ReferenceStatus.INACTIVE },
+        });
+      }
+      return tx.quotationTermTemplate.create({
+        data: {
+          name: dto.name,
+          quotationType: dto.quotationType,
+          tradeCode: dto.tradeCode,
+          body: dto.body,
+          isDefault: dto.isDefault ?? false,
+        },
+      });
     });
 
     await this.audit.write({

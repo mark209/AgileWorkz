@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import {
   createLineItem,
+  listQuotationLineCatalog,
   TAX_TREATMENT_LABEL,
   updateLineItem,
   type Asset,
   type QuotationLineItem,
+  type QuotationLineCatalogItem,
   type QuotationSection,
   type TaxTreatment,
 } from "@/lib/api";
@@ -64,6 +66,23 @@ export function LineItemDialog({
   const { accessToken } = useAuth();
   const { history, remember } = useQuotationSuggestions();
   const isEdit = editingItem !== null;
+  const [catalog, setCatalog] = useState<QuotationLineCatalogItem[]>([]);
+  useEffect(() => {
+    if (open && accessToken && !isEdit) listQuotationLineCatalog(accessToken).then(setCatalog).catch(() => setCatalog([]));
+  }, [open, accessToken, isEdit]);
+
+  function applyCatalogItem(id: string) {
+    const item = catalog.find((entry) => entry.id === id);
+    if (!item) return;
+    setDescription(item.description);
+    setSpecification(item.specification ?? "");
+    setBrand(item.brand ?? "");
+    setModel(item.model ?? "");
+    setUnit(item.unit);
+    setUnitPriceBeforeVat(item.unitPriceBeforeVat);
+    setTaxTreatment(item.taxTreatment);
+    setCostingMode("direct");
+  }
 
   const [description, setDescription] = useState(editingItem?.description ?? "");
   const [specification, setSpecification] = useState(editingItem?.specification ?? "");
@@ -150,6 +169,7 @@ export function LineItemDialog({
           </DialogHeader>
 
           <div className="mt-4 space-y-4">
+            {!isEdit && <div className="space-y-1.5"><Label htmlFor="li-catalog">Saved line item (optional)</Label><Select id="li-catalog" defaultValue="" onChange={(e) => applyCatalogItem(e.target.value)}><option value="">Choose a saved item…</option>{catalog.map((item) => <option key={item.id} value={item.id}>{item.description} · {item.unitPriceBeforeVat}</option>)}</Select><p className="text-xs text-muted-foreground">Selecting an item fills this form. You can adjust the copy for this quotation.</p></div>}
             <div className="space-y-1.5">
               <Label htmlFor="li-description">Description</Label>
               <SuggestedInput id="li-description" value={description} onChange={(e) => setDescription(e.target.value)} suggestions={history.lineDescription ?? []} required aria-invalid={!!fieldErrors?.description} aria-describedby={fieldErrors?.description ? "li-description-error" : undefined} />

@@ -5,19 +5,19 @@ import { useAuth } from "@/lib/auth-context";
 import {
   approveRevision,
   createNextRevision,
-  expireRevision,
   recordRevisionDecision,
   rejectRevision,
   markRevisionSent,
   submitRevision,
   type QuotationRevision,
+  type QuotationType,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 
-type DialogKind = "reject" | "send" | "accept" | "decline" | "expire" | null;
+type DialogKind = "submit" | "approve" | "approveFinal" | "reject" | "send" | "accept" | "decline" | "newRevision" | null;
 
 // Contextual lifecycle actions — only the transitions valid from the
 // CURRENT revision's CURRENT status are rendered, mirroring the backend's
@@ -44,6 +44,8 @@ export function LifecycleActionBar({
   quotationId,
   revision,
   lineItemCount,
+  quotationType,
+  sectionCount = 1,
   hasUnsavedDetails = false,
   onChanged,
   onConflict,
@@ -52,6 +54,8 @@ export function LifecycleActionBar({
   quotationId: string;
   revision: QuotationRevision;
   lineItemCount: number;
+  quotationType?: QuotationType;
+  sectionCount?: number;
   hasUnsavedDetails?: boolean;
   onChanged: () => void;
   onConflict: () => void;
@@ -76,6 +80,11 @@ export function LifecycleActionBar({
   const canUpdate = hasPermission("quotations", "update");
   const canCreate = hasPermission("quotations", "create");
   const hasPlaceholderTerms = revision.termsAndConditions?.includes("[PLACEHOLDER") ?? false;
+
+  function openDialog(kind: Exclude<DialogKind, null>) {
+    setError(null);
+    setDialog(kind);
+  }
 
   async function run(action: () => Promise<unknown>) {
     if (!accessToken) return;
@@ -103,6 +112,7 @@ export function LifecycleActionBar({
     setError(null);
     try {
       const next = await createNextRevision(accessToken, quotationId);
+      setDialog(null);
       onNextRevisionCreated(next.id);
     } catch (e) {
       if (isStaleStatusError(e)) {
@@ -120,11 +130,12 @@ export function LifecycleActionBar({
   if (revision.status === "DRAFT" && canUpdate) {
     buttons.push(
       <div key="submit" className="flex flex-col items-start gap-1">
-        <Button onClick={() => run(() => submitRevision(accessToken!, quotationId, revision.id))} disabled={submitting || lineItemCount === 0 || hasUnsavedDetails}>
+        <Button onClick={() => openDialog("submit")} disabled={submitting || lineItemCount === 0 || hasUnsavedDetails || (quotationType === "PROJECT" && sectionCount === 0)}>
           Submit for Approval
         </Button>
         {lineItemCount === 0 && <p className="text-xs text-muted-foreground">Add at least one line item first.</p>}
-        {hasUnsavedDetails && <p className="text-xs text-muted-foreground">Save details and commercial terms before submitting.</p>}
+        {quotationType === "PROJECT" && sectionCount === 0 && <p className="text-xs text-muted-foreground">Add a project section before submitting.</p>}
+        {hasUnsavedDetails && <p className="text-xs text-muted-foreground">Wait for details and commercial terms to save before submitting.</p>}
       </div>,
     );
   }
@@ -136,14 +147,14 @@ export function LifecycleActionBar({
     // either way, no client-side amount branching needed.
     if (canApprove) {
       buttons.push(
-        <Button key="approve" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
+        <Button key="approve" onClick={() => openDialog("approve")} disabled={submitting}>
           Approve internal review
         </Button>,
       );
     }
     if (canReject) {
       buttons.push(
-        <Button key="reject" variant="destructive" onClick={() => setDialog("reject")} disabled={submitting}>
+        <Button key="reject" variant="destructive" onClick={() => openDialog("reject")} disabled={submitting}>
           Reject
         </Button>,
       );
@@ -157,14 +168,14 @@ export function LifecycleActionBar({
     // what the server would 403 if they tried anyway.
     if (canApproveFinal) {
       buttons.push(
-        <Button key="approve-final" onClick={() => run(() => approveRevision(accessToken!, quotationId, revision.id))} disabled={submitting}>
+        <Button key="approve-final" onClick={() => openDialog("approveFinal")} disabled={submitting}>
           Give final approval
         </Button>,
       );
     }
     if (canRejectFinal) {
       buttons.push(
-        <Button key="reject-final" variant="destructive" onClick={() => setDialog("reject")} disabled={submitting}>
+        <Button key="reject-final" variant="destructive" onClick={() => openDialog("reject")} disabled={submitting}>
           Final Reject (Owner)
         </Button>,
       );
@@ -173,7 +184,7 @@ export function LifecycleActionBar({
 
   if (revision.status === "APPROVED" && canUpdate) {
     buttons.push(
-      <Button key="send" onClick={() => setDialog("send")} disabled={submitting || hasPlaceholderTerms}>
+      <Button key="send" onClick={() => openDialog("send")} disabled={submitting || hasPlaceholderTerms}>
         Mark as sent
       </Button>,
     );
@@ -181,14 +192,11 @@ export function LifecycleActionBar({
 
   if (revision.status === "SENT" && canUpdate) {
     buttons.push(
-      <Button key="accept" onClick={() => setDialog("accept")} disabled={submitting}>
-        Record: Customer Accepted
+      <Button key="accept" onClick={() => openDialog("accept")} disabled={submitting}>
+        Customer Accepted
       </Button>,
-      <Button key="decline" variant="outline" onClick={() => setDialog("decline")} disabled={submitting}>
-        Record: Customer Declined
-      </Button>,
-      <Button key="expire" variant="outline" onClick={() => setDialog("expire")} disabled={submitting}>
-        Mark Expired
+      <Button key="decline" variant="destructive" onClick={() => openDialog("decline")} disabled={submitting}>
+        Customer Declined
       </Button>,
     );
   }
@@ -229,13 +237,35 @@ export function LifecycleActionBar({
         )}
         {buttons}
         {canCreateNext && (
-          <Button variant="outline" onClick={handleCreateNextRevision} disabled={creatingRevision || hasUnsavedDetails}>
+          <Button variant="outline" onClick={() => openDialog("newRevision")} disabled={creatingRevision || hasUnsavedDetails}>
             {creatingRevision ? "Creating…" : "Create New Revision"}
           </Button>
         )}
         {error && <p className="w-full text-sm text-destructive">{error}</p>}
       </CardContent>
 
+      <ActionConfirmDialog
+        open={dialog === "submit"}
+        onOpenChange={(open) => !open && setDialog(null)}
+        title="Submit quotation for approval?"
+        description="This locks the current revision and sends it for internal review."
+        reasonMode="none"
+        confirmLabel="Submit for approval"
+        submitting={submitting}
+        error={error}
+        onConfirm={() => run(() => submitRevision(accessToken!, quotationId, revision.id))}
+      />
+      <ActionConfirmDialog
+        open={dialog === "approve" || dialog === "approveFinal"}
+        onOpenChange={(open) => !open && setDialog(null)}
+        title={dialog === "approveFinal" ? "Give final approval?" : "Approve internal review?"}
+        description={dialog === "approveFinal" ? "This completes the internal approval required before the quotation can be sent." : "The approval threshold determines whether Owner approval is also required."}
+        reasonMode="none"
+        confirmLabel={dialog === "approveFinal" ? "Give final approval" : "Approve review"}
+        submitting={submitting}
+        error={error}
+        onConfirm={() => run(() => approveRevision(accessToken!, quotationId, revision.id))}
+      />
       <ActionConfirmDialog
         open={dialog === "reject"}
         onOpenChange={(open) => !open && setDialog(null)}
@@ -273,7 +303,7 @@ export function LifecycleActionBar({
       <ActionConfirmDialog
         open={dialog === "decline"}
         onOpenChange={(open) => !open && setDialog(null)}
-        title="Record customer decline"
+        title="Are you sure you want to decline this quotation?"
         description="A reason is optional but helpful for follow-up."
         reasonMode="optional"
         confirmLabel="Confirm Declined"
@@ -283,16 +313,15 @@ export function LifecycleActionBar({
         onConfirm={(reason) => run(() => recordRevisionDecision(accessToken!, quotationId, revision.id, "DECLINED", reason || undefined))}
       />
       <ActionConfirmDialog
-        open={dialog === "expire"}
+        open={dialog === "newRevision"}
         onOpenChange={(open) => !open && setDialog(null)}
-        title="Mark this revision as expired"
-        description="Can be used even before the stated valid-until date. A reason is required."
-        reasonMode="required"
-        confirmLabel="Mark Expired"
-        confirmVariant="destructive"
-        submitting={submitting}
+        title="Create a new revision?"
+        description="This starts a new draft revision for further changes and approval."
+        reasonMode="none"
+        confirmLabel="Create new revision"
+        submitting={creatingRevision}
         error={error}
-        onConfirm={(reason) => run(() => expireRevision(accessToken!, quotationId, revision.id, reason))}
+        onConfirm={handleCreateNextRevision}
       />
     </Card>
   );

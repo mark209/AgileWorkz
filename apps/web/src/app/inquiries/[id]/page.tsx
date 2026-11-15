@@ -150,10 +150,10 @@ export default function InquiryDetailPage() {
         <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Site" value={site?.label ?? "—"} />
           <Field label="Contact" value={contact?.fullName ?? "—"} />
-          <Field label="Source" value={source?.label ?? "—"} />
-          <Field label="Trade" value={trade?.label ?? "—"} />
-          <Field label="Inquiry type" value={inquiryType?.label ?? "—"} />
-          <Field label="Customer reference no." value={inquiry.customerReferenceNo ?? "—"} />
+          <Field label="Source" value={inquiry.sourceOther || source?.label || "—"} />
+          <Field label="Trade" value={inquiry.tradeOther || trade?.label || "—"} />
+          <Field label="Inquiry type" value={inquiry.inquiryTypeOther || inquiryType?.label || "—"} />
+          <Field label="Inquiry number" value={inquiry.inquiryNumber} />
           <Field label="Preferred service date" value={formatDate(inquiry.preferredServiceDate)} />
           <Field label="Created" value={formatDateTime(inquiry.createdAt)} />
           {inquiry.status === "CLOSED" && <Field label="Closed" value={formatDateTime(inquiry.closedAt)} />}

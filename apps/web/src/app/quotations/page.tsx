@@ -109,7 +109,6 @@ function QuotationsListPageContent() {
                   <TableHead>Quotation #</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Reference #</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead />
                 </TableRow>
@@ -118,11 +117,10 @@ function QuotationsListPageContent() {
                 {visibleQuotations.map((q) => (
                   <TableRow key={q.id}>
                     <TableCell className="font-medium"><Link href={`/quotations/${q.id}`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{q.quotationNumber}</Link></TableCell>
-                    <TableCell>{QUOTATION_TYPE_LABEL[q.quotationType]}</TableCell>
+                    <TableCell>{q.quotationTypeOther || QUOTATION_TYPE_LABEL[q.quotationType]}</TableCell>
                     <TableCell>
                       <StatusBadge status={q.status} />
                     </TableCell>
-                    <TableCell>{q.customerReferenceNo ?? "—"}</TableCell>
                     <TableCell>{new Date(q.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
                       <Link href={`/quotations/${q.id}`} className="whitespace-nowrap text-sm font-medium text-primary hover:underline">

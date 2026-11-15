@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { SuggestedInput } from "@/components/quotations/suggested-input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -39,9 +40,11 @@ export function CreateInquiryDialog({
   const [siteId, setSiteId] = useState("");
   const [contactId, setContactId] = useState("");
   const [sourceCode, setSourceCode] = useState("");
+  const [sourceOther, setSourceOther] = useState("");
   const [tradeCode, setTradeCode] = useState("");
+  const [tradeOther, setTradeOther] = useState("");
   const [inquiryTypeCode, setInquiryTypeCode] = useState("");
-  const [customerReferenceNo, setCustomerReferenceNo] = useState("");
+  const [inquiryTypeOther, setInquiryTypeOther] = useState("");
   const [preferredServiceDate, setPreferredServiceDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,9 +55,11 @@ export function CreateInquiryDialog({
     setSiteId("");
     setContactId("");
     setSourceCode("");
+    setSourceOther("");
     setTradeCode("");
+    setTradeOther("");
     setInquiryTypeCode("");
-    setCustomerReferenceNo("");
+    setInquiryTypeOther("");
     setPreferredServiceDate("");
     setError(null);
   }
@@ -71,9 +76,11 @@ export function CreateInquiryDialog({
         siteId: siteId || undefined,
         contactId: contactId || undefined,
         sourceCode: sourceCode || undefined,
+        sourceOther: sourceCode === "OTHER" ? sourceOther.trim() : undefined,
         tradeCode: tradeCode || undefined,
-        inquiryTypeCode: inquiryTypeCode || undefined,
-        customerReferenceNo: customerReferenceNo || undefined,
+        tradeOther: tradeCode === "OTHER" ? tradeOther.trim() : undefined,
+        inquiryTypeCode: inquiryTypeCode === "__custom__" ? undefined : inquiryTypeCode || undefined,
+        inquiryTypeOther: inquiryTypeCode === "__custom__" ? inquiryTypeOther.trim() : undefined,
         preferredServiceDate: preferredServiceDate || undefined,
       });
       onCreated(inquiry);
@@ -145,44 +152,34 @@ export function CreateInquiryDialog({
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="inquiry-source">Source (optional)</Label>
-                <Select id="inquiry-source" value={sourceCode} onChange={(e) => setSourceCode(e.target.value)}>
-                  <option value="">—</option>
-                  {inquirySources.map((s) => (
-                    <option key={s.code} value={s.code}>
-                      {s.label}
-                    </option>
-                  ))}
-                </Select>
+                <SuggestedInput id="inquiry-source" value={sourceCode === "OTHER" ? sourceOther : inquirySources.find((source) => source.code === sourceCode)?.label ?? ""} suggestions={inquirySources.filter((source) => source.code !== "OTHER").map((source) => source.label)} onChange={(e) => {
+                  const text = e.target.value;
+                  const source = inquirySources.find((item) => item.code !== "OTHER" && item.label.toLowerCase() === text.trim().toLowerCase());
+                  setSourceCode(source?.code ?? (text.trim() ? "OTHER" : ""));
+                  setSourceOther(source ? "" : text);
+                }} placeholder="Select or type a source" maxLength={80} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="inquiry-trade">Trade (optional)</Label>
-                <Select id="inquiry-trade" value={tradeCode} onChange={(e) => setTradeCode(e.target.value)}>
-                  <option value="">—</option>
-                  {trades.map((t) => (
-                    <option key={t.code} value={t.code}>
-                      {t.label}
-                    </option>
-                  ))}
-                </Select>
+                <SuggestedInput id="inquiry-trade" value={tradeCode === "OTHER" ? tradeOther : trades.find((trade) => trade.code === tradeCode)?.label ?? ""} suggestions={trades.filter((trade) => trade.code !== "OTHER").map((trade) => trade.label)} onChange={(e) => {
+                  const text = e.target.value;
+                  const trade = trades.find((item) => item.code !== "OTHER" && item.label.toLowerCase() === text.trim().toLowerCase());
+                  setTradeCode(trade?.code ?? (text.trim() ? "OTHER" : ""));
+                  setTradeOther(trade ? "" : text);
+                }} placeholder="Select or type a trade" maxLength={80} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="inquiry-type">Type (optional)</Label>
-                <Select id="inquiry-type" value={inquiryTypeCode} onChange={(e) => setInquiryTypeCode(e.target.value)}>
-                  <option value="">—</option>
-                  {inquiryTypes.map((t) => (
-                    <option key={t.code} value={t.code}>
-                      {t.label}
-                    </option>
-                  ))}
-                </Select>
+                <SuggestedInput id="inquiry-type" value={inquiryTypeCode === "__custom__" ? inquiryTypeOther : inquiryTypes.find((type) => type.code === inquiryTypeCode)?.label ?? ""} suggestions={inquiryTypes.map((type) => type.label)} onChange={(e) => {
+                  const text = e.target.value;
+                  const type = inquiryTypes.find((item) => item.label.toLowerCase() === text.trim().toLowerCase());
+                  setInquiryTypeCode(type?.code ?? (text.trim() ? "__custom__" : ""));
+                  setInquiryTypeOther(type ? "" : text);
+                }} placeholder="Select or type an inquiry type" maxLength={80} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="inquiry-ref">Customer reference no. (optional)</Label>
-                <Input id="inquiry-ref" value={customerReferenceNo} onChange={(e) => setCustomerReferenceNo(e.target.value)} />
-              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="inquiry-date">Preferred service date (optional)</Label>
                 <Input

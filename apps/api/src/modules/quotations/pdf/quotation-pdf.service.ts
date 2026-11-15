@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { buildQuotationPdfDocument, QuotationPdfApprovalEvent, QuotationPdfLineItem } from "./quotation-pdf-document";
@@ -33,6 +33,9 @@ export class QuotationPdfService {
     });
     if (!revision || revision.quotationId !== quotationId) {
       throw new NotFoundException("Quotation revision not found");
+    }
+    if (!revision.approvedAt) {
+      throw new ForbiddenException("The quotation PDF is available only after final approval");
     }
 
     // Approval remains valid when the same revision later becomes SENT,

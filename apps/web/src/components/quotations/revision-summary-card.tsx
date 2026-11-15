@@ -1,4 +1,4 @@
-import { formatMoney, formatPercent } from "@/lib/format";
+import { formatDate, formatMoney, formatPercent } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { QuotationRevision } from "@/lib/api";
 
@@ -32,6 +32,12 @@ export function RevisionSummaryCard({ revision }: { revision: QuotationRevision 
         <Row label={`VAT (${formatPercent(revision.vatRatePercent)})`} value={formatMoney(revision.vatAmount)} />
         <div className="mt-1 border-t pt-1.5">
           <Row label="Total" value={formatMoney(revision.totalAmount)} emphasize />
+        </div>
+        <div className="mt-3 border-t pt-2 text-sm">
+          <p><span className="text-muted-foreground">Payment:</span> {revision.paymentTerms?.trim() || "—"}</p>
+          <p><span className="text-muted-foreground">{/^\d{4}-\d{2}-\d{2}$/.test(revision.warranty ?? "") ? "Warranty until:" : "Warranty:"}</span> {/^\d{4}-\d{2}-\d{2}$/.test(revision.warranty ?? "") ? formatDate(`${revision.warranty}T00:00:00`) : revision.warranty || "—"}</p>
+          <p><span className="text-muted-foreground">{/^\d{4}-\d{2}-\d{2}$/.test(revision.leadTime ?? "") ? "Lead time date:" : "Lead time:"}</span> {/^\d{4}-\d{2}-\d{2}$/.test(revision.leadTime ?? "") ? formatDate(`${revision.leadTime}T00:00:00`) : revision.leadTime || "—"}</p>
+          <p><span className="text-muted-foreground">Valid until:</span> {formatDate(revision.validUntil)}</p>
         </div>
       </CardContent>
     </Card>

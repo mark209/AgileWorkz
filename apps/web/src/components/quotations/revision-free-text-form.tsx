@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { TAX_TREATMENT_LABEL, updateRevisionContent, type QuotationRevision, type TaxTreatment } from "@/lib/api";
+import { listPaymentTerms, listQuotationTemplates, TAX_TREATMENT_LABEL, updateRevisionContent, type QuotationRevision, type QuotationTermTemplate, type TaxTreatment } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { formatMoney } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,11 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SuggestedInput, useQuotationSuggestions } from "./suggested-input";
+import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 
 type DiscountMode = "percent" | "amount";
+
+const isDateValue = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 function textUpdate(value: string, previousValue: string | null) {
   return value === "" && !previousValue ? undefined : value;
@@ -40,9 +42,9 @@ export function RevisionFreeTextForm({
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { accessToken } = useAuth();
-  const { history, remember } = useQuotationSuggestions();
   const [scopeOfWork, setScopeOfWork] = useState(revision.scopeOfWork ?? "");
   const [paymentTerms, setPaymentTerms] = useState(revision.paymentTerms ?? "");
+  const [customPayment, setCustomPayment] = useState(false);
   const [warranty, setWarranty] = useState(revision.warranty ?? "");
   const [leadTime, setLeadTime] = useState(revision.leadTime ?? "");
   const [notes, setNotes] = useState(revision.notes ?? "");
@@ -59,38 +61,93 @@ export function RevisionFreeTextForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState<string[]>([]);
+  const [officialTemplate, setOfficialTemplate] = useState<QuotationTermTemplate | null>(null);
+  const [confirmTemplate, setConfirmTemplate] = useState(false);
+  const [editVersion, setEditVersion] = useState(0);
+  const latestVersion = useRef(0);
+  const savedVersion = useRef(0);
+  const saving = useRef(false);
 
   const hasPlaceholder = termsAndConditions.includes("[PLACEHOLDER");
 
-  async function handleSave(event: React.FormEvent) {
-    event.preventDefault();
+  useEffect(() => {
     if (!accessToken) return;
+    let active = true;
+    listPaymentTerms(accessToken).then((values) => {
+      if (active) {
+        setPaymentOptions(values);
+        if (paymentTerms && !values.includes(paymentTerms)) setCustomPayment(true);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let active = true;
+    listQuotationTemplates(accessToken).then((templates) => {
+      if (active) setOfficialTemplate(templates.find((template) => template.status === "ACTIVE" && template.isDefault && !template.quotationType && !template.tradeCode && !template.body.includes("[PLACEHOLDER")) ?? null);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [accessToken]);
+
+  const latestValues = useRef({ scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision });
+  latestValues.current = { scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision };
+
+  async function saveChanges() {
+    if (!accessToken || saving.current) return;
+    if (customPayment && !paymentTerms.trim()) {
+      setError("Enter custom payment terms before saving.");
+      return;
+    }
+    saving.current = true;
     setSubmitting(true);
     setError(null);
     setSavedNotice(false);
     try {
-      await updateRevisionContent(accessToken, quotationId, revisionId, {
-        scopeOfWork: textUpdate(scopeOfWork, revision.scopeOfWork),
-        paymentTerms: textUpdate(paymentTerms, revision.paymentTerms),
-        warranty: textUpdate(warranty, revision.warranty),
-        leadTime: textUpdate(leadTime, revision.leadTime),
-        notes: textUpdate(notes, revision.notes),
-        exclusions: textUpdate(exclusions, revision.exclusions),
-        termsAndConditions: textUpdate(termsAndConditions, revision.termsAndConditions),
-        validUntil: validUntil || undefined,
-        defaultTaxTreatment,
-        discountPercent: discountMode === "percent" ? Number(discountValue) : undefined,
-        discountAmount: discountMode === "amount" ? Number(discountValue) : undefined,
-      });
-      remember("leadTime", leadTime);
+      while (savedVersion.current < latestVersion.current) {
+        const version = latestVersion.current;
+        const value = latestValues.current;
+        await updateRevisionContent(accessToken, quotationId, revisionId, {
+          scopeOfWork: textUpdate(value.scopeOfWork, value.revision.scopeOfWork),
+          paymentTerms: textUpdate(value.paymentTerms, value.revision.paymentTerms),
+          warranty: textUpdate(value.warranty, value.revision.warranty),
+          leadTime: textUpdate(value.leadTime, value.revision.leadTime),
+          notes: textUpdate(value.notes, value.revision.notes),
+          exclusions: textUpdate(value.exclusions, value.revision.exclusions),
+          termsAndConditions: textUpdate(value.termsAndConditions, value.revision.termsAndConditions),
+          validUntil: value.validUntil || undefined,
+          defaultTaxTreatment: value.defaultTaxTreatment,
+          discountPercent: value.discountMode === "percent" ? Number(value.discountValue) : undefined,
+          discountAmount: value.discountMode === "amount" ? Number(value.discountValue) : undefined,
+        });
+        savedVersion.current = version;
+      }
       setSavedNotice(true);
       onDirtyChange?.(false);
       onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to save.");
     } finally {
+      saving.current = false;
       setSubmitting(false);
     }
+  }
+
+  useEffect(() => {
+    if (!canEdit || editVersion === 0) return;
+    const timer = window.setTimeout(() => { void saveChanges(); }, 700);
+    return () => window.clearTimeout(timer);
+    // The version changes for every edit. Values are read from latestValues when saving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editVersion, canEdit]);
+
+  function markChanged() {
+    latestVersion.current += 1;
+    setEditVersion(latestVersion.current);
+    setSavedNotice(false);
+    onDirtyChange?.(true);
   }
 
   if (!canEdit) {
@@ -128,7 +185,7 @@ export function RevisionFreeTextForm({
         <CardTitle className="text-base">Quotation details</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 sm:px-5">
-        <form onSubmit={handleSave} onChangeCapture={() => { setSavedNotice(false); onDirtyChange?.(true); }} className="space-y-4">
+        <div onChangeCapture={markChanged} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="rf-scope">Scope of work</Label>
             <Textarea id="rf-scope" value={scopeOfWork} onChange={(e) => setScopeOfWork(e.target.value)} rows={3} />
@@ -137,18 +194,30 @@ export function RevisionFreeTextForm({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="rf-payment">Payment terms</Label>
-              <Textarea id="rf-payment" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} rows={2} />
+              <Select id="rf-payment" value={customPayment ? "__custom__" : paymentTerms} onChange={(e) => {
+                setCustomPayment(e.target.value === "__custom__");
+                setPaymentTerms(e.target.value === "__custom__" ? "" : e.target.value);
+              }}>
+                <option value="">— Select payment terms —</option>
+                {paymentOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                <option value="__custom__">Custom…</option>
+              </Select>
+              {customPayment && (
+                <Input aria-label="Custom payment terms" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="Enter payment terms" />
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-warranty">Warranty</Label>
-              <Textarea id="rf-warranty" value={warranty} onChange={(e) => setWarranty(e.target.value)} rows={2} />
+              <Input id="rf-warranty" type="date" value={isDateValue(warranty) ? warranty : ""} onChange={(e) => setWarranty(e.target.value)} />
+              {warranty && !isDateValue(warranty) && <p className="text-xs text-muted-foreground">Previous wording: {warranty}. Choose a date to replace it.</p>}
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="rf-leadtime">Lead time</Label>
-              <SuggestedInput id="rf-leadtime" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} suggestions={history.leadTime ?? []} />
+              <Input id="rf-leadtime" type="date" value={isDateValue(leadTime) ? leadTime : ""} onChange={(e) => setLeadTime(e.target.value)} />
+              {leadTime && !isDateValue(leadTime) && <p className="text-xs text-muted-foreground">Previous wording: {leadTime}. Choose a date to replace it.</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-valid-until">Valid until</Label>
@@ -168,7 +237,10 @@ export function RevisionFreeTextForm({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="rf-tc">Terms &amp; conditions</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="rf-tc">Terms &amp; conditions</Label>
+              {officialTemplate && <Button type="button" variant="outline" size="sm" onClick={() => setConfirmTemplate(true)}>Use official template</Button>}
+            </div>
             <Textarea id="rf-tc" value={termsAndConditions} onChange={(e) => setTermsAndConditions(e.target.value)} rows={5} />
             {hasPlaceholder && (
               <p className="flex items-center gap-1.5 text-xs text-amber-800">
@@ -191,7 +263,7 @@ export function RevisionFreeTextForm({
                 ))}
               </Select>
               <p className="text-xs text-muted-foreground">
-                Applies to new line items; each line can be changed separately. For VAT Inclusive, the calculated total includes VAT added to the entered pre-VAT price. VAT Exempt adds no VAT.
+                Applies to new line items; each line can be changed separately. Enter the price before VAT. VAT Inclusive adds VAT to show the customer total; VAT Exempt adds no VAT.
               </p>
             </div>
             <div className="space-y-1.5">
@@ -216,12 +288,21 @@ export function RevisionFreeTextForm({
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-          {savedNotice && !error && <p className="text-sm text-emerald-700">Saved — totals recalculated.</p>}
-
-          <Button type="submit" disabled={submitting}>
-            {submitting ? "Saving…" : "Save details and commercial terms"}
-          </Button>
-        </form>
+          {submitting && <p role="status" className="text-sm text-muted-foreground">Saving changes…</p>}
+          {savedNotice && !error && <p role="status" className="text-sm text-emerald-700">Changes saved.</p>}
+          {error && <Button type="button" variant="outline" onClick={() => void saveChanges()}>Retry save</Button>}
+        </div>
+        <ActionConfirmDialog
+          open={confirmTemplate}
+          onOpenChange={setConfirmTemplate}
+          title="Replace Terms & Conditions?"
+          description="The current draft text will be replaced by the saved official template and saved automatically."
+          reasonMode="none"
+          confirmLabel="Use official template"
+          submitting={false}
+          error={null}
+          onConfirm={() => { if (officialTemplate) { setTermsAndConditions(officialTemplate.body); markChanged(); } setConfirmTemplate(false); }}
+        />
       </CardContent>
     </Card>
   );

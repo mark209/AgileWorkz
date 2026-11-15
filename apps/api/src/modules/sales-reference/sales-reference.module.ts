@@ -7,6 +7,10 @@ import { InquiryTypesService } from "./inquiry-types.service";
 import { InquiryTypesController } from "./inquiry-types.controller";
 import { QuotationTermTemplatesService } from "./quotation-term-templates.service";
 import { QuotationTermTemplatesController } from "./quotation-term-templates.controller";
+import { ReferenceSuggestionsController } from "./reference-suggestions.controller";
+import { ReferenceSuggestionsService } from "./reference-suggestions.service";
+import { QuotationLineCatalogController } from "./quotation-line-catalog.controller";
+import { QuotationLineCatalogService } from "./quotation-line-catalog.service";
 import { AuditModule } from "../audit/audit.module";
 
 // Step 4 — the four reference-table modules the approved Phase 3 plan
@@ -18,8 +22,8 @@ import { AuditModule } from "../audit/audit.module";
 // EquipmentReferenceModule throughout — no new pattern introduced.
 @Module({
   imports: [AuditModule],
-  controllers: [TradesController, InquirySourcesController, InquiryTypesController, QuotationTermTemplatesController],
-  providers: [TradesService, InquirySourcesService, InquiryTypesService, QuotationTermTemplatesService],
+  controllers: [TradesController, InquirySourcesController, InquiryTypesController, QuotationTermTemplatesController, ReferenceSuggestionsController, QuotationLineCatalogController],
+  providers: [TradesService, InquirySourcesService, InquiryTypesService, QuotationTermTemplatesService, ReferenceSuggestionsService, QuotationLineCatalogService],
   exports: [TradesService, InquirySourcesService, InquiryTypesService, QuotationTermTemplatesService],
 })
 export class SalesReferenceModule {}

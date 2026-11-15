@@ -205,8 +205,11 @@ export interface Inquiry {
   siteId: string | null;
   contactId: string | null;
   sourceCode: string | null;
+  sourceOther: string | null;
   tradeCode: string | null;
+  tradeOther: string | null;
   inquiryTypeCode: string | null;
+  inquiryTypeOther: string | null;
   subject: string;
   description: string | null;
   customerReferenceNo: string | null;
@@ -226,7 +229,9 @@ export interface Quotation {
   siteId: string;
   quotationNumber: string;
   quotationType: QuotationType;
+  quotationTypeOther?: string | null;
   primaryTradeCode: string;
+  primaryTradeOther?: string | null;
   customerReferenceNo: string | null;
   // Denormalized mirror of the current revision's status — see apps/api's
   // schema.prisma comment on quotations.status. Always trust this for list
@@ -457,13 +462,14 @@ export interface TechnicianOption {
 }
 
 // --- Phase 6 (Dashboard) — the existing GET /audit-logs endpoint's row
-// shape (AuditService/AuditController, unchanged since Phase 1). Never
+// shape (AuditService/AuditController). Never
 // written from the frontend — read-only, matching the backend's own
 // append-only contract.
 export interface AuditLogEntry {
   id: string;
   actorType: "USER" | "SYSTEM" | "WORKER" | "INTEGRATION";
   actorUserId: string | null;
+  actorUser?: { fullName: string } | null;
   action: string;
   entityType: string;
   entityId: string | null;

@@ -257,22 +257,20 @@ export default function QuotationDetailPage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={revision?.status ?? quotation.status} />
-            {revision && (
+            {revision?.approvedAt && (
               <Button variant="outline" onClick={downloadPdf} disabled={pdfBusy}>
-                {pdfBusy ? "Preparing PDF…" : revision.approvedAt ? "Download quotation PDF" : "Download draft PDF"}
+                {pdfBusy ? "Preparing PDF…" : "Download quotation PDF"}
               </Button>
             )}
           </div>
         }
       />
 
-      {revision && (
+      {revision?.approvedAt && (
         <p className="mb-4 text-xs text-muted-foreground">
-          {revision.approvedAt
-            ? revision.status === "APPROVED"
-              ? "Download the approved PDF and send it outside the system. Downloading does not mark it as sent."
-              : "Downloading this revision does not change its status."
-            : "Draft PDFs are for internal review and are not approved for customer sending."}
+          {revision.status === "APPROVED"
+            ? "Download the approved PDF and send it outside the system. Downloading does not mark it as sent."
+            : "Downloading this revision does not change its status."}
         </p>
       )}
       {pdfError && <p role="alert" className="mb-4 text-sm text-destructive">{pdfError}</p>}
@@ -289,6 +287,9 @@ export default function QuotationDetailPage() {
 
       {revisions.length > 0 && viewingRevisionId && (
         <RevisionHistoryNav revisions={revisions} viewingRevisionId={viewingRevisionId} onSelect={handleSelectRevision} />
+      )}
+      {revision && (
+        <p className="mb-1 text-xs text-muted-foreground sm:hidden">Swipe to see all quotation sections →</p>
       )}
       {revision && (
         <nav aria-label="Quotation sections" className="mb-5 flex gap-1 overflow-x-auto border-b text-sm">
@@ -376,14 +377,6 @@ export default function QuotationDetailPage() {
                 />
               </section>
 
-              {revision.isCurrent && revision.status === "ACCEPTED" && (
-                <ConvertToWorkOrdersPanel
-                  quotationId={quotation.id}
-                  revisionId={revision.id}
-                  quotationType={quotation.quotationType}
-                  onConverted={refreshAll}
-                />
-              )}
             </div>
 
             <aside aria-label="Quotation summary and actions" className="min-w-0 space-y-4 xl:sticky xl:top-6">
@@ -400,7 +393,7 @@ export default function QuotationDetailPage() {
                     {revision.termsAndConditions?.includes("[PLACEHOLDER") && (
                       <p className="border-t pt-2 text-muted-foreground">Before customer sending, replace the placeholder <a href="#quotation-commercial-terms" className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Terms &amp; Conditions</a>.</p>
                     )}
-                    <p className="text-xs text-muted-foreground">Readiness reflects saved quotation data. Save details and commercial terms before submitting.</p>
+                    <p className="text-xs text-muted-foreground">Readiness reflects saved quotation data. Wait for the automatic save to finish before submitting.</p>
                   </CardContent>
                 </Card>
               )}
@@ -409,10 +402,21 @@ export default function QuotationDetailPage() {
                   quotationId={quotation.id}
                   revision={revision}
                   lineItemCount={lineItems.length}
+                  quotationType={quotation.quotationType}
+                  sectionCount={sections.length}
                   hasUnsavedDetails={hasUnsavedDetails}
                   onChanged={refreshAll}
                   onConflict={handleConflict}
                   onNextRevisionCreated={handleNextRevisionCreated}
+                />
+              )}
+              {revision.isCurrent && revision.status === "ACCEPTED" && (
+                <ConvertToWorkOrdersPanel
+                  quotationId={quotation.id}
+                  revisionId={revision.id}
+                  quotationType={quotation.quotationType}
+                  sectionCount={sections.length}
+                  onConverted={refreshAll}
                 />
               )}
             </aside>

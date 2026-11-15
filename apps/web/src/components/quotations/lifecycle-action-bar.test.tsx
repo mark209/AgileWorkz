@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { QuotationRevision } from "@/lib/api/types";
 import { LifecycleActionBar } from "./lifecycle-action-bar";
 
@@ -7,6 +8,23 @@ const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
 
 describe("LifecycleActionBar", () => {
+  it("asks for confirmation before approving an internal review", async () => {
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
+    render(
+      <LifecycleActionBar
+        quotationId="q1"
+        revision={{ id: "r1", status: "PENDING_APPROVAL", termsAndConditions: null } as QuotationRevision}
+        lineItemCount={1}
+        onChanged={vi.fn()}
+        onConflict={vi.fn()}
+        onNextRevisionCreated={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve internal review" }));
+    expect(screen.getByRole("dialog", { name: "Approve internal review?" })).toBeInTheDocument();
+  });
+
   it("holds draft submission while details have unsaved edits", () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
     render(
@@ -22,7 +40,7 @@ describe("LifecycleActionBar", () => {
     );
 
     expect(screen.getByRole("button", { name: "Submit for Approval" })).toBeDisabled();
-    expect(screen.getByText("Save details and commercial terms before submitting.")).toBeInTheDocument();
+    expect(screen.getByText("Wait for details and commercial terms to save before submitting.")).toBeInTheDocument();
   });
 
   it("explains why an approved revision with placeholder terms cannot be marked as sent", () => {

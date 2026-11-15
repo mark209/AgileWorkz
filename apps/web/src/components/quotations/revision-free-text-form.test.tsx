@@ -1,134 +1,75 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QuotationRevision } from "@/lib/api/types";
 import { RevisionFreeTextForm } from "./revision-free-text-form";
 
 const { useAuthMock, updateRevisionContentMock } = vi.hoisted(() => ({
-  useAuthMock: vi.fn(),
-  updateRevisionContentMock: vi.fn(),
+  useAuthMock: vi.fn(), updateRevisionContentMock: vi.fn(),
 }));
-
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, updateRevisionContent: updateRevisionContentMock };
+  return {
+    ...actual, updateRevisionContent: updateRevisionContentMock,
+    listPaymentTerms: vi.fn().mockResolvedValue(["Net 30"]),
+    listQuotationTemplates: vi.fn().mockResolvedValue([]),
+  };
 });
 
 const draft = {
-  id: "r1",
-  quotationId: "q1",
-  status: "DRAFT",
-  defaultTaxTreatment: "VAT_INCLUSIVE",
-  discountPercent: "0",
-  discountAmount: "0",
-  paymentTerms: "Net 30",
-  termsAndConditions: "[PLACEHOLDER] Replace before sending",
-  validUntil: null,
+  id: "r1", quotationId: "q1", status: "DRAFT", defaultTaxTreatment: "VAT_INCLUSIVE",
+  discountPercent: "0", discountAmount: "0", paymentTerms: "Net 30",
+  termsAndConditions: "[PLACEHOLDER] Replace before sending", validUntil: null,
 } as QuotationRevision;
 
-describe("RevisionFreeTextForm", () => {
+function renderForm(revision: QuotationRevision = draft, onDirtyChange?: (dirty: boolean) => void) {
+  return render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={revision} onChanged={vi.fn()} onDirtyChange={onDirtyChange} />);
+}
+
+describe("RevisionFreeTextForm auto-save", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.localStorage.clear();
     useAuthMock.mockReturnValue({ accessToken: "token-1", user: { id: "user-1" } });
-    updateRevisionContentMock.mockResolvedValue({ ...draft, termsAndConditions: "" });
+    updateRevisionContentMock.mockImplementation(async (_token, _qid, _rid, body) => ({ ...draft, ...body }));
   });
 
-  it("sends an empty Terms & Conditions value when the draft field is cleared", async () => {
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} />);
-
-    const user = userEvent.setup();
-    await user.clear(screen.getByLabelText("Terms & conditions"));
-    await user.click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-
-    await waitFor(() => {
-      expect(updateRevisionContentMock).toHaveBeenCalledWith(
-        "token-1",
-        "q1",
-        "r1",
-        expect.objectContaining({ termsAndConditions: "" }),
-      );
-    });
+  it("saves cleared Terms & Conditions as an empty value", async () => {
+    renderForm();
+    await userEvent.setup().clear(screen.getByLabelText("Terms & conditions"));
+    await waitFor(() => expect(updateRevisionContentMock).toHaveBeenCalledWith("token-1", "q1", "r1", expect.objectContaining({ termsAndConditions: "" })), { timeout: 3000 });
   });
 
-  it("sends an empty optional text value when that draft field is cleared", async () => {
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} />);
-
-    const user = userEvent.setup();
-    await user.clear(screen.getByLabelText("Payment terms"));
-    await user.click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-
-    await waitFor(() => {
-      expect(updateRevisionContentMock).toHaveBeenCalledWith(
-        "token-1",
-        "q1",
-        "r1",
-        expect.objectContaining({ paymentTerms: "" }),
-      );
-    });
+  it("saves a cleared payment selection and leaves untouched optional fields unset", async () => {
+    renderForm();
+    await userEvent.setup().selectOptions(screen.getByLabelText("Payment terms"), "");
+    await waitFor(() => expect(updateRevisionContentMock).toHaveBeenCalled(), { timeout: 3000 });
+    const body = updateRevisionContentMock.mock.calls[0][3];
+    expect(body.paymentTerms).toBe("");
+    expect(body.scopeOfWork).toBeUndefined();
   });
 
-  it("does not fill untouched optional fields that are null", async () => {
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} />);
-
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-
-    await waitFor(() => {
-      expect(updateRevisionContentMock).toHaveBeenCalled();
-      expect(updateRevisionContentMock.mock.calls[0][3].scopeOfWork).toBeUndefined();
-    });
-  });
-
-  it("keeps a fixed discount in fixed-amount mode when saving", async () => {
-    const fixedDiscountDraft = { ...draft, discountPercent: "0", discountAmount: "500" };
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={fixedDiscountDraft} onChanged={vi.fn()} />);
-
+  it("retains fixed-amount discount mode while saving a changed amount", async () => {
+    renderForm({ ...draft, discountAmount: "500" } as QuotationRevision);
     expect(screen.getByLabelText("Discount")).toHaveValue("amount");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-
-    await waitFor(() => {
-      expect(updateRevisionContentMock).toHaveBeenCalledWith(
-        "token-1",
-        "q1",
-        "r1",
-        expect.objectContaining({ discountAmount: 500, discountPercent: undefined }),
-      );
-    });
+    fireEvent.change(screen.getByLabelText("Discount (₱)"), { target: { value: "400" } });
+    await waitFor(() => expect(updateRevisionContentMock).toHaveBeenCalledWith("token-1", "q1", "r1", expect.objectContaining({ discountAmount: 400, discountPercent: undefined })), { timeout: 3000 });
   });
 
-  it("reports unsaved edits until the details API succeeds", async () => {
+  it("reports unsaved edits until the API succeeds", async () => {
     const onDirtyChange = vi.fn();
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} onDirtyChange={onDirtyChange} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Lead time"), "Two weeks");
+    renderForm(draft, onDirtyChange);
+    fireEvent.change(screen.getByLabelText("Lead time"), { target: { value: "2026-12-01" } });
     expect(onDirtyChange).toHaveBeenCalledWith(true);
-    await user.click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false), { timeout: 3000 });
   });
 
-  it("offers the last saved lead time as a suggestion without changing the current field", async () => {
-    const user = userEvent.setup();
-    const view = render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} />);
-    await user.type(screen.getByLabelText("Lead time"), "Two weeks");
-    await user.click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-    await waitFor(() => expect(window.localStorage.getItem("agileworks-quotation-suggestions:user-1")).toContain("Two weeks"));
-
-    view.unmount();
-    render(<RevisionFreeTextForm quotationId="q2" revisionId="r2" canEdit revision={draft} onChanged={vi.fn()} />);
-    const leadTime = screen.getByLabelText("Lead time");
-    expect(leadTime).toHaveValue("");
-    expect(document.getElementById(leadTime.getAttribute("list")!)?.querySelector("option")?.value).toBe("Two weeks");
-  });
-
-  it("does not remember a value when saving fails", async () => {
+  it("shows a retry action when auto-save fails", async () => {
     updateRevisionContentMock.mockRejectedValueOnce(new Error("Save failed"));
-    const user = userEvent.setup();
-    render(<RevisionFreeTextForm quotationId="q1" revisionId="r1" canEdit revision={draft} onChanged={vi.fn()} />);
-    await user.type(screen.getByLabelText("Lead time"), "Three weeks");
-    await user.click(screen.getByRole("button", { name: "Save details and commercial terms" }));
-    await screen.findByText("Failed to save.");
-    expect(window.localStorage.getItem("agileworks-quotation-suggestions:user-1")).toBeNull();
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Warranty"), { target: { value: "2026-12-31" } });
+    expect(await screen.findByText("Failed to save.", {}, { timeout: 3000 })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry save" }));
+    await waitFor(() => expect(updateRevisionContentMock).toHaveBeenCalledTimes(2), { timeout: 3000 });
   });
 });

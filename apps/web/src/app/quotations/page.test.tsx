@@ -51,7 +51,7 @@ describe("QuotationsListPage", () => {
   it("loads with no status filter by default", async () => {
     listQuotationsMock.mockResolvedValue([quotation()]);
     render(<QuotationsListPage />);
-    expect(await screen.findByText("QT-2026-08-00001")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "QT-2026-08-00001" })).toBeInTheDocument();
     expect(listQuotationsMock).toHaveBeenCalledWith("token-1", undefined);
   });
 
@@ -59,7 +59,7 @@ describe("QuotationsListPage", () => {
     useSearchParamsMock.mockReturnValue(new URLSearchParams("status=PENDING_APPROVAL"));
     listQuotationsMock.mockResolvedValue([quotation({ status: "PENDING_APPROVAL" })]);
     render(<QuotationsListPage />);
-    await screen.findByText("QT-2026-08-00001");
+    await screen.findByRole("link", { name: "QT-2026-08-00001" });
     expect(listQuotationsMock).toHaveBeenCalledWith("token-1", "PENDING_APPROVAL");
   });
 

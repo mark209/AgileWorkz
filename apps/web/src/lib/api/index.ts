@@ -79,6 +79,17 @@ export function updateSite(accessToken: string, id: string, body: { label: strin
 export function listServiceReportTypes(accessToken: string) {
   return apiRequest<Array<{ code: string; label: string }>>("/service-reports/types", { accessToken });
 }
+export interface DirectReportTarget {
+  id: string;
+  name: string;
+  sites: Array<{ id: string; label: string }>;
+}
+export function searchDirectReportTargets(accessToken: string, search: string) {
+  return apiRequest<DirectReportTarget[]>(`/service-reports/direct-targets?search=${encodeURIComponent(search)}`, { accessToken });
+}
+export function listMyServiceReports(accessToken: string) {
+  return apiRequest<ServiceReportListItem[]>("/service-reports/mine", { accessToken });
+}
 export function uploadCustomerServiceReport(accessToken: string, customerId: string, input: {
   siteId: string; reportTypeCode: string; sourceType: string; file: File; idempotencyKey: string;
 }) {
@@ -86,6 +97,18 @@ export function uploadCustomerServiceReport(accessToken: string, customerId: str
   form.append("siteId", input.siteId);
   form.append("reportTypeCode", input.reportTypeCode);
   form.append("sourceType", input.sourceType);
+  form.append("file", input.file);
+  return uploadFileWithProgress<{ id: string; serviceReportNumber: string }>(
+    `/customers/${customerId}/service-reports`, accessToken, form, undefined, input.idempotencyKey,
+  );
+}
+export function uploadWorkOrderServiceReport(accessToken: string, customerId: string, input: {
+  siteId: string; workOrderId: string; reportTypeCode: string; file: File; idempotencyKey: string;
+}) {
+  const form = new FormData();
+  form.append("siteId", input.siteId);
+  form.append("workOrderId", input.workOrderId);
+  form.append("reportTypeCode", input.reportTypeCode);
   form.append("file", input.file);
   return uploadFileWithProgress<{ id: string; serviceReportNumber: string }>(
     `/customers/${customerId}/service-reports`, accessToken, form, undefined, input.idempotencyKey,
@@ -162,8 +185,11 @@ export interface InquiryFormInput {
   siteId?: string;
   contactId?: string;
   sourceCode?: string;
+  sourceOther?: string;
   tradeCode?: string;
+  tradeOther?: string;
   inquiryTypeCode?: string;
+  inquiryTypeOther?: string;
   customerReferenceNo?: string;
   preferredServiceDate?: string;
 }
@@ -179,7 +205,9 @@ export function closeInquiry(accessToken: string, id: string) {
 export interface ConvertInquiryInput {
   siteId: string;
   quotationType: QuotationType;
+  quotationTypeOther?: string;
   primaryTradeCode?: string;
+  primaryTradeOther?: string;
   customerReferenceNo?: string;
   scopeOfWork?: string;
   defaultTaxTreatment?: TaxTreatment;
@@ -205,7 +233,9 @@ export function listQuotationsForCustomer(accessToken: string, customerId: strin
 export interface CreateQuotationInput {
   siteId: string;
   quotationType: QuotationType;
+  quotationTypeOther?: string;
   primaryTradeCode: string;
+  primaryTradeOther?: string;
   customerReferenceNo?: string;
   scopeOfWork?: string;
   defaultTaxTreatment?: TaxTreatment;
@@ -329,6 +359,11 @@ export function createSection(
   body: { name: string; tradeCode?: string; sortOrder?: number },
 ) {
   return apiRequest<QuotationSection>(sectionsUrl(quotationId, revisionId), { method: "POST", body, accessToken });
+}
+export function correctAcceptedProjectSection(accessToken: string, quotationId: string, revisionId: string, name: string) {
+  return apiRequest<QuotationSection>(`${sectionsUrl(quotationId, revisionId)}/accepted-project-correction`, {
+    method: "POST", body: { name }, accessToken,
+  });
 }
 export function updateSection(
   accessToken: string,
@@ -486,6 +521,54 @@ export function listTrades(accessToken: string) {
 }
 export function listQuotationTemplates(accessToken: string) {
   return apiRequest<QuotationTermTemplate[]>("/quotation-templates", { accessToken });
+}
+export function createQuotationTemplate(accessToken: string, body: { name: string; body: string; isDefault: boolean }) {
+  return apiRequest<QuotationTermTemplate>("/quotation-templates", { method: "POST", body, accessToken });
+}
+export function setQuotationTemplateStatus(accessToken: string, id: string, status: "ACTIVE" | "INACTIVE") {
+  return apiRequest<QuotationTermTemplate>(`/quotation-templates/${id}/status`, { method: "PATCH", body: { status }, accessToken });
+}
+export function listPaymentTerms(accessToken: string) {
+  return apiRequest<string[]>("/quotations/payment-terms", { accessToken });
+}
+export interface ReferenceSuggestion {
+  id: string;
+  kind: string;
+  label: string;
+  operationalType: QuotationType | null;
+  createdAt: string;
+}
+export interface ApprovedQuotationType { id: string; label: string; operationalType: QuotationType | null; }
+export function listPendingReferenceSuggestions(accessToken: string) {
+  return apiRequest<ReferenceSuggestion[]>("/reference-suggestions", { accessToken });
+}
+export function listApprovedQuotationTypes(accessToken: string) {
+  return apiRequest<ApprovedQuotationType[]>("/reference-suggestions/quotation-types", { accessToken });
+}
+export function reviewReferenceSuggestion(accessToken: string, id: string, body: { approved: boolean; code?: string }) {
+  return apiRequest<ReferenceSuggestion>(`/reference-suggestions/${id}/review`, { method: "PATCH", body, accessToken });
+}
+export interface QuotationLineCatalogItem {
+  id: string; description: string; specification: string | null; brand: string | null; model: string | null;
+  unit: string; unitPriceBeforeVat: string; taxTreatment: TaxTreatment; status: "ACTIVE" | "INACTIVE";
+}
+export function listQuotationLineCatalog(accessToken: string, all = false) {
+  return apiRequest<QuotationLineCatalogItem[]>(`/quotation-line-catalog${all ? "/all" : ""}`, { accessToken });
+}
+export function createQuotationLineCatalogItem(accessToken: string, body: {
+  description: string; specification?: string; brand?: string; model?: string; unit: string;
+  unitPriceBeforeVat: number; taxTreatment: TaxTreatment;
+}) {
+  return apiRequest<QuotationLineCatalogItem>("/quotation-line-catalog", { method: "POST", body, accessToken });
+}
+export function updateQuotationLineCatalogItem(accessToken: string, id: string, body: {
+  description: string; specification?: string; brand?: string; model?: string; unit: string;
+  unitPriceBeforeVat: number; taxTreatment: TaxTreatment;
+}) {
+  return apiRequest<QuotationLineCatalogItem>(`/quotation-line-catalog/${id}`, { method: "PATCH", body, accessToken });
+}
+export function setQuotationLineCatalogStatus(accessToken: string, id: string, status: "ACTIVE" | "INACTIVE") {
+  return apiRequest<QuotationLineCatalogItem>(`/quotation-line-catalog/${id}/status`, { method: "PATCH", body: { status }, accessToken });
 }
 export function listInquirySources(accessToken: string) {
   return apiRequest<InquirySource[]>("/inquiry-sources", { accessToken });
