@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listServiceReports, type ServiceReportListItem } from "@/lib/api";
+import { listMyServiceReports, listServiceReports, type ServiceReportListItem } from "@/lib/api";
+import { DirectReportUploadDialog } from "@/components/service-reports/direct-report-upload-dialog";
 import { ApiError } from "@/lib/api-client";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatReportType } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -23,6 +25,8 @@ export default function ServiceReportsQueuePage() {
   const [search, setSearch] = useState("");
 
   const canRead = hasPermission("service_reports", "read") || hasPermission("service_reports", "read_assigned");
+  const canReadOwn = hasPermission("service_reports", "read_own");
+  const ownOnly = !canRead && canReadOwn;
   const canVerify = hasPermission("service_reports", "verify");
   const canDocumentApprove = hasPermission("service_reports", "document_approve");
   const canConfirm = hasPermission("service_reports", "confirm");
@@ -37,22 +41,24 @@ export default function ServiceReportsQueuePage() {
   // destination page itself is always the actual permission gate (a viewer
   // without confirm/lock simply won't see that action once there).
   const load = useCallback(async () => {
-    if (!accessToken || !canRead) return;
+    if (!accessToken || (!canRead && !canReadOwn)) return;
     setError(null);
     setReports(null);
     try {
-      setReports(await listServiceReports(accessToken, canDocumentApprove ? "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED" : "PENDING_VERIFICATION,VERIFIED,CONFIRMED"));
+      setReports(ownOnly
+        ? await listMyServiceReports(accessToken)
+        : await listServiceReports(accessToken, canDocumentApprove ? "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED" : "PENDING_VERIFICATION,VERIFIED,CONFIRMED"));
     } catch (e) {
       setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Service Reports." : e instanceof ApiError ? e.message : "Failed to load Service Reports.");
     }
-  }, [accessToken, canRead, canDocumentApprove]);
+  }, [accessToken, canRead, canReadOwn, canDocumentApprove, ownOnly]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   if (authLoading) return <LoadingState />;
-  if (!canRead) {
+  if (!canRead && !canReadOwn) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-16">
         <ErrorState message="You do not have permission to view Service Reports." />
@@ -68,7 +74,8 @@ export default function ServiceReportsQueuePage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6">
-      <PageHeader title="Service Reports" description={canVerify ? "Review reports ready for verification, confirmation, or locking." : "Service Reports available to you."} />
+      <PageHeader title={ownOnly ? "My Service Reports" : "Service Reports"} description={ownOnly ? "Reports you submitted, including direct visits without a Work Order." : canVerify ? "Review reports ready for verification, confirmation, or locking." : "Service Reports available to you."} />
+      {ownOnly && hasPermission("service_reports", "upload") && <div className="mb-4"><DirectReportUploadDialog onUploaded={load} /></div>}
 
       <div className="relative mb-4 max-w-sm">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -76,9 +83,9 @@ export default function ServiceReportsQueuePage() {
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
-      {!reports && !error && <LoadingState label="Loading queue…" />}
+      {!reports && !error && <LoadingState label={ownOnly ? "Loading your reports…" : "Loading queue…"} />}
       {reports && reports.length === 0 && (
-        <EmptyState title="No reports to review" description="No Service Reports are currently awaiting verification, confirmation, or locking." />
+        <EmptyState title={ownOnly ? "No submitted reports yet" : "No reports to review"} description={ownOnly ? "Your uploaded Service Reports will appear here." : "No Service Reports are currently awaiting verification, confirmation, or locking."} />
       )}
       {reports && reports.length > 0 && visibleReports.length === 0 && (
         <EmptyState title="No matching service reports" description="Try a different search term." />
@@ -100,14 +107,14 @@ export default function ServiceReportsQueuePage() {
               <TableBody>
                 {visibleReports.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-medium">{r.status === "CONFIRMED" || canVerify ? <Link href={r.status === "CONFIRMED" ? `/service-reports/${r.id}/canonical` : `/service-reports/${r.id}/verify`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{r.serviceReportNumber}</Link> : r.serviceReportNumber}</TableCell>
-                    <TableCell>{r.reportTypeCode.replaceAll("_", " ")}</TableCell>
+                    <TableCell className="font-medium">{!ownOnly && (r.status === "CONFIRMED" || canVerify) ? <Link href={r.status === "CONFIRMED" ? `/service-reports/${r.id}/canonical` : `/service-reports/${r.id}/verify`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{r.serviceReportNumber}</Link> : r.serviceReportNumber}</TableCell>
+                    <TableCell>{formatReportType(r.reportTypeCode)}</TableCell>
                     <TableCell>
                       <StatusBadge status={r.status} />
                     </TableCell>
                     <TableCell>{new Date(r.uploadedAt).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      {r.status === "CONFIRMED" ? (
+                      {ownOnly ? <span className="text-muted-foreground">Submitted</span> : r.status === "CONFIRMED" ? (
                         <Link href={`/service-reports/${r.id}/canonical`} className="text-sm font-medium text-primary hover:underline">
                           {canLock ? "Lock →" : "View →"}
                         </Link>

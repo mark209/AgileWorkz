@@ -93,7 +93,7 @@ describe("HomePage (My Jobs)", () => {
     expect(await screen.findByText("WO-2026-08-00001")).toBeInTheDocument();
     expect(screen.getByText(/Acme Corp/)).toBeInTheDocument();
     expect(screen.getByText("Scheduled")).toBeInTheDocument();
-    const link = screen.getByRole("link");
+    const link = screen.getByRole("link", { name: /WO-2026-08-00001/i });
     expect(link).toHaveAttribute("href", "/jobs/wo1");
   });
 
@@ -111,7 +111,7 @@ describe("HomePage (My Jobs)", () => {
 
     expect(await screen.findByText("WO-2026-08-00001")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/offline copy/i);
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/jobs/wo1");
+    expect(screen.getByRole("link", { name: /WO-2026-08-00001/i })).toHaveAttribute("href", "/jobs/wo1");
   });
 
   it("does not show cached assignments after the server denies access", async () => {
@@ -122,9 +122,9 @@ describe("HomePage (My Jobs)", () => {
     expect(getCachedAssignedWorkOrdersMock).not.toHaveBeenCalled();
   });
 
-  it("greets the technician by first name", async () => {
+  it("greets the technician by full name", async () => {
     listMyWorkOrdersMock.mockResolvedValue([]);
     render(<HomePage />);
-    expect(await screen.findByText("Hi, Jordan")).toBeInTheDocument();
+    expect(await screen.findByText("Hello, Jordan Lee")).toBeInTheDocument();
   });
 });

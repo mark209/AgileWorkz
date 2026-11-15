@@ -516,6 +516,36 @@ describe("ServiceReportsService.listForUploader", () => {
 // are impractical or impossible to trigger against a real DB (a
 // structurally-impossible COMPLETED-with-no-report row; forcing a P2002
 // on the very first insert).
+describe("ServiceReportsService.listDirectReportTargets", () => {
+  it("searches only active customers with active sites and returns identifiers and labels", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: "cust-1", name: "Test Customer", sites: [{ id: "site-1", label: "Main Site" }] }]);
+    const { service } = buildHarness({ prisma: { customer: { findMany } } });
+
+    const result = await service.listDirectReportTargets("  test  ");
+
+    expect(result).toEqual([{ id: "cust-1", name: "Test Customer", sites: [{ id: "site-1", label: "Main Site" }] }]);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: "ACTIVE",
+        name: { contains: "test", mode: "insensitive" },
+        sites: { some: { status: "ACTIVE" } },
+      }),
+      select: {
+        id: true, name: true,
+        sites: { where: { status: "ACTIVE" }, select: { id: true, label: true }, orderBy: { label: "asc" } },
+      },
+      take: 20,
+    }));
+  });
+
+  it("does not query customer data for searches shorter than two characters", async () => {
+    const findMany = jest.fn();
+    const { service } = buildHarness({ prisma: { customer: { findMany } } });
+    await expect(service.listDirectReportTargets("x")).rejects.toThrow(BadRequestException);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("ServiceReportsService.upload — Idempotency-Key validation", () => {
   it("rejects a key longer than 100 characters with a clean BadRequestException, no DB round-trip", async () => {
     const idemKey = { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() };

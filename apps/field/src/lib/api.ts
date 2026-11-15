@@ -71,6 +71,29 @@ export function listServiceReportTypes(accessToken: string) {
   return apiRequest<ServiceReportType[]>("/service-reports/types", { accessToken });
 }
 
+export interface DirectReportTarget {
+  id: string;
+  name: string;
+  sites: Array<{ id: string; label: string }>;
+}
+
+export function searchDirectReportTargets(accessToken: string, search: string) {
+  return apiRequest<DirectReportTarget[]>(`/service-reports/direct-targets?search=${encodeURIComponent(search)}`, { accessToken });
+}
+
+export interface MyServiceReport {
+  id: string;
+  serviceReportNumber: string;
+  reportTypeCode: string;
+  status: string;
+  uploadedAt: string;
+  workOrderId: string | null;
+}
+
+export function listMyServiceReports(accessToken: string) {
+  return apiRequest<MyServiceReport[]>("/service-reports/mine", { accessToken });
+}
+
 export interface UploadedServiceReport {
   id: string;
   serviceReportNumber: string;
@@ -86,6 +109,19 @@ export function uploadServiceReport(
   formData.append("siteId", input.siteId);
   formData.append("workOrderId", input.workOrderId);
   formData.append("reportTypeCode", input.reportTypeCode);
+  formData.append("file", input.file);
+  return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken, input.idempotencyKey);
+}
+
+export function uploadDirectServiceReport(
+  accessToken: string,
+  customerId: string,
+  input: { siteId: string; reportTypeCode: string; sourceType: string; file: File; idempotencyKey: string },
+) {
+  const formData = new FormData();
+  formData.append("siteId", input.siteId);
+  formData.append("reportTypeCode", input.reportTypeCode);
+  formData.append("sourceType", input.sourceType);
   formData.append("file", input.file);
   return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken, input.idempotencyKey);
 }

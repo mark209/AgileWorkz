@@ -113,7 +113,7 @@ export default function JobDetailPage() {
 
           <section style={{ marginTop: 24 }}>
             <StartJobButton workOrder={workOrder} onStarted={load} />
-            {workOrder.status !== "SCHEDULED" && <p style={subheading}>Start Job is available only while this service is scheduled.</p>}
+            {workOrder.status === "DRAFT" && <p style={subheading}>This Work Order is still Draft. Ask the responsible team to move it to Scheduled before starting.</p>}
           </section>
 
           <section style={{ marginTop: 28, borderTop: `1px solid ${colors.border}`, paddingTop: 20 }}>

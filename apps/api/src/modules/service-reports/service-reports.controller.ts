@@ -36,6 +36,12 @@ export class ServiceReportsController {
     return this.serviceReportsService.listActiveReportTypes();
   }
 
+  @Permissions({ module: "service_reports", action: "upload" })
+  @Get("direct-targets")
+  async listDirectTargets(@Query("search") search?: string) {
+    return this.serviceReportsService.listDirectReportTargets(search);
+  }
+
   // Phase 5 Step 5 — the verification queue. service_reports.read (not
   // read_own): Technician never holds it, so this route is structurally
   // unreachable for them regardless of what status is requested.

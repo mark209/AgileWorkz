@@ -64,8 +64,12 @@ export default function HomePage() {
     if (queued.length > 0 && !window.confirm(
       `${queued.length} unsent service ${queued.length === 1 ? "report is" : "reports are"} saved on this device. They will stay here and sync only after this same technician signs in again. Continue signing out?`,
     )) return;
-    await logout();
-    router.push("/login");
+    try {
+      await logout();
+      router.push("/login");
+    } catch {
+      window.alert("Could not sign out. Please try again.");
+    }
   }
 
   if (!user) return null;
@@ -74,8 +78,8 @@ export default function HomePage() {
     <main style={page}>
       <div style={pageHeader}>
         <div>
-          <h1 style={heading}>Hi, {user.fullName.split(" ")[0]}</h1>
-          <p style={subheading}>My Assigned Services</p>
+          <h1 style={heading}>Hello, {user.fullName}</h1>
+          <p style={subheading}>My Assigned Work Orders</p>
         </div>
         <button
           style={secondaryButton}
@@ -84,6 +88,12 @@ export default function HomePage() {
           Sign out
         </button>
       </div>
+
+      {(hasPermission("service_reports", "read_own") || hasPermission("service_reports", "upload")) && (
+        <Link href="/reports" style={{ ...card, display: "block", fontWeight: 600, color: colors.green }}>
+          My Service Reports and direct upload →
+        </Link>
+      )}
 
       {!canReadOwn && <p style={subheading}>Your account isn&apos;t set up to view assigned jobs.</p>}
 
@@ -109,7 +119,7 @@ export default function HomePage() {
       )}
 
       {canReadOwn && !error && jobs !== null && jobs.length > 0 && (
-        <p style={subheading}>{jobs.length} assigned {jobs.length === 1 ? "service" : "services"}. Open one to view the permitted next action.</p>
+        <p style={subheading}>{jobs.length} assigned {jobs.length === 1 ? "Work Order" : "Work Orders"}. Open one to view the permitted next action.</p>
       )}
 
       {canReadOwn &&
@@ -130,7 +140,7 @@ export default function HomePage() {
               </p>
             )}
             <p style={{ margin: "8px 0 0", color: colors.green, fontSize: 14, fontWeight: 600 }}>
-              {job.status === "SCHEDULED" ? "Open to start job →" : job.status === "IN_PROGRESS" || job.status === "COMPLETED" ? "Open to upload report →" : "View service →"}
+              {job.status === "SCHEDULED" ? "Open to start job →" : job.status === "IN_PROGRESS" || job.status === "COMPLETED" ? "Open to upload report →" : "View Work Order →"}
             </p>
           </Link>
         ))}

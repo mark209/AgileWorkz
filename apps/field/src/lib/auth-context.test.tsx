@@ -40,15 +40,21 @@ function Probe() {
 describe("hasPermission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+      if (input === "/api/session" && init?.method === "POST") {
+        return Promise.resolve({ ok: true, status: 204 });
+      }
+      return Promise.resolve({ ok: false, status: 401 });
+    }));
   });
 
-  it("returns false for every permission before login (no user yet)", () => {
+  it("returns false for every permission before login (no user yet)", async () => {
     render(
       <AuthProvider>
         <Probe />
       </AuthProvider>,
     );
-    expect(screen.getByTestId("start-own").textContent).toBe("false");
+    expect((await screen.findByTestId("start-own")).textContent).toBe("false");
     expect(screen.getByTestId("assign").textContent).toBe("false");
   });
 
@@ -61,7 +67,7 @@ describe("hasPermission", () => {
     );
 
     const clickUser = userEvent.setup();
-    await clickUser.click(screen.getByText("login"));
+    await clickUser.click(await screen.findByText("login"));
 
     await waitFor(() => expect(screen.getByTestId("user").textContent).toBe("Jordan Lee"));
     expect(screen.getByTestId("start-own").textContent).toBe("true");

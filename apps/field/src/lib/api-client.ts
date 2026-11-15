@@ -1,5 +1,18 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
+let sessionRefresher: (() => Promise<string | null>) | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function setSessionRefresher(refresher: (() => Promise<string | null>) | null) {
+  sessionRefresher = refresher;
+}
+
+async function renewAccessToken(): Promise<string | null> {
+  if (!sessionRefresher) return null;
+  if (!refreshInFlight) refreshInFlight = sessionRefresher().finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
 // Phase 7 Wave 1 (F6.1) — the field app previously had no request timeout
 // at all: a slow or interrupted cellular connection could leave a
 // technician staring at a spinner indefinitely with no feedback and no
@@ -56,18 +69,23 @@ export async function apiRequest<T>(
   path: string,
   options: { method?: string; body?: unknown; accessToken?: string } = {},
 ): Promise<T> {
-  const res = await fetchWithTimeout(
+  const send = (accessToken?: string) => fetchWithTimeout(
     `${API_BASE_URL}${path}`,
     {
       method: options.method ?? "GET",
       headers: {
         "Content-Type": "application/json",
-        ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
     REQUEST_TIMEOUT_MS,
   );
+  let res = await send(options.accessToken);
+  if (res.status === 401 && options.accessToken) {
+    const renewed = await renewAccessToken();
+    if (renewed) res = await send(renewed);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
@@ -85,12 +103,12 @@ export async function apiRequest<T>(
 // here either — the browser must set it itself (multipart/form-data with
 // the correct boundary), which it only does when left alone.
 export async function apiUpload<T>(path: string, formData: FormData, accessToken: string, idempotencyKey?: string): Promise<T> {
-  const res = await fetchWithTimeout(
+  const send = (token: string) => fetchWithTimeout(
     `${API_BASE_URL}${path}`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${token}`,
         // Phase 7 (F7.1) — optional. The server treats a missing header as
         // exactly the pre-F7.1 behavior; every apps/field caller sends one
         // (see uploadServiceReport) precisely so a timeout-triggered retry
@@ -102,6 +120,11 @@ export async function apiUpload<T>(path: string, formData: FormData, accessToken
     },
     UPLOAD_TIMEOUT_MS,
   );
+  let res = await send(accessToken);
+  if (res.status === 401) {
+    const renewed = await renewAccessToken();
+    if (renewed) res = await send(renewed);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));

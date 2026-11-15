@@ -231,7 +231,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
           {error && <p role="alert" style={{ ...dangerText, marginTop: 12 }}>{error}</p>}
           {submitting && <p role="status" style={{ color: colors.textMuted }}>Uploading the report. Keep this page open until it finishes.</p>}
 
-          <button type="submit" style={{ ...primaryButton, width: "100%", marginTop: 16 }} disabled={submitting || !reportTypeCode || !file}>
+          <button type="submit" style={{ ...primaryButton, width: "100%", marginTop: 16, ...(submitting || !reportTypeCode || !file ? { background: "#d1d5db", color: "#374151", cursor: "not-allowed" } : {}) }} disabled={submitting || !reportTypeCode || !file}>
             {submitting ? "Uploading…" : "Upload Service Report"}
           </button>
         </>

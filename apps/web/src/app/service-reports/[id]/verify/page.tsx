@@ -25,6 +25,7 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatReportType } from "@/lib/format";
 import { DocumentViewer } from "@/components/service-reports/document-viewer";
 import { FieldSection } from "@/components/service-reports/field-section";
 import { VerificationToolbar } from "@/components/service-reports/verification-toolbar";
@@ -148,7 +149,7 @@ export default function ServiceReportVerifyPage() {
     <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-6 py-6">
       <Breadcrumbs items={[{ label: "Service Reports", href: "/service-reports" }, { label: "Verify" }]} />
       <PageHeader
-        title={view ? `Verify ${view.report.reportTypeCode.replaceAll("_", " ")} Report` : "Verify Service Report"}
+        title={view ? `Verify ${formatReportType(view.report.reportTypeCode)} Report` : "Verify Service Report"}
         description={view ? `Document: ${view.report.documentFileName}` : undefined}
         actions={view ? <StatusBadge status={view.report.status} /> : undefined}
       />
