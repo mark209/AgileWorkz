@@ -7,6 +7,7 @@ import { listWorkOrdersForCustomer, type Site, type WorkOrder } from "@/lib/api"
 import { ApiError } from "@/lib/api-client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CreateWorkOrderDialog } from "./create-work-order-dialog";
 
@@ -67,7 +68,7 @@ export function WorkOrdersTab({ customerId, sites }: { customerId: string; sites
                   <TableCell className="font-medium"><Link className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={`/work-orders/${wo.id}`}>{wo.workOrderNumber}</Link></TableCell>
                   <TableCell>{wo.site.label}</TableCell>
                   <TableCell>{wo.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}</TableCell>
-                  <TableCell>{wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : "—"}</TableCell>
+                  <TableCell>{formatDate(wo.scheduledDate)}</TableCell>
                   <TableCell>
                     <StatusBadge status={wo.status} />
                   </TableCell>

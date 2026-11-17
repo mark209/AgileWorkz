@@ -173,6 +173,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
     await this.expireDueRevisions();
     return this.prisma.quotation.findMany({
       where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
+      include: { customer: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     });
   }

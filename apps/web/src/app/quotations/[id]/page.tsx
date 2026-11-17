@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { AlertCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useReferenceData } from "@/lib/use-reference-data";
@@ -205,7 +206,7 @@ export default function QuotationDetailPage() {
   if (error) {
     return (
       <main className="container py-8">
-        <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotation" }]} />
+        <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotations", href: "/quotations" }, { label: "Quotation" }]} />
         <ErrorState message={error} onRetry={loadQuotation} />
       </main>
     );
@@ -214,7 +215,7 @@ export default function QuotationDetailPage() {
   if (!quotation || !customer) {
     return (
       <main className="container py-8">
-        <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotation" }]} />
+        <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotations", href: "/quotations" }, { label: "Quotation" }]} />
         <LoadingState label="Loading quotation…" />
       </main>
     );
@@ -246,8 +247,7 @@ export default function QuotationDetailPage() {
       <Breadcrumbs
         items={[
           { label: "Dashboard", href: "/dashboard" },
-          { label: "Customers", href: "/customers" },
-          { label: customer.name, href: `/customers/${customer.id}` },
+          { label: "Quotations", href: "/quotations" },
           { label: quotation.quotationNumber },
         ]}
       />
@@ -256,6 +256,7 @@ export default function QuotationDetailPage() {
         description={revision ? `Revision ${revision.revisionNumber} · ${customer.name}${site ? ` · ${site.label}` : ""}` : customer.name}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Link href={`/customers/${customer.id}`} className="text-sm font-medium text-primary underline-offset-2 hover:underline">View customer</Link>
             <StatusBadge status={revision?.status ?? quotation.status} />
             {revision?.approvedAt && (
               <Button variant="outline" onClick={downloadPdf} disabled={pdfBusy}>

@@ -7,6 +7,7 @@ import { listServiceReportsForCustomer, type ServiceReportListItem, type Site } 
 import { ApiError } from "@/lib/api-client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDateTime } from "@/lib/format";
 import { DirectReportUploadDialog } from "./direct-report-upload-dialog";
 
 export function CustomerServiceReports({ customerId, sites }: { customerId: string; sites: Site[] }) {
@@ -29,7 +30,7 @@ export function CustomerServiceReports({ customerId, sites }: { customerId: stri
     {canRead && reports?.length === 0 && <EmptyState title="No service reports yet" description="Reports from jobs and direct visits will appear here." />}
     {canRead && reports && reports.length > 0 && <ul className="space-y-2">{reports.map((report) =>
       <li key={report.id} className="flex items-center justify-between rounded-md border p-3 text-sm">
-        <div><Link className="font-medium text-primary hover:underline" href={`/service-reports/${report.id}/${report.status === "CONFIRMED" || report.status === "LOCKED" ? "canonical" : "verify"}`}>{report.serviceReportNumber}</Link><p className="text-xs text-muted-foreground">{new Date(report.uploadedAt).toLocaleString()}</p></div>
+        <div><Link className="font-medium text-primary hover:underline" href={`/service-reports/${report.id}/${report.status === "CONFIRMED" || report.status === "LOCKED" ? "canonical" : "verify"}`}>{report.serviceReportNumber}</Link><p className="text-xs text-muted-foreground">{formatDateTime(report.uploadedAt)}</p></div>
         <StatusBadge status={report.status} />
       </li>,
     )}</ul>}

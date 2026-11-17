@@ -9,6 +9,7 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate, formatTime } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LockReportDialog } from "@/components/service-reports/lock-report-dialog";
 
@@ -93,16 +94,16 @@ export default function CanonicalServiceReportPage() {
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
-                <span className="text-muted-foreground">Service Date:</span> {view.report.serviceDate ? new Date(view.report.serviceDate).toLocaleDateString() : "—"}
+                <span className="text-muted-foreground">Service Date:</span> {formatDate(view.report.serviceDate)}
               </div>
               <div>
                 <span className="text-muted-foreground">Reference Number:</span> {fmt(view.report.reportReferenceNumber)}
               </div>
               <div>
-                <span className="text-muted-foreground">Time In:</span> {view.report.timeIn ? new Date(view.report.timeIn).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                <span className="text-muted-foreground">Time In:</span> {formatTime(view.report.timeIn)}
               </div>
               <div>
-                <span className="text-muted-foreground">Time Out:</span> {view.report.timeOut ? new Date(view.report.timeOut).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                <span className="text-muted-foreground">Time Out:</span> {formatTime(view.report.timeOut)}
               </div>
               <div>
                 <span className="text-muted-foreground">Contact Name:</span> {fmt(view.report.contactName)}

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getWorkOrder, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { StatusBadge } from "@/components/status-badge";
 import { StartJobButton } from "@/components/start-job-button";
 import { ServiceReportUploadForm } from "@/components/service-report-upload-form";
@@ -93,17 +94,17 @@ export default function JobDetailPage() {
 
           {offlineSavedAt !== null && (
             <p role="status" style={{ ...subheading, color: colors.textMuted }}>
-              Offline copy — last refreshed {new Date(offlineSavedAt).toLocaleString()}. Job changes require a connection.
+              Offline copy — last refreshed {formatDateTime(offlineSavedAt)}. Job changes require a connection.
             </p>
           )}
 
           <section style={{ marginTop: 20 }}>
             <p style={{ color: colors.textMuted, fontSize: 14 }}>Service location: {workOrder.site.label}</p>
             {workOrder.scheduledDate && (
-              <p style={{ color: colors.textMuted, fontSize: 14 }}>Scheduled: {new Date(workOrder.scheduledDate).toLocaleDateString()}</p>
+              <p style={{ color: colors.textMuted, fontSize: 14 }}>Scheduled: {formatDate(workOrder.scheduledDate)}</p>
             )}
             {workOrder.startedAt && (
-              <p style={{ color: colors.textMuted, fontSize: 14 }}>Started: {new Date(workOrder.startedAt).toLocaleString()}</p>
+              <p style={{ color: colors.textMuted, fontSize: 14 }}>Started: {formatDateTime(workOrder.startedAt)}</p>
             )}
             {workOrder.description && <p style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{workOrder.description}</p>}
             {workOrder.standaloneReason && (

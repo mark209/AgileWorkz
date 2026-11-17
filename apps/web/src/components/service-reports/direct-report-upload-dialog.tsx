@@ -22,35 +22,52 @@ export function DirectReportUploadDialog({ customerId, sites, onUploaded }: { cu
   const { accessToken, hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
   const [types, setTypes] = useState<Array<{ code: string; label: string }>>([]);
+  const [typesLoading, setTypesLoading] = useState(false);
+  const [typesError, setTypesError] = useState<string | null>(null);
+  const [typesRetry, setTypesRetry] = useState(0);
   const [siteId, setSiteId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [targets, setTargets] = useState<DirectReportTarget[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
   const [reportTypeCode, setReportTypeCode] = useState("");
   const [sourceType, setSourceType] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !accessToken) return;
-    listServiceReportTypes(accessToken).then(setTypes).catch((e) => setError(e instanceof ApiError ? e.message : "Could not load report types."));
-  }, [open, accessToken]);
+    let active = true;
+    setTypesLoading(true);
+    setTypesError(null);
+    listServiceReportTypes(accessToken)
+      .then((values) => { if (active) setTypes(values); })
+      .catch((e) => { if (active) setTypesError(e instanceof ApiError ? e.message : "Could not load report types."); })
+      .finally(() => { if (active) setTypesLoading(false); });
+    return () => { active = false; };
+  }, [open, accessToken, typesRetry]);
 
   useEffect(() => {
     if (!open || !accessToken || customerId || customerSearch.trim().length < 2) {
       setTargets([]);
       setSearching(false);
+      setSearched(false);
+      setSearchError(null);
       return;
     }
     let active = true;
     setSearching(true);
+    setSearched(false);
+    setSearchError(null);
+    setTargets([]);
     const timer = setTimeout(() => {
       searchDirectReportTargets(accessToken, customerSearch.trim())
-        .then((values) => { if (active) setTargets(values); })
-        .catch((cause) => { if (active) setError(cause instanceof ApiError ? cause.message : "Could not search customers."); })
+        .then((values) => { if (active) { setTargets(values); setSearched(true); } })
+        .catch((cause) => { if (active) setSearchError(cause instanceof ApiError ? cause.message : "Could not search customers."); })
         .finally(() => { if (active) setSearching(false); });
     }, 250);
     return () => { active = false; clearTimeout(timer); };
@@ -67,7 +84,7 @@ export function DirectReportUploadDialog({ customerId, sites, onUploaded }: { cu
     event.preventDefault();
     if (!accessToken || !activeCustomerId || !file || !siteId || !reportTypeCode || !sourceType) return;
     setBusy(true);
-    setError(null);
+    setUploadError(null);
     try {
       await uploadCustomerServiceReport(accessToken, activeCustomerId, { siteId, reportTypeCode, sourceType, file, idempotencyKey });
       setIdempotencyKey(crypto.randomUUID());
@@ -75,13 +92,13 @@ export function DirectReportUploadDialog({ customerId, sites, onUploaded }: { cu
       setOpen(false);
       onUploaded();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not upload the report.");
+      setUploadError(e instanceof ApiError ? e.message : "Could not upload the report.");
     } finally {
       setBusy(false);
     }
   }
 
-  return <Dialog open={open} onOpenChange={setOpen}>
+  return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) { setTypesError(null); setUploadError(null); } }}>
     <DialogTrigger asChild><Button variant="outline" size="sm">Upload direct report</Button></DialogTrigger>
     <DialogContent>
       <form onSubmit={submit}>
@@ -90,12 +107,14 @@ export function DirectReportUploadDialog({ customerId, sites, onUploaded }: { cu
           {!customerId && <>
             <div className="space-y-1.5"><Label htmlFor="direct-customer-search">Find customer</Label><Input id="direct-customer-search" value={customerSearch} onChange={(e) => { setCustomerSearch(e.target.value); setSelectedCustomerId(""); setSiteId(""); }} placeholder="Enter at least 2 characters" /><p className="text-xs text-muted-foreground">Choose the customer and site where the direct visit took place.</p></div>
             <div className="space-y-1.5"><Label htmlFor="direct-customer">Customer</Label><Select id="direct-customer" value={selectedCustomerId} onChange={(e) => { setSelectedCustomerId(e.target.value); setSiteId(""); }} required><option value="">{searching ? "Searching…" : "Select customer"}</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</Select></div>
+            {searched && !searching && targets.length === 0 && <p role="status" className="text-sm text-muted-foreground">No customers found. Try a different name.</p>}
+            {searchError && <p role="alert" className="text-sm text-destructive">{searchError}</p>}
           </>}
           <div className="space-y-1.5"><Label htmlFor="direct-site">Site</Label><Select id="direct-site" value={siteId} onChange={(e) => setSiteId(e.target.value)} required><option value="">Select site</option>{activeSites.map((site) => <option key={site.id} value={site.id}>{site.label}</option>)}</Select></div>
-          <div className="space-y-1.5"><Label htmlFor="direct-type">Report type</Label><Select id="direct-type" value={reportTypeCode} onChange={(e) => setReportTypeCode(e.target.value)} required><option value="">Select type</option>{types.map((type) => <option key={type.code} value={type.code}>{type.label}</option>)}</Select></div>
+          <div className="space-y-1.5"><Label htmlFor="direct-type">Report type</Label><Select id="direct-type" value={reportTypeCode} onChange={(e) => setReportTypeCode(e.target.value)} required><option value="">{typesLoading ? "Loading types…" : "Select type"}</option>{types.map((type) => <option key={type.code} value={type.code}>{type.label}</option>)}</Select>{typesError && <div className="flex items-center gap-2"><p role="alert" className="text-sm text-destructive">{typesError}</p><Button type="button" variant="outline" size="sm" onClick={() => setTypesRetry((count) => count + 1)}>Try again</Button></div>}</div>
           <div className="space-y-1.5"><Label htmlFor="direct-reason">Reason for direct report</Label><Select id="direct-reason" value={sourceType} onChange={(e) => setSourceType(e.target.value)} required><option value="">Select reason</option>{REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
           <div className="space-y-1.5"><Label htmlFor="direct-file">Signed report (PDF or image, up to 25 MB)</Label><Input id="direct-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required /></div>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {uploadError && <p role="alert" className="text-sm text-destructive">{uploadError}</p>}
         </div>
         <DialogFooter className="mt-6"><Button type="submit" disabled={busy || !activeCustomerId || !activeSites.some((site) => site.id === siteId)}>{busy ? "Uploading…" : "Upload report"}</Button></DialogFooter>
       </form>

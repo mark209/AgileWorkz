@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { listMyWorkOrders, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { StatusBadge } from "@/components/status-badge";
 import { getCachedAssignedWorkOrders, getQueuedServiceReports, saveAssignedWorkOrders } from "@/lib/offline-store";
 import { card, colors, dangerText, page, pageHeader, heading, secondaryButton, subheading } from "@/lib/styles";
@@ -110,7 +111,7 @@ export default function HomePage() {
 
       {offlineSavedAt !== null && (
         <p role="status" style={{ ...subheading, color: colors.textMuted }}>
-          Offline copy — last refreshed {new Date(offlineSavedAt).toLocaleString()}. Job changes require a connection.
+          Offline copy — last refreshed {formatDateTime(offlineSavedAt)}. Job changes require a connection.
         </p>
       )}
 
@@ -136,7 +137,7 @@ export default function HomePage() {
             </p>
             {job.scheduledDate && (
               <p style={{ margin: "4px 0 0", color: colors.textMuted, fontSize: 13 }}>
-                Scheduled: {new Date(job.scheduledDate).toLocaleDateString()}
+                Scheduled: {formatDate(job.scheduledDate)}
               </p>
             )}
             <p style={{ margin: "8px 0 0", color: colors.green, fontSize: 14, fontWeight: 600 }}>

@@ -83,6 +83,7 @@ export function searchDirectReportTargets(accessToken: string, search: string) {
 
 export interface MyServiceReport {
   id: string;
+  documentFileName?: string | null;
   serviceReportNumber: string;
   reportTypeCode: string;
   status: string;

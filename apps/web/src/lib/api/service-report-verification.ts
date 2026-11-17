@@ -69,6 +69,8 @@ export interface BulkConfirmPreview {
 
 export interface ServiceReportListItem {
   id: string;
+  workOrderId?: string | null;
+  documentFileName?: string | null;
   serviceReportNumber: string;
   status: string;
   reportTypeCode: string;

@@ -112,6 +112,23 @@ describe("ServiceReportVerifyPage", () => {
     expect(previewConfirmMock).not.toHaveBeenCalled();
   });
 
+  it("labels document review for staff without approval permission", async () => {
+    const documentView = baseView();
+    documentView.report.verificationBasis = "DOCUMENT_ONLY";
+    documentView.fields.measurement = [];
+    getServiceReportVerificationMock.mockResolvedValue(documentView);
+    useAuthMock.mockReturnValue({
+      accessToken: "token-1",
+      hasPermission: (_module: string, action: string) => action !== "document_approve",
+      isLoading: false,
+    });
+
+    render(<ServiceReportVerifyPage />);
+    expect(await screen.findByRole("heading", { name: "Review Maintenance Cleaning Report" })).toBeInTheDocument();
+    expect(screen.getByText("Review", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve document" })).not.toBeInTheDocument();
+  });
+
   it("shows an access-denied message when the caller lacks service_reports.verify", async () => {
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => false, isLoading: false });
     render(<ServiceReportVerifyPage />);

@@ -87,6 +87,7 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(screen.getByText("Pending Approvals").closest("a")).toHaveTextContent("2");
     expect(screen.getByText("Active Work Orders").closest("a")).toHaveTextContent("2");
     expect(screen.getByText("Reports to Verify").closest("div")).toHaveTextContent("1");
+    expect(screen.getByText("Reports to Verify").closest("a")).toHaveAttribute("href", "/service-reports?status=PENDING_VERIFICATION");
     expect(screen.getByText("Workflow Overview")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Service Reports", { selector: "summary span" }));
     expect(screen.getByText("Confirmed")).toBeInTheDocument();

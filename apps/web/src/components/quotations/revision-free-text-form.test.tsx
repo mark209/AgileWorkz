@@ -4,15 +4,15 @@ import userEvent from "@testing-library/user-event";
 import type { QuotationRevision } from "@/lib/api/types";
 import { RevisionFreeTextForm } from "./revision-free-text-form";
 
-const { useAuthMock, updateRevisionContentMock } = vi.hoisted(() => ({
-  useAuthMock: vi.fn(), updateRevisionContentMock: vi.fn(),
+const { useAuthMock, updateRevisionContentMock, listPaymentTermsMock } = vi.hoisted(() => ({
+  useAuthMock: vi.fn(), updateRevisionContentMock: vi.fn(), listPaymentTermsMock: vi.fn(),
 }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual, updateRevisionContent: updateRevisionContentMock,
-    listPaymentTerms: vi.fn().mockResolvedValue(["Net 30"]),
+    listPaymentTerms: listPaymentTermsMock,
     listQuotationTemplates: vi.fn().mockResolvedValue([]),
   };
 });
@@ -32,6 +32,14 @@ describe("RevisionFreeTextForm auto-save", () => {
     vi.clearAllMocks();
     useAuthMock.mockReturnValue({ accessToken: "token-1", user: { id: "user-1" } });
     updateRevisionContentMock.mockImplementation(async (_token, _qid, _rid, body) => ({ ...draft, ...body }));
+    listPaymentTermsMock.mockResolvedValue(["Net 30"]);
+  });
+
+  it("shows saved payment terms while the choice list is unavailable", () => {
+    listPaymentTermsMock.mockReturnValue(new Promise(() => {}));
+    renderForm({ ...draft, paymentTerms: "30 days" } as QuotationRevision);
+    expect(screen.getByLabelText("Payment terms")).toHaveValue("30 days");
+    expect(screen.getByRole("option", { name: "30 days" })).toBeInTheDocument();
   });
 
   it("saves cleared Terms & Conditions as an empty value", async () => {

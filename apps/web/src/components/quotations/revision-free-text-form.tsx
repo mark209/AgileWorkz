@@ -199,6 +199,9 @@ export function RevisionFreeTextForm({
                 setPaymentTerms(e.target.value === "__custom__" ? "" : e.target.value);
               }}>
                 <option value="">— Select payment terms —</option>
+                {paymentTerms && !customPayment && !paymentOptions.includes(paymentTerms) && (
+                  <option value={paymentTerms}>{paymentTerms}</option>
+                )}
                 {paymentOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                 <option value="__custom__">Custom…</option>
               </Select>

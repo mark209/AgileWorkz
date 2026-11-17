@@ -96,8 +96,8 @@ export default function MembersPage() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList aria-label="Member views" className="h-auto max-w-full justify-start overflow-x-auto bg-transparent p-0">
-          <TabsTrigger value="members" className="rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:shadow-none">All Members ({members?.length ?? 0})</TabsTrigger>
-          <TabsTrigger value="requests" className="rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:shadow-none">Registration Requests ({pending?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="members" className="rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:shadow-none">All Members ({members?.length ?? "…"})</TabsTrigger>
+          <TabsTrigger value="requests" className="rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:shadow-none">Registration Requests ({pending?.length ?? "…"})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="members" className="space-y-4">

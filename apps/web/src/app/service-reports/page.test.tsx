@@ -5,6 +5,8 @@ import ServiceReportsQueuePage from "./page";
 
 const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
+const { useSearchParamsMock } = vi.hoisted(() => ({ useSearchParamsMock: vi.fn() }));
+vi.mock("next/navigation", () => ({ useSearchParams: useSearchParamsMock }));
 
 const { listServiceReportsMock } = vi.hoisted(() => ({ listServiceReportsMock: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -19,6 +21,7 @@ function report(overrides: Partial<ServiceReportListItem> = {}): ServiceReportLi
 describe("ServiceReportsQueuePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSearchParamsMock.mockReturnValue(new URLSearchParams());
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, isLoading: false });
   });
 
@@ -46,5 +49,22 @@ describe("ServiceReportsQueuePage", () => {
 
     const lockLink = screen.getByRole("link", { name: /lock →/i });
     expect(lockLink).toHaveAttribute("href", "/service-reports/r3/canonical");
+  });
+
+  it("loads the status selected from a dashboard card", async () => {
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=VERIFIED"));
+    listServiceReportsMock.mockResolvedValue([report({ status: "VERIFIED" })]);
+    render(<ServiceReportsQueuePage />);
+    await screen.findByText("SR-0001");
+    expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "VERIFIED");
+    expect(screen.getByRole("link", { name: "Clear status filter" })).toHaveAttribute("href", "/service-reports");
+  });
+
+  it("names the selected status when its queue is empty", async () => {
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=CONFIRMED"));
+    listServiceReportsMock.mockResolvedValue([]);
+    render(<ServiceReportsQueuePage />);
+    expect(await screen.findByText("No reports with this status")).toBeInTheDocument();
+    expect(screen.getByText("No Service Reports currently have status confirmed.")).toBeInTheDocument();
   });
 });

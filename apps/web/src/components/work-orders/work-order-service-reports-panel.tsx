@@ -7,6 +7,7 @@ import { listServiceReportsForWorkOrder, type ServiceReportListItem } from "@/li
 import { ApiError } from "@/lib/api-client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDateTime } from "@/lib/format";
 
 /**
  * Phase 4 Operations Frontend — Service Reports linked to this Work Order.
@@ -48,7 +49,7 @@ export function WorkOrderServiceReportsPanel({ workOrderId }: { workOrderId: str
         <li key={r.id} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
           <div>
             <p className="font-medium">{r.serviceReportNumber}</p>
-            <p className="text-xs text-muted-foreground">{new Date(r.uploadedAt).toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">{formatDateTime(r.uploadedAt)}</p>
           </div>
           <div className="flex items-center gap-3">
             <StatusBadge status={r.status} />

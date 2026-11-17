@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { WorkOrder } from "@/lib/api/types";
 import WorkOrdersListPage from "./page";
 
@@ -126,5 +126,34 @@ describe("WorkOrdersListPage", () => {
     render(<WorkOrdersListPage />);
     const link = await screen.findByRole("link", { name: /view →/i });
     expect(link).toHaveAttribute("href", "/work-orders/wo1");
+  });
+
+  it("ignores an older response after status and scope change", async () => {
+    let resolveOld!: (rows: WorkOrder[]) => void;
+    let resolveNew!: (rows: WorkOrder[]) => void;
+    listWorkOrdersMock
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=SCHEDULED"));
+    const view = render(<WorkOrdersListPage />);
+    await waitFor(() => expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", "SCHEDULED"));
+
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=IN_PROGRESS&scope=assigned"));
+    view.rerender(<WorkOrdersListPage />);
+    await waitFor(() => expect(listWorkOrdersMock).toHaveBeenCalledWith("token-1", "IN_PROGRESS", true));
+    expect(screen.getByText("Work Orders assigned to you · Status: IN_PROGRESS.")).toBeInTheDocument();
+
+    await act(async () => { resolveNew([workOrder({ id: "new", workOrderNumber: "WO-NEW", status: "IN_PROGRESS" })]); });
+    expect(screen.getAllByText("WO-NEW").length).toBeGreaterThan(0);
+    await act(async () => { resolveOld([workOrder({ id: "old", workOrderNumber: "WO-OLD" })]); });
+    expect(screen.queryByText("WO-OLD")).not.toBeInTheDocument();
+  });
+
+  it("keeps assigned scope when clearing an empty status filter", async () => {
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=IN_PROGRESS&scope=assigned"));
+    listWorkOrdersMock.mockResolvedValue([]);
+    render(<WorkOrdersListPage />);
+    expect(await screen.findByText("No assigned Work Orders with this status")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Clear status filter" })).toHaveAttribute("href", "/work-orders?scope=assigned");
   });
 });

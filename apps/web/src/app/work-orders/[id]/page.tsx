@@ -9,6 +9,7 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WorkOrderLifecycleActions } from "@/components/work-orders/work-order-lifecycle-actions";
 import { WorkOrderAssignmentPanel } from "@/components/work-orders/work-order-assignment-panel";
@@ -96,7 +97,7 @@ export default function WorkOrderDetailPage() {
                 <span className="text-muted-foreground">Type:</span> {workOrder.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}
               </div>
               <div>
-                <span className="text-muted-foreground">Scheduled:</span> {workOrder.scheduledDate ? new Date(workOrder.scheduledDate).toLocaleDateString() : "—"}
+                <span className="text-muted-foreground">Scheduled:</span> {formatDate(workOrder.scheduledDate)}
               </div>
               {workOrder.standaloneReasonType && (
                 <div>
@@ -121,17 +122,17 @@ export default function WorkOrderDetailPage() {
                 </div>
               )}
               <div>
-                <span className="text-muted-foreground">Started:</span> {workOrder.startedAt ? new Date(workOrder.startedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Started:</span> {formatDateTime(workOrder.startedAt)}
               </div>
               <div>
-                <span className="text-muted-foreground">Completed:</span> {workOrder.completedAt ? new Date(workOrder.completedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Completed:</span> {formatDateTime(workOrder.completedAt)}
               </div>
               <div>
-                <span className="text-muted-foreground">Closed:</span> {workOrder.closedAt ? new Date(workOrder.closedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Closed:</span> {formatDateTime(workOrder.closedAt)}
               </div>
               {workOrder.cancelledAt && (
                 <div className="sm:col-span-2">
-                  <span className="text-muted-foreground">Cancelled:</span> {new Date(workOrder.cancelledAt).toLocaleString()}
+                  <span className="text-muted-foreground">Cancelled:</span> {formatDateTime(workOrder.cancelledAt)}
                   {workOrder.cancellationReason && <p className="mt-1">{fmt(workOrder.cancellationReason)}</p>}
                 </div>
               )}

@@ -177,7 +177,7 @@ export default function DashboardPage() {
               <KpiCard compact label="Active Work Orders" value={data.filter((w) => w.status === "SCHEDULED" || w.status === "IN_PROGRESS").length} href="/work-orders?status=SCHEDULED,IN_PROGRESS" />
             ))}
             {canVerifyReports && section(serviceReports, (data) => (
-              <KpiCard compact label="Reports to Verify" value={data.filter((r) => r.status === "PENDING_VERIFICATION").length} />
+              <KpiCard compact label="Reports to Verify" value={data.filter((r) => r.status === "PENDING_VERIFICATION").length} href="/service-reports?status=PENDING_VERIFICATION" />
             ))}
           </div>
         )}
@@ -219,9 +219,9 @@ export default function DashboardPage() {
                   {canReadServiceReports && section(serviceReports, (data) => <WorkflowOverview groups={[{
                     label: "Service Reports",
                     statuses: [
-                      { label: "Pending Verification", count: data.filter((r) => r.status === "PENDING_VERIFICATION").length },
-                      { label: "Verified", count: data.filter((r) => r.status === "VERIFIED").length },
-                      { label: "Confirmed", count: data.filter((r) => r.status === "CONFIRMED").length },
+                      { label: "Pending Verification", count: data.filter((r) => r.status === "PENDING_VERIFICATION").length, href: "/service-reports?status=PENDING_VERIFICATION" },
+                      { label: "Verified", count: data.filter((r) => r.status === "VERIFIED").length, href: "/service-reports?status=VERIFIED" },
+                      { label: "Confirmed", count: data.filter((r) => r.status === "CONFIRMED").length, href: "/service-reports?status=CONFIRMED" },
                     ],
                   }]} />)}
                 </CardContent>
@@ -324,10 +324,10 @@ export default function DashboardPage() {
                 <KpiCard
                   label="Service Reports — Pending Verification"
                   value={data.filter((r) => r.status === "PENDING_VERIFICATION").length}
-                  href="/service-reports"
+                  href="/service-reports?status=PENDING_VERIFICATION"
                 />
-                {!officeView && <KpiCard label="Service Reports — Verified" value={data.filter((r) => r.status === "VERIFIED").length} href="/service-reports" />}
-                {!officeView && <KpiCard label="Service Reports — Confirmed" value={data.filter((r) => r.status === "CONFIRMED").length} href="/service-reports" />}
+                {!officeView && <KpiCard label="Service Reports — Verified" value={data.filter((r) => r.status === "VERIFIED").length} href="/service-reports?status=VERIFIED" />}
+                {!officeView && <KpiCard label="Service Reports — Confirmed" value={data.filter((r) => r.status === "CONFIRMED").length} href="/service-reports?status=CONFIRMED" />}
               </>
             ))}
 

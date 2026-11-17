@@ -47,6 +47,7 @@ export default function ServiceReportVerifyPage() {
   const canVerify = hasPermission("service_reports", "verify");
   const canConfirm = hasPermission("service_reports", "confirm");
   const canDocumentApprove = hasPermission("service_reports", "document_approve");
+  const pageAction = canDocumentApprove ? "Verify" : "Review";
 
   const load = useCallback(async () => {
     if (!accessToken || !canVerify) return;
@@ -147,9 +148,9 @@ export default function ServiceReportVerifyPage() {
 
   return (
     <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-6 py-6">
-      <Breadcrumbs items={[{ label: "Service Reports", href: "/service-reports" }, { label: "Verify" }]} />
+      <Breadcrumbs items={[{ label: "Service Reports", href: "/service-reports" }, { label: pageAction }]} />
       <PageHeader
-        title={view ? `Verify ${formatReportType(view.report.reportTypeCode)} Report` : "Verify Service Report"}
+        title={view ? `${pageAction} ${formatReportType(view.report.reportTypeCode)} Report` : `${pageAction} Service Report`}
         description={view ? `Document: ${view.report.documentFileName}` : undefined}
         actions={view ? <StatusBadge status={view.report.status} /> : undefined}
       />

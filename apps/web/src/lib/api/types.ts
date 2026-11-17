@@ -224,6 +224,7 @@ export interface Inquiry {
 
 export interface Quotation {
   id: string;
+  customer?: { name: string };
   inquiryId: string | null;
   customerId: string;
   siteId: string;

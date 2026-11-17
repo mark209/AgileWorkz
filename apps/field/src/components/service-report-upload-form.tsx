@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { listServiceReportTypes, uploadServiceReport, type ServiceReportType, type WorkOrder } from "@/lib/api";
 import { ApiError, ApiTimeoutError } from "@/lib/api-client";
@@ -10,6 +10,7 @@ import { useNetworkStatus } from "@/lib/use-network-status";
 import { colors, dangerText, input, label, primaryButton, secondaryButton } from "@/lib/styles";
 
 const ACCEPTED_MIME_TYPES = "application/pdf,image/jpeg,image/png,image/webp";
+const CAMERA_MIME_TYPES = "image/jpeg,image/png,image/webp";
 
 // Phase 7 Wave 1 (F6.2, scoped mitigation) — apps/field's tokens are
 // in-memory only (a deliberate, unchanged Phase 1 security choice), so a
@@ -61,6 +62,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
   const [offlineTypes, setOfflineTypes] = useState(false);
   const [reportTypeCode, setReportTypeCodeState] = useState(() => readDraftReportType(workOrder.id));
   const [file, setFile] = useState<File | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
@@ -218,7 +220,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
           </select>
 
           <label style={label} htmlFor="sr-file">
-            Photo or document
+            Signed report (PDF or image, up to 25 MB)
           </label>
           <input
             id="sr-file"
@@ -227,6 +229,20 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
             accept={ACCEPTED_MIME_TYPES}
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
+          <input
+            key={idempotencyKey}
+            ref={cameraInputRef}
+            type="file"
+            accept={CAMERA_MIME_TYPES}
+            capture="environment"
+            aria-label="Camera photo"
+            style={{ display: "none" }}
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+          <button type="button" style={{ ...secondaryButton, marginTop: 8 }} onClick={() => cameraInputRef.current?.click()}>
+            Take Photo
+          </button>
+          {file && <p role="status" style={{ color: colors.textMuted, fontSize: 13 }}>Selected report: {file.name}</p>}
 
           {error && <p role="alert" style={{ ...dangerText, marginTop: 12 }}>{error}</p>}
           {submitting && <p role="status" style={{ color: colors.textMuted }}>Uploading the report. Keep this page open until it finishes.</p>}
