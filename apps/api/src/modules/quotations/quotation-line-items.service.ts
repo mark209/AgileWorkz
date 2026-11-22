@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { ActorType, Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -42,6 +42,7 @@ export class QuotationLineItemsService {
     this.assertMaterialLaborConsistent(dto.materialAmount, dto.laborAmount, unitPriceBeforeVat);
 
     const line = await this.prisma.$transaction(async (tx) => {
+      const currentRevision = await this.lockEditableRevision(tx, revisionId);
       const created = await tx.quotationLineItem.create({
         data: {
           quotationRevisionId: revisionId,
@@ -60,7 +61,7 @@ export class QuotationLineItemsService {
           // one; a real value is required at insert time only because the
           // column is NOT NULL.
           unitPriceBeforeVat: unitPriceBeforeVat ?? 0,
-          taxTreatment: dto.taxTreatment ?? revision.defaultTaxTreatment,
+          taxTreatment: dto.taxTreatment ?? currentRevision.defaultTaxTreatment,
           materialAmount: dto.materialAmount,
           laborAmount: dto.laborAmount,
           unitPrice: 0,
@@ -121,6 +122,7 @@ export class QuotationLineItemsService {
 
     const changedKeys = changedKeysOf(dto);
     const after = await this.prisma.$transaction(async (tx) => {
+      await this.lockEditableRevision(tx, revisionId);
       await tx.quotationLineItem.update({
         where: { id: lineItemId },
         data: {
@@ -166,6 +168,7 @@ export class QuotationLineItemsService {
     const before = await this.findLineItemOrThrow(revisionId, lineItemId);
 
     await this.prisma.$transaction(async (tx) => {
+      await this.lockEditableRevision(tx, revisionId);
       await tx.quotationLineItem.delete({ where: { id: lineItemId } });
       await this.pricing.recalculate(tx, revisionId);
     });
@@ -180,6 +183,12 @@ export class QuotationLineItemsService {
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
     });
+  }
+
+  private async lockEditableRevision(tx: Prisma.TransactionClient, revisionId: string) {
+    const locked = await tx.quotationRevision.updateMany({ where: { id: revisionId, status: "DRAFT", isCurrent: true }, data: { updatedAt: new Date() } });
+    if (!locked.count) throw new ConflictException("This revision is no longer an editable draft; reload the quotation");
+    return tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId }, select: { defaultTaxTreatment: true } });
   }
 
   // Resolves which of the two pricing modes applies (§06a): cost + markup

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useOutcome } from "@/components/outcome-provider";
 import { useAuth } from "@/lib/auth-context";
 import { listMyServiceReports, listServiceReportTypes, searchDirectReportTargets, uploadDirectServiceReport, type DirectReportTarget, type MyServiceReport, type ServiceReportType } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
@@ -23,6 +24,7 @@ const formatCode = (code: string) => code.replaceAll("_", " ").toLowerCase().rep
 
 export default function ReportsPage() {
   const router = useRouter();
+  const { showOutcome } = useOutcome();
   const { user, accessToken, hasPermission } = useAuth();
   const canRead = hasPermission("service_reports", "read_own");
   const canUpload = hasPermission("service_reports", "upload");
@@ -33,6 +35,7 @@ export default function ReportsPage() {
   const [customerId, setCustomerId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [reportTypeCode, setReportTypeCode] = useState("");
+  const [reportTypeOther, setReportTypeOther] = useState("");
   const [sourceType, setSourceType] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -46,7 +49,6 @@ export default function ReportsPage() {
   const [typesError, setTypesError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
@@ -93,16 +95,16 @@ export default function ReportsPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!accessToken || !customerId || !sites.some((site) => site.id === siteId) || !reportTypeCode || !sourceType || !file) return;
+    if (!accessToken || !customerId || !sites.some((site) => site.id === siteId) || !reportTypeCode || !sourceType || !file || (reportTypeCode === "__custom__" && !reportTypeOther.trim())) return;
     setBusy(true);
     setUploadError(null);
-    setMessage(null);
     try {
-      const result = await uploadDirectServiceReport(accessToken, customerId, { siteId, reportTypeCode, sourceType, file, idempotencyKey });
-      setMessage(`Service Report ${result.serviceReportNumber} uploaded for Super Admin review.`);
+      const result = await uploadDirectServiceReport(accessToken, customerId, { siteId, reportTypeCode: reportTypeCode === "__custom__" ? "OTHER" : reportTypeCode, ...(reportTypeCode === "__custom__" ? { reportTypeOther: reportTypeOther.trim() } : {}), sourceType, file, idempotencyKey });
+      showOutcome({ title: "Report uploaded", reference: result.serviceReportNumber, description: "A Supervisor reviews the report first, followed by final approval from the responsible Manager or Super Admin." });
       setIdempotencyKey(crypto.randomUUID());
       setFile(null);
       setReportTypeCode("");
+      setReportTypeOther("");
       setSourceType("");
       await load();
     } catch (cause) {
@@ -125,7 +127,8 @@ export default function ReportsPage() {
       {reports?.length === 0 && <p style={subheading}>No submitted reports yet.</p>}
       {reports?.map((report) => <div key={report.id} style={card}>
         <strong>{report.serviceReportNumber}</strong>
-        <p style={{ ...subheading, margin: "6px 0 0" }}>{formatCode(report.reportTypeCode)} · {report.workOrderId ? "Work Order report" : "Direct report"} · {formatCode(report.status)}</p>
+        <p style={{ ...subheading, margin: "10px 0 0", color: "#183c33", fontWeight: 600 }}>{report.reportTypeOther || formatCode(report.reportTypeCode)}</p>
+        <p style={{ ...subheading, margin: "4px 0 0" }}>{report.workOrderId ? "Work Order report" : "Direct report"} · {formatCode(report.status)}</p>
         <p style={{ ...subheading, margin: "4px 0 0" }}>Uploaded {formatDateTime(report.uploadedAt)}</p>
         <details style={{ marginTop: 8 }}><summary style={{ cursor: "pointer", color: colors.greenDark }}>File details</summary><p style={subheading}>File: {report.documentFileName ?? "Unavailable"}</p></details>
       </div>)}
@@ -140,7 +143,8 @@ export default function ReportsPage() {
         {searchError && <p role="alert" style={dangerText}>{searchError}</p>}
         <label>Customer<select style={control} required value={customerId} onChange={(event) => { setCustomerId(event.target.value); setSiteId(""); }}><option value="">Select customer</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label>
         <label>Site<select style={control} required value={siteId} onChange={(event) => setSiteId(event.target.value)}><option value="">Select site</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.label}</option>)}</select></label>
-        <label>Report type<select style={control} required value={reportTypeCode} onChange={(event) => setReportTypeCode(event.target.value)}><option value="">Select type</option>{types.map((type) => <option key={type.code} value={type.code}>{type.label}</option>)}</select></label>
+        <label>Report type<select style={control} required value={reportTypeCode} onChange={(event) => setReportTypeCode(event.target.value)}><option value="">Select type</option>{types.map((type) => <option key={type.code} value={type.code}>{type.label}</option>)}<option value="__custom__">Custom report type…</option></select></label>
+        {reportTypeCode === "__custom__" && <label>Custom report type<input style={control} value={reportTypeOther} onChange={(event) => setReportTypeOther(event.target.value)} maxLength={120} required placeholder="Enter the report type" /></label>}
         {typesLoading && <p role="status" style={subheading}>Loading report types…</p>}
         {typesError && <div><p role="alert" style={dangerText}>{typesError}</p><button type="button" style={secondaryButton} onClick={() => void loadTypes()}>Retry report types</button></div>}
         <label>Reason for direct report<select style={control} required value={sourceType} onChange={(event) => setSourceType(event.target.value)}><option value="">Select reason</option>{reasons.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -154,6 +158,5 @@ export default function ReportsPage() {
       </form>
     </section>}
     {uploadError && <p role="alert" style={dangerText}>{uploadError}</p>}
-    {message && <p role="status" style={{ color: colors.green }}>{message}</p>}
   </main>;
 }

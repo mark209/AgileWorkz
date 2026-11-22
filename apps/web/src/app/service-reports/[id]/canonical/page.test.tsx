@@ -73,7 +73,7 @@ describe("CanonicalServiceReportPage", () => {
   it("shows the report number and status", async () => {
     render(<CanonicalServiceReportPage />);
     expect(await screen.findByRole("heading", { name: /SR-0119/ })).toBeInTheDocument();
-    expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    expect(screen.getByText("Approved (Final)")).toBeInTheDocument();
   });
 
   describe("Lock (Step 7)", () => {

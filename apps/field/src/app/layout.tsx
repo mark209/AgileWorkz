@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { AuthProvider } from "../lib/auth-context";
 import { OfflineSyncStatus } from "../components/offline-sync-status";
 import { ServiceWorkerRegistration } from "../components/service-worker-registration";
+import { OutcomeProvider } from "../components/outcome-provider";
 
 export const metadata = {
   title: "AgileWorks Field",
@@ -25,11 +26,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             adding boxSizing to every inline style object individually. */}
         <style>{"*, *::before, *::after { box-sizing: border-box; }"}</style>
       </head>
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0 }}>
+      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, background: "#f5f8f7", color: "#183c33" }}>
         <AuthProvider>
+          <OutcomeProvider>
           <ServiceWorkerRegistration />
           <OfflineSyncStatus />
           {children}
+          </OutcomeProvider>
         </AuthProvider>
       </body>
     </html>

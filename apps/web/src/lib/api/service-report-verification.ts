@@ -51,6 +51,7 @@ export interface VerificationView {
     status: string;
     verificationBasis: "DOCUMENT_ONLY" | "EXTRACTED_FIELDS" | null;
     reportTypeCode: string;
+    reportTypeOther?: string | null;
     documentFileName: string;
     documentMimeType: string;
     uploadedBy: string | null;
@@ -74,6 +75,7 @@ export interface ServiceReportListItem {
   serviceReportNumber: string;
   status: string;
   reportTypeCode: string;
+  reportTypeOther?: string | null;
   uploadedAt: string;
 }
 

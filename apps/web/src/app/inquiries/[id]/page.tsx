@@ -92,7 +92,7 @@ export default function InquiryDetailPage() {
 
   if (error) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Inquiry" }]} />
         <ErrorState message={error} onRetry={load} />
       </main>
@@ -101,7 +101,7 @@ export default function InquiryDetailPage() {
 
   if (!inquiry || !customer) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Inquiry" }]} />
         <LoadingState label="Loading inquiry…" />
       </main>
@@ -116,7 +116,7 @@ export default function InquiryDetailPage() {
   const inquiryType = inquiryTypes.find((t) => t.code === inquiry.inquiryTypeCode);
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs
         items={[
           { label: "Dashboard", href: "/dashboard" },

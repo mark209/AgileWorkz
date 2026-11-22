@@ -56,6 +56,7 @@ describe("Work Orders — Step 3 creation (live)", () => {
       [
         ["work_orders", "create"],
         ["work_orders", "read"],
+        ["work_orders", "generate_maintenance_visits"],
         ["quotations", "create"],
         ["quotations", "read"],
         ["quotations", "update"],
@@ -236,6 +237,36 @@ describe("Work Orders — Step 3 creation (live)", () => {
     expect(res.status).toBe(400);
   });
 
+  it.each(["REPAIR", "SUPPLY_INSTALLATION"])("rejects a second conversion of an accepted %s revision without creating another job", async (type) => {
+    const { customer, site } = await createCustomerAndSite(`convert-repeat-${type}`);
+    const { quotationId, revisionId } = await createQuotation(customer.id, site.id, type);
+    await request(app.getHttpServer()).post(linesUrl(quotationId, revisionId)).set("Authorization", officeHeader)
+      .send({ description: "One approved job", quantity: 1, unit: "lot", unitPriceBeforeVat: 1000 });
+    await acceptRevision(quotationId, revisionId);
+    const first = await request(app.getHttpServer()).post(convertUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({});
+    expect(first.status).toBe(201);
+    const repeat = await request(app.getHttpServer()).post(convertUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({});
+    expect(repeat.status).toBe(409);
+    expect(await prisma.workOrder.count({ where: { quotationRevisionId: revisionId } })).toBe(1);
+  });
+
+  it("serializes concurrent PROJECT conversion into one atomic section batch", async () => {
+    const { customer, site } = await createCustomerAndSite("convert-concurrent-project");
+    const { quotationId, revisionId } = await createQuotation(customer.id, site.id, "PROJECT");
+    for (const name of ["Indoor installation", "Outdoor installation"]) {
+      const section = await request(app.getHttpServer()).post(sectionsUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ name });
+      expect(section.status).toBe(201);
+      await request(app.getHttpServer()).post(linesUrl(quotationId, revisionId)).set("Authorization", officeHeader)
+        .send({ description: name, quantity: 1, unit: "lot", unitPriceBeforeVat: 1000, sectionId: section.body.id });
+    }
+    await acceptRevision(quotationId, revisionId);
+    const responses = await Promise.all([1, 2].map(() => request(app.getHttpServer()).post(convertUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({})));
+    expect(responses.map(response => response.status).sort()).toEqual([201, 409]);
+    expect(responses.find(response => response.status === 201)!.body).toHaveLength(2);
+    const orders = await prisma.workOrder.findMany({ where: { quotationRevisionId: revisionId } });
+    expect(orders.map(order => order.description).sort()).toEqual(["Indoor installation", "Outdoor installation"]);
+  });
+
   it("D1: converts a PROJECT revision into one Work Order per section, each carrying quotationId + quotationRevisionId", async () => {
     const { customer, site } = await createCustomerAndSite("convert-project");
     const { quotationId, revisionId } = await createQuotation(customer.id, site.id, "PROJECT");
@@ -288,9 +319,11 @@ describe("Work Orders — Step 3 creation (live)", () => {
     expect(submitRes.body.message).toContain("at least one section");
   });
 
-  it("refuses PREVENTIVE_MAINTENANCE conversion through this endpoint and directs callers to maintenance visit generation", async () => {
+  it("requires the maintenance first-visit date and directs callers to visit generation", async () => {
     const { customer, site } = await createCustomerAndSite("convert-pm");
     const { quotationId, revisionId } = await createQuotation(customer.id, site.id, "PREVENTIVE_MAINTENANCE");
+    await request(app.getHttpServer()).patch(`/quotations/${quotationId}/revisions/${revisionId}/maintenance-details`).set("Authorization", officeHeader)
+      .send({ contractPeriodMonths: 12, frequency: "QUARTERLY", scheduledVisits: 4, billingFrequency: "QUARTERLY" });
     await request(app.getHttpServer())
       .post(linesUrl(quotationId, revisionId))
       .set("Authorization", officeHeader)

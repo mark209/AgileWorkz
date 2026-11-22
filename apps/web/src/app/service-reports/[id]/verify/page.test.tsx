@@ -91,6 +91,28 @@ function baseView(): VerificationView {
 }
 
 describe("ServiceReportVerifyPage", () => {
+  it("keeps field review available but disables first-stage approval without supervisor permission", async () => {
+    const view = baseView();
+    view.fields.measurement[0].reviewStatus = "CONFIRMED";
+    getServiceReportVerificationMock.mockResolvedValue(view);
+    useAuthMock.mockReturnValue({ accessToken: "office-token", hasPermission: (_module: string, action: string) => action !== "technical_approve", isLoading: false });
+    render(<ServiceReportVerifyPage />);
+    expect(await screen.findByRole("button", { name: "Complete Verification" })).toBeDisabled();
+  });
+
+  it("lets a Manager provide final approval after supervisor review of a document-only report", async () => {
+    const view = baseView();
+    view.report.status = "VERIFIED";
+    view.report.verificationBasis = "DOCUMENT_ONLY";
+    view.fields.measurement = [];
+    getServiceReportVerificationMock.mockResolvedValue(view);
+    confirmServiceReportMock.mockResolvedValue({});
+    useAuthMock.mockReturnValue({ accessToken: "manager-token", hasPermission: (_module: string, action: string) => action === "verify" || action === "confirm", isLoading: false });
+    render(<ServiceReportVerifyPage />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Final approval" }));
+    await waitFor(() => expect(confirmServiceReportMock).toHaveBeenCalledWith("manager-token", "report-1"));
+    expect(approveServiceReportDocumentMock).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, isLoading: false });
@@ -139,7 +161,10 @@ describe("ServiceReportVerifyPage", () => {
   it("loads and displays staged fields grouped by section", async () => {
     render(<ServiceReportVerifyPage />);
     expect(await screen.findByText("low_side_pressure")).toBeInTheDocument();
-    expect(screen.getByText(/Measurements \/ Technical Data/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Measurements \/ Technical Data/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Measurements \/ Technical Data/ })).toHaveAttribute("href", "#review-measurement");
+    expect(screen.getByRole("region", { name: "Original uploaded document" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Report review and approval" })).toBeInTheDocument();
     expect(screen.getByText("(1)")).toBeInTheDocument();
   });
 

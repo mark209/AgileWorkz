@@ -22,13 +22,13 @@ export function FieldSection({ category, label, fields, disabled, onSubmit }: Fi
   const sorted = sortByAttention(fields);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card id={`review-${category}`} className="scroll-mt-6 overflow-hidden shadow-none">
+      <CardHeader className="border-b bg-muted/30 px-4 py-4">
         <CardTitle className="text-base">
           {label} <span className="font-normal text-muted-foreground">({fields.length})</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
+      <CardContent className="flex flex-col gap-3 p-4">
         {sorted.map((field) => (
           <FieldReviewCard key={field.id} field={field} disabled={disabled} onSubmit={onSubmit} />
         ))}

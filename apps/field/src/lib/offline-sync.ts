@@ -20,6 +20,7 @@ export async function syncQueuedServiceReports(userId: string, accessToken: stri
         siteId: queued.siteId,
         workOrderId: queued.workOrderId,
         reportTypeCode: queued.reportTypeCode,
+        ...(queued.reportTypeOther ? { reportTypeOther: queued.reportTypeOther } : {}),
         file,
         idempotencyKey: queued.idempotencyKey,
       });

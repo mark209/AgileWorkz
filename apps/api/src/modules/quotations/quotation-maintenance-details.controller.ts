@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Req } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Req } from "@nestjs/common";
 import { Request } from "express";
 import { QuotationsService } from "./quotations.service";
 import { QuotationMaintenanceDetailsService } from "./quotation-maintenance-details.service";
@@ -19,6 +19,13 @@ export class QuotationMaintenanceDetailsController {
     private readonly quotationsService: QuotationsService,
     private readonly maintenanceDetailsService: QuotationMaintenanceDetailsService,
   ) {}
+
+  @Permissions({ module: "quotations", action: "update" })
+  @Post("accepted-correction")
+  async completeMissing(@Param("quotationId") quotationId: string, @Param("revisionId") revisionId: string, @Body() dto: UpdateMaintenanceDetailsDto, @Req() req: AuthedRequest) {
+    await this.quotationsService.findRevisionOrThrow(quotationId, revisionId);
+    return this.maintenanceDetailsService.completeMissingAcceptedDetails(revisionId, dto, actorFrom(req));
+  }
 
   @Permissions({ module: "quotations", action: "read" })
   @Get()

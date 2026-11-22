@@ -103,7 +103,7 @@ describe("WorkOrderLifecycleActions", () => {
     render(<WorkOrderLifecycleActions workOrder={workOrder({ status: "DRAFT" })} onChanged={onChanged} />);
 
     const user = userEvent.setup();
-    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    const dateInput = screen.getByLabelText("Scheduled date");
     await user.type(dateInput, "2026-09-15");
     await user.click(screen.getByRole("button", { name: /^schedule$/i }));
 

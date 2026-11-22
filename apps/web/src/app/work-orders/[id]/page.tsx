@@ -16,6 +16,7 @@ import { WorkOrderAssignmentPanel } from "@/components/work-orders/work-order-as
 import { WorkOrderServiceReportsPanel } from "@/components/work-orders/work-order-service-reports-panel";
 import { ResponsibleManagerPanel } from "@/components/work-orders/responsible-manager-panel";
 import { TechnicianWorkOrderActions } from "@/components/work-orders/technician-work-order-actions";
+import { WorkOrderQuotationsPanel } from "@/components/work-orders/work-order-quotations-panel";
 
 function fmt(value: string | null): string {
   return value === null || value === "" ? "—" : value;
@@ -62,7 +63,7 @@ export default function WorkOrderDetailPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-6">
+    <div className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs items={[{ label: "Work Orders", href: "/work-orders" }, { label: workOrder?.workOrderNumber ?? "Work Order" }]} />
 
       {error && <ErrorState message={error} onRetry={load} />}
@@ -70,7 +71,7 @@ export default function WorkOrderDetailPage() {
 
       {workOrder && (
         <>
-          <PageHeader
+          <PageHeader className="mb-0"
             title={workOrder.workOrderNumber}
             description={`${workOrder.customer.name} — ${workOrder.site.label}`}
             actions={<StatusBadge status={workOrder.status} />}
@@ -152,6 +153,20 @@ export default function WorkOrderDetailPage() {
             <CardHeader><CardTitle>Responsible Manager</CardTitle></CardHeader>
             <CardContent><ResponsibleManagerPanel workOrder={workOrder} onChanged={load} /></CardContent>
           </Card>
+
+          {(workOrder.tasks?.length ?? 0) > 0 && <Card>
+            <CardHeader><CardTitle>Scope &amp; work instructions</CardTitle></CardHeader>
+            <CardContent><ol className="list-decimal space-y-4 pl-5">{workOrder.tasks?.map((task) => <li key={task.id} className="text-sm">
+              <p className="whitespace-pre-wrap font-medium">{task.description}</p>
+              {task.method && <p className="mt-1 whitespace-pre-wrap">{task.method}</p>}
+              {task.indications && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">Indications: {task.indications}</p>}
+            </li>)}</ol></CardContent>
+          </Card>}
+
+          {hasPermission("quotations", "read") && <Card>
+            <CardHeader><CardTitle>Related Quotations</CardTitle></CardHeader>
+            <CardContent><WorkOrderQuotationsPanel workOrder={workOrder} /></CardContent>
+          </Card>}
 
           {canReadFullReports && <Card>
             <CardHeader>

@@ -27,6 +27,7 @@ export default function HomePage() {
   const [offlineSavedAt, setOfflineSavedAt] = useState<number | null>(null);
 
   const canReadOwn = hasPermission("work_orders", "read_own");
+  const canReviewReports = hasPermission("service_reports", "verify");
 
   const load = useCallback(async () => {
     if (!accessToken || !canReadOwn) return;
@@ -80,7 +81,7 @@ export default function HomePage() {
       <div style={pageHeader}>
         <div>
           <h1 style={heading}>Hello, {user.fullName}</h1>
-          <p style={subheading}>My Assigned Work Orders</p>
+          <p style={subheading}>{canReadOwn ? "My Assigned Work Orders" : "AgileWorks Field"}</p>
         </div>
         <button
           style={secondaryButton}
@@ -96,7 +97,12 @@ export default function HomePage() {
         </Link>
       )}
 
-      {!canReadOwn && <p style={subheading}>Your account isn&apos;t set up to view assigned jobs.</p>}
+      {!canReadOwn && <section style={card}>
+        <p style={subheading}>AgileWorks Field shows technician assignments. Your current role does not include assigned technician jobs.</p>
+        <p style={{ ...subheading, marginTop: 12 }}>{canReviewReports
+          ? "Open AgileWorks Office and choose Service Reports to review reports and use your permitted approval actions. Sign in there with this same approved account."
+          : "Open AgileWorks Office to use the features available to your role. Sign in there with this same approved account."}</p>
+      </section>}
 
       {canReadOwn && error && (
         <div>
@@ -119,28 +125,32 @@ export default function HomePage() {
         <p style={subheading}>No assigned jobs right now. New assignments will show up here.</p>
       )}
 
-      {canReadOwn && !error && jobs !== null && jobs.length > 0 && (
-        <p style={subheading}>{jobs.length} assigned {jobs.length === 1 ? "Work Order" : "Work Orders"}. Open one to view the permitted next action.</p>
-      )}
+      {canReadOwn && !error && jobs !== null && jobs.length > 0 && <>
+        <section aria-label="Assigned work summary" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, margin: "20px 0 24px" }}>
+          {[{ label: "Assigned", count: jobs.length }, { label: "Ready to start", count: jobs.filter(job => job.status === "SCHEDULED").length }, { label: "In progress", count: jobs.filter(job => job.status === "IN_PROGRESS").length }].map(item => <div key={item.label} style={{ ...card, padding: 12, margin: 0 }}><p style={{ ...subheading, fontSize: 12, margin: 0 }}>{item.label}</p><p style={{ fontSize: 24, fontWeight: 650, margin: "6px 0 0", fontVariantNumeric: "tabular-nums" }}>{item.count}</p></div>)}
+        </section>
+        <h2 style={{ fontSize: 17, margin: "0 0 8px" }}>Your work queue</h2>
+        <p style={{ ...subheading, marginBottom: 16 }}>{jobs.length} assigned {jobs.length === 1 ? "Work Order" : "Work Orders"}. Open one to view the permitted next action.</p>
+      </>}
 
       {canReadOwn &&
         !error &&
         jobs !== null &&
         jobs.map((job) => (
           <Link key={job.id} href={`/jobs/${job.id}`} style={card}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: `1px solid ${colors.border}`, paddingBottom: 12, marginBottom: 12 }}>
               <strong>{job.workOrderNumber}</strong>
               <StatusBadge status={job.status} />
             </div>
             <p style={{ margin: "6px 0 0", color: colors.textMuted, fontSize: 14 }}>
-              {job.customer.name} — {job.site.label}
+              <strong style={{ color: "#183c33", fontWeight: 600 }}>{job.customer.name}</strong><br />{job.site.label}
             </p>
             {job.scheduledDate && (
               <p style={{ margin: "4px 0 0", color: colors.textMuted, fontSize: 13 }}>
                 Scheduled: {formatDate(job.scheduledDate)}
               </p>
             )}
-            <p style={{ margin: "8px 0 0", color: colors.green, fontSize: 14, fontWeight: 600 }}>
+            <p style={{ margin: "14px 0 0", paddingTop: 12, borderTop: `1px solid ${colors.border}`, color: colors.green, fontSize: 14, fontWeight: 600 }}>
               {job.status === "SCHEDULED" ? "Open to start job →" : job.status === "IN_PROGRESS" || job.status === "COMPLETED" ? "Open to upload report →" : "View Work Order →"}
             </p>
           </Link>

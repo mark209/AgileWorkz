@@ -83,8 +83,8 @@ const STATUS_LABEL: Record<string, string> = {
   PENDING_EXTRACTION: "Pending Extraction",
   EXTRACTION_FAILED: "Extraction Failed",
   PENDING_VERIFICATION: "Pending Verification",
-  VERIFIED: "Verified",
-  CONFIRMED: "Confirmed",
+  VERIFIED: "Supervisor Reviewed",
+  CONFIRMED: "Approved (Final)",
   LOCKED: "Locked",
 
   SCHEDULED: "Scheduled",

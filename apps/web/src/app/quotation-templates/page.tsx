@@ -72,10 +72,10 @@ export default function QuotationTemplatesPage() {
 
   if (isLoading || !user) return null;
   if (!canManage) return <main className="p-6"><h1 className="text-xl font-semibold">Access denied</h1><p>You cannot manage quotation templates.</p></main>;
-  return <main className="space-y-6 p-4 sm:p-6">
+  return <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
     <PageHeader title="Official Terms & Conditions" description="Manage the default text for new quotations. Existing quotations keep their own copy." />
     {templates && !templates.some((template) => template.status === "ACTIVE" && template.isDefault && !template.quotationType && !template.tradeCode && !template.body.includes("[PLACEHOLDER")) && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No official default has been saved yet. Review and save approved terms before sending customer quotations.</p>}
-    <form onSubmit={save} className="max-w-2xl space-y-3 rounded-md border p-4">
+    <form onSubmit={save} className="max-w-2xl space-y-3 rounded-lg border bg-card p-4 sm:p-5">
       <div className="space-y-2 rounded-md bg-muted p-3 text-sm"><p>Need a starting point? Load sample terms, review and edit them for AgileWorks, then save the approved version as the official default.</p><Button type="button" variant="outline" onClick={() => { setName("AgileWorks standard terms"); setBody(SAMPLE_TERMS); }}>Load sample terms</Button></div>
       <div className="space-y-1"><Label htmlFor="template-name">Template name</Label><Input id="template-name" value={name} onChange={(e) => setName(e.target.value)} required /></div>
       <div className="space-y-1"><Label htmlFor="template-body">Terms & Conditions</Label><Textarea id="template-body" value={body} onChange={(e) => setBody(e.target.value)} rows={10} required /></div>

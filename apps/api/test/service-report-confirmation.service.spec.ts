@@ -108,7 +108,9 @@ describe("ServiceReportConfirmationService.preview", () => {
   it("does not build a structured confirmation from document-only approval", async () => {
     const { service } = buildHarness({ report: { verificationBasis: "DOCUMENT_ONLY" } });
     await expect(service.preview("sr-1")).rejects.toThrow(BadRequestException);
-    await expect(service.confirm("sr-1", actor)).rejects.toThrow(BadRequestException);
+    const result = await service.confirm("sr-1", actor);
+    expect(result.report.status).toBe("CONFIRMED");
+    expect(result.createdCounts.equipmentUnits).toBe(0);
   });
   it("returns the plan without writing anything", async () => {
     const { service, stores } = buildHarness({ categories: { measurement: [stagingRow({ fieldName: "Low Side Pressure", suggestedMeasurementTypeCode: "LOW_SIDE_PRESSURE" })] } });

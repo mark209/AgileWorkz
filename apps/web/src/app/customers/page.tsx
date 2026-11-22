@@ -63,7 +63,7 @@ export default function CustomerListPage() {
   if (!user) return null;
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers" }]} />
       <PageHeader
         title="Customers"

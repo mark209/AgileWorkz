@@ -47,7 +47,7 @@ export class ServiceReportsController {
   // unreachable for them regardless of what status is requested.
   @Get()
   async list(@Req() req: AuthedRequest, @Query("status") status?: string) {
-    if (!status) return this.serviceReportsService.listByStatus([ServiceReportStatus.PENDING_VERIFICATION], { userId: req.user.userId });
+    if (!status) return this.serviceReportsService.listByStatus([], { userId: req.user.userId });
     const statuses = status.split(",").map((s) => s.trim());
     const valid = Object.values(ServiceReportStatus);
     for (const s of statuses) {

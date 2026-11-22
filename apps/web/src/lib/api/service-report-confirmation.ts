@@ -103,6 +103,14 @@ export interface ConfirmationResult {
 
 export interface CanonicalServiceReportView {
   report: {
+    reportTypeCode?: string;
+    reportTypeOther?: string | null;
+    verificationBasis?: "DOCUMENT_ONLY" | "EXTRACTED_FIELDS" | null;
+    verifiedByName?: string | null;
+    confirmedByName?: string | null;
+    lockedByName?: string | null;
+    verifiedAt?: string | null;
+    lockedAt?: string | null;
     id: string;
     status: string;
     serviceReportNumber: string;

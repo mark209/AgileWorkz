@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ServiceReportListItem } from "@/lib/api/service-report-verification";
 import ServiceReportsQueuePage from "./page";
 
@@ -19,17 +19,25 @@ function report(overrides: Partial<ServiceReportListItem> = {}): ServiceReportLi
 }
 
 describe("ServiceReportsQueuePage", () => {
+  it("finds a report by the custom type label displayed to the user", async () => {
+    listServiceReportsMock.mockResolvedValue([report({ reportTypeCode: "OTHER", reportTypeOther: "Insulation inspection" }), report({ id: "r2", serviceReportNumber: "SR-0002" })]);
+    render(<ServiceReportsQueuePage />);
+    await screen.findByText("Insulation inspection");
+    fireEvent.change(screen.getByRole("textbox", { name: "Search service reports" }), { target: { value: "insulation" } });
+    expect(screen.getByText("SR-0001")).toBeInTheDocument();
+    expect(screen.queryByText("SR-0002")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useSearchParamsMock.mockReturnValue(new URLSearchParams());
     useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true, isLoading: false });
   });
 
-  it("also requests failed extraction reports for Super Admin document review", async () => {
+  it("requests all statuses including failed extraction and historical reports", async () => {
     listServiceReportsMock.mockResolvedValue([]);
     render(<ServiceReportsQueuePage />);
     await screen.findByText(/no reports to review/i);
-    expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED");
+    expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", undefined);
   });
 
   it("labels review and lock destinations by status", async () => {
@@ -58,6 +66,14 @@ describe("ServiceReportsQueuePage", () => {
     await screen.findByText("SR-0001");
     expect(listServiceReportsMock).toHaveBeenCalledWith("token-1", "VERIFIED");
     expect(screen.getByRole("link", { name: "Clear status filter" })).toHaveAttribute("href", "/service-reports");
+  });
+
+  it("opens a locked historical report in the canonical viewer", async () => {
+    listServiceReportsMock.mockResolvedValue([report({ status: "LOCKED" })]);
+    render(<ServiceReportsQueuePage />);
+    const link = await screen.findByRole("link", { name: "View →" });
+    expect(link).toHaveAttribute("href", "/service-reports/r1/canonical");
+    expect(screen.queryByRole("link", { name: "Lock →" })).not.toBeInTheDocument();
   });
 
   it("names the selected status when its queue is empty", async () => {

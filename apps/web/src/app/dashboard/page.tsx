@@ -17,9 +17,11 @@ import {
   type WorkOrder,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
+import { formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
 import { WorkflowOverview } from "@/components/dashboard/workflow-overview";
@@ -31,6 +33,35 @@ interface SectionState<T> {
   error: string | null;
 }
 const initialSection = { data: null, error: null };
+
+function AttentionList({ items, loading, error, onRetry, emptyMessage }: {
+  items: Array<{ id: string; label: string; href: string }>;
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  emptyMessage: string;
+}) {
+  const [page, setPage] = useState(1);
+  const itemsKey = items.map((item) => `${item.href}:${item.label}`).join("\n");
+  useEffect(() => { setPage(1); }, [itemsKey]);
+  const pageCount = Math.max(1, Math.ceil(items.length / 5));
+  const currentPage = Math.min(page, pageCount);
+  const start = (currentPage - 1) * 5;
+
+  return <>
+    {items.slice(start, start + 5).map((item) => <Link key={item.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={item.href}><span className="min-w-0 break-words">{item.label}</span><span className="shrink-0 font-medium text-primary">Open →</span></Link>)}
+    {loading && <LoadingState label="Loading items needing attention…" />}
+    {error && <ErrorState message="Some items could not be loaded." onRetry={onRetry} />}
+    {!loading && !error && items.length === 0 && <p className="text-muted-foreground">{emptyMessage}</p>}
+    {items.length > 0 && <nav aria-label="Needs Attention pages" className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+      <p role="status" aria-live="polite" className="text-xs text-muted-foreground">Showing {start + 1}–{Math.min(start + 5, items.length)} of {items.length} · Page {currentPage} of {pageCount}</p>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" aria-label="Previous page" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+        <Button type="button" variant="outline" size="sm" aria-label="Next page" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
+      </div>
+    </nav>}
+  </>;
+}
 
 function technicianNextStep(status: WorkOrder["status"]): string {
   if (status === "DRAFT") return "Draft Work Order. Ask the responsible team to move it to Scheduled before starting.";
@@ -72,7 +103,10 @@ export default function DashboardPage() {
   const canApproveQuotations = hasPermission("quotations", "approve");
   const canApproveFinal = hasPermission("quotations", "approve_final");
   const canVerifyReports = canReadServiceReports && hasPermission("service_reports", "verify");
-  const canApproveReportDocuments = hasPermission("service_reports", "document_approve");
+  const canApproveReports = canVerifyReports && (hasPermission("service_reports", "technical_approve") || hasPermission("service_reports", "document_approve"));
+  const canReviewReports = canVerifyReports;
+  const canConfirmReports = canVerifyReports && hasPermission("service_reports", "confirm");
+  const canActOnReports = canReviewReports || canConfirmReports;
   const canCancelWorkOrders = hasPermission("work_orders", "cancel");
 
   const [customers, setCustomers] = useState<SectionState<Customer[]>>(initialSection);
@@ -98,7 +132,7 @@ export default function DashboardPage() {
 
     if (canReadQuotations) {
       setQuotations(initialSection);
-      requests.push(listQuotations(accessToken, "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT").then((data) => setQuotations({ data, error: null }))
+      requests.push(listQuotations(accessToken, "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT,ACCEPTED").then((data) => setQuotations({ data, error: null }))
         .catch((e) => setQuotations({ data: null, error: e instanceof ApiError ? e.message : "Failed to load quotations." })));
     }
 
@@ -140,24 +174,27 @@ export default function DashboardPage() {
     ...(canApproveFinal ? (quotations.data ?? []).filter((q) => q.status === "PENDING_OWNER_APPROVAL").map((q) => ({
       id: q.id, label: `${q.quotationNumber} · Owner review`, href: `/quotations/${q.id}`,
     })) : []),
-    ...(canApproveReportDocuments ? (serviceReports.data ?? []).filter((r) => r.status === "PENDING_VERIFICATION").map((r) => ({
-      id: r.id, label: `${r.serviceReportNumber} · Review report`, href: `/service-reports/${r.id}/verify`,
+    ...(canReviewReports ? (serviceReports.data ?? []).filter((r) => r.status === "PENDING_VERIFICATION").map((r) => ({
+      id: r.id, label: `${r.serviceReportNumber} · ${canApproveReports ? "Supervisor review" : "Review report"}`, href: `/service-reports/${r.id}/verify`,
+    })) : []),
+    ...(canConfirmReports ? (serviceReports.data ?? []).filter((r) => r.status === "VERIFIED").map((r) => ({
+      id: r.id, label: `${r.serviceReportNumber} · Final approval`, href: `/service-reports/${r.id}/verify`,
     })) : []),
     ...(canCancelWorkOrders ? (workOrders.data ?? []).filter((w) => w.cancellationRequestedAt !== null && w.cancelledAt === null).map((w) => ({
       id: w.id, label: `${w.workOrderNumber} · Cancellation request`, href: `/work-orders/${w.id}`,
     })) : []),
-  ].slice(0, 6);
+  ];
   const attentionLoading = (canApproveQuotations || canApproveFinal) && quotations.data === null && !quotations.error
-    || canApproveReportDocuments && serviceReports.data === null && !serviceReports.error
+    || canActOnReports && serviceReports.data === null && !serviceReports.error
     || canCancelWorkOrders && workOrders.data === null && !workOrders.error;
   const attentionError = (canApproveQuotations || canApproveFinal) && quotations.error
-    || canApproveReportDocuments && serviceReports.error
+    || canActOnReports && serviceReports.error
     || canCancelWorkOrders && workOrders.error;
 
   if (adminView) {
     return (
       <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <PageHeader title="Dashboard" description="Overview of your business operations" />
+        <PageHeader className="mb-0" title="Dashboard" description="Overview of your business operations" />
 
         {!hasAnySection && (
           <p className="text-sm text-muted-foreground">
@@ -182,14 +219,11 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders) && (
+        {(canApproveQuotations || canApproveFinal || canActOnReports || canCancelWorkOrders) && (
           <Card className="shadow-none">
             <CardHeader className="p-4 pb-2 sm:px-5"><h2 className="text-base font-semibold">Needs Attention</h2></CardHeader>
             <CardContent className="space-y-2 px-4 pb-4 pt-0 text-sm sm:px-5">
-              {attentionItems.map((item) => <Link key={item.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={item.href}><span className="min-w-0 break-words">{item.label}</span><span className="shrink-0 font-medium text-primary">Open →</span></Link>)}
-              {attentionLoading && <LoadingState label="Loading items needing attention…" />}
-              {attentionError && <ErrorState message="Some items could not be loaded." onRetry={load} />}
-              {!attentionLoading && !attentionError && attentionItems.length === 0 && <p className="text-muted-foreground">No items currently require your attention.</p>}
+              <AttentionList items={attentionItems} loading={attentionLoading} error={!!attentionError} onRetry={load} emptyMessage="No items currently require your attention." />
             </CardContent>
           </Card>
         )}
@@ -203,9 +237,10 @@ export default function DashboardPage() {
                   {canReadQuotations && section(quotations, (data) => <WorkflowOverview groups={[{
                     label: "Quotations",
                     statuses: [
-                      { label: "Pending Approval", count: data.filter((q) => q.status === "PENDING_APPROVAL").length, href: "/quotations?status=PENDING_APPROVAL" },
+                      { label: "Pending Manager Approval", count: data.filter((q) => q.status === "PENDING_APPROVAL").length, href: "/quotations?status=PENDING_APPROVAL" },
                       { label: "Pending Owner Approval", count: data.filter((q) => q.status === "PENDING_OWNER_APPROVAL").length, href: "/quotations?status=PENDING_OWNER_APPROVAL" },
-                      { label: "Awaiting Customer Decision", count: data.filter((q) => q.status === "SENT").length, href: "/quotations?status=SENT" },
+                      { label: "Sent", count: data.filter((q) => q.status === "SENT").length, href: "/quotations?status=SENT" },
+                      { label: "Accepted", count: data.filter((q) => q.status === "ACCEPTED").length, href: "/quotations?status=ACCEPTED" },
                     ],
                   }]} />)}
                   {canReadWorkOrders && section(workOrders, (data) => <WorkflowOverview groups={[{
@@ -244,8 +279,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">
-      <PageHeader title={managerView ? "Manager Dashboard" : officeView ? "Office Staff Dashboard" : technicianView ? "Technician Dashboard" : "Dashboard"} description={`Welcome, ${user.fullName}. ${managerView || technicianView ? "Review Work Orders assigned to you." : "Review your authorized work."}`} actions={managerView && hasPermission("work_orders", "create") ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Choose a customer to create a Work Order</Link> : officeView && canReadCustomers ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">View customers</Link> : undefined} />
+    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <PageHeader className="mb-0" title={managerView ? "Manager Dashboard" : officeView ? "Office Staff Dashboard" : technicianView ? "Technician Dashboard" : "Dashboard"} description={`Welcome, ${user.fullName}. ${managerView || technicianView ? "Review Work Orders assigned to you." : "Review your authorized work."}`} actions={managerView && hasPermission("work_orders", "create") ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Choose a customer to create a Work Order</Link> : officeView && canReadCustomers ? <Link href="/customers" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">View customers</Link> : undefined} />
 
       {!hasAnySection && (
         <p className="text-sm text-muted-foreground">
@@ -253,16 +288,22 @@ export default function DashboardPage() {
         </p>
       )}
 
-      {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders || canReadAudit) && (
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-          {(canApproveQuotations || canApproveFinal || canApproveReportDocuments || canCancelWorkOrders) && (
+      {technicianView && canReadWorkOrders && section(workOrders, data => (
+        <section aria-label="Assigned work summary" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard compact label="Assigned jobs" value={data.length} />
+          <KpiCard compact label="Ready to start" value={data.filter(order => order.status === "SCHEDULED").length} />
+          <KpiCard compact label="Work in progress" value={data.filter(order => order.status === "IN_PROGRESS").length} />
+          <KpiCard compact label="Completed / Closed" value={data.filter(order => order.status === "COMPLETED" || order.status === "CLOSED").length} />
+        </section>
+      ))}
+
+      {(canApproveQuotations || canApproveFinal || canActOnReports || canCancelWorkOrders || canReadAudit) && (
+        <div className={`grid items-start gap-4 ${canReadAudit && (canApproveQuotations || canApproveFinal || canActOnReports || canCancelWorkOrders) ? "lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]" : ""}`}>
+          {(canApproveQuotations || canApproveFinal || canActOnReports || canCancelWorkOrders) && (
             <Card>
               <CardHeader><CardTitle>Needs Attention</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
-                {attentionItems.map((item) => <Link key={item.id} className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={item.href}><span>{item.label}</span><span className="ml-3 font-medium">Open →</span></Link>)}
-                {attentionLoading && <LoadingState label="Loading items needing attention…" />}
-                {attentionError && <ErrorState message="Some items could not be loaded." onRetry={load} />}
-                {!attentionLoading && !attentionError && attentionItems.length === 0 && <p className="text-muted-foreground">No items currently need your attention.</p>}
+                <AttentionList items={attentionItems} loading={attentionLoading} error={!!attentionError} onRetry={load} emptyMessage="No items currently need your attention." />
               </CardContent>
             </Card>
           )}
@@ -285,24 +326,26 @@ export default function DashboardPage() {
 
       {(managerView || technicianView) && canReadWorkOrders && (
         <Card>
-          <CardHeader><CardTitle>My Assigned Work Orders</CardTitle></CardHeader>
+          <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Your work queue</p><CardTitle>My Assigned Work Orders</CardTitle></div><Link href="/work-orders" className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View all assigned Work Orders →</Link></CardHeader>
           <CardContent>
             {technicianView && <p className="mb-4 text-sm text-muted-foreground">Open a Work Order to start a scheduled job or upload a report when its status permits. You can also use AgileWorks Field.</p>}
             {section(workOrders, (data) => data.length === 0 ? (
               <EmptyState title="No assigned Work Orders" description="Work Orders explicitly assigned to you will appear here." />
             ) : (
-              <ul className="space-y-2">
+              <ul className="grid gap-4 xl:grid-cols-2">
                 {data.slice(0, 5).map((workOrder) => (
-                  <li key={workOrder.id} className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="font-medium">{workOrder.workOrderNumber}</p>
-                      <p className="text-sm text-muted-foreground">{workOrder.customer.name} · {workOrder.site.label}</p>
-                      {technicianView && <p className="text-sm text-muted-foreground">{technicianNextStep(workOrder.status)}</p>}
-                    </div>
-                    <div className="flex items-center gap-3">
+                  <li key={workOrder.id} className="flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-3">
+                      <p className="text-sm font-semibold">{workOrder.workOrderNumber}</p>
                       <StatusBadge status={workOrder.status} />
-                      <Link href={`/work-orders/${workOrder.id}`} className="text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View Work Order</Link>
                     </div>
+                    <div className="flex-1 space-y-2 p-4">
+                      <p className="break-words font-medium">{workOrder.customer.name}</p>
+                      <p className="break-words text-sm text-muted-foreground">{workOrder.site.label}</p>
+                      <p className="text-xs text-muted-foreground">Scheduled: {formatDate(workOrder.scheduledDate)}</p>
+                      {technicianView && <p className="border-t pt-3 text-sm leading-relaxed text-muted-foreground">{technicianNextStep(workOrder.status)}</p>}
+                    </div>
+                    <div className="border-t px-4 py-3"><Link href={`/work-orders/${workOrder.id}`} className="inline-flex min-h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">View Work Order</Link></div>
                   </li>
                 ))}
               </ul>
@@ -335,20 +378,21 @@ export default function DashboardPage() {
             section(quotations, (data) => (
               <>
                 <KpiCard
-                  label="Quotations — Pending Approval"
+                  label="Quotations — Pending Manager Approval"
                   value={data.filter((q) => q.status === "PENDING_APPROVAL").length}
                   href="/quotations?status=PENDING_APPROVAL"
                 />
-                {!officeView && <KpiCard
+                <KpiCard
                   label="Quotations — Pending Owner Approval"
                   value={data.filter((q) => q.status === "PENDING_OWNER_APPROVAL").length}
                   href="/quotations?status=PENDING_OWNER_APPROVAL"
-                />}
-                {!officeView && <KpiCard
-                  label="Quotations — Awaiting Customer Decision"
+                />
+                <KpiCard
+                  label="Quotations — Sent"
                   value={data.filter((q) => q.status === "SENT").length}
                   href="/quotations?status=SENT"
-                />}
+                />
+                <KpiCard label="Quotations — Accepted" value={data.filter((q) => q.status === "ACCEPTED").length} href="/quotations?status=ACCEPTED" />
               </>
             ))}
 

@@ -103,7 +103,7 @@ export default function AssetDetailPage() {
 
   if (error) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Equipment" }]} />
         <ErrorState message={error} onRetry={load} />
       </main>
@@ -112,7 +112,7 @@ export default function AssetDetailPage() {
 
   if (!asset) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Equipment" }]} />
         <LoadingState label="Loading equipment…" />
       </main>
@@ -120,7 +120,7 @@ export default function AssetDetailPage() {
   }
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs
         items={[
           { label: "Dashboard", href: "/dashboard" },

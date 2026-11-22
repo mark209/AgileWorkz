@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import DashboardPage from "./page";
 
 const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
@@ -32,10 +32,10 @@ const ADMIN_PERMISSIONS = ["customers.read", "service_reports.read", "service_re
 const OFFICE_STAFF_PERMISSIONS = ["customers.read", "service_reports.read", "quotations.read", "work_orders.read"];
 const TECHNICIAN_PERMISSIONS = ["work_orders.read_own"];
 
-function authAs(permissions: string[], roles = ["Admin/Owner"]) {
+function authAs(permissions: string[], roles = ["Admin/Owner"], accessToken = "token-1") {
   useAuthMock.mockReturnValue({
     user: { fullName: "Test User", roles },
-    accessToken: "token-1",
+    accessToken,
     isLoading: false,
     logout: vi.fn(),
     hasPermission: (module: string, action: string) => permissions.includes(`${module}.${action}`),
@@ -69,6 +69,18 @@ function mockAllResolved() {
 }
 
 describe("DashboardPage — role-based section visibility", () => {
+  it("summarizes technician assignments and links to the full existing work list", async () => {
+    mockAllResolved();
+    authAs(TECHNICIAN_PERMISSIONS, ["Technician"]);
+    listWorkOrdersMock.mockResolvedValue(Array.from({ length: 6 }, (_, index) => ({ id: `job-${index}`, workOrderNumber: `WO-${index}`, customer: { name: "Customer" }, site: { label: "Site" }, status: index === 0 ? "SCHEDULED" : "IN_PROGRESS", scheduledDate: null })));
+    render(<DashboardPage />);
+    const summary = await screen.findByRole("region", { name: "Assigned work summary" });
+    expect(within(summary).getByText("Assigned jobs").parentElement).toHaveTextContent("6");
+    expect(within(summary).getByText("Ready to start").parentElement).toHaveTextContent("1");
+    expect(within(summary).getByText("Work in progress").parentElement).toHaveTextContent("5");
+    expect(screen.getByRole("link", { name: /View all assigned Work Orders/ })).toHaveAttribute("href", "/work-orders");
+    expect(listCustomersMock).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockAllResolved();
@@ -102,7 +114,7 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(await screen.findByText("Active Customers")).toBeInTheDocument();
     expect(screen.getByText("Service Reports — Pending Verification")).toBeInTheDocument();
     expect(screen.queryByText("Service Reports — Confirmed")).not.toBeInTheDocument();
-    expect(screen.getByText("Quotations — Pending Approval")).toBeInTheDocument();
+    expect(screen.getByText("Quotations — Pending Manager Approval")).toBeInTheDocument();
     expect(screen.getByText("Work Orders — Scheduled")).toBeInTheDocument();
 
     expect(listAuditLogsMock).not.toHaveBeenCalled();
@@ -171,9 +183,9 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(screen.getByText("Active Customers").closest("a")).toHaveAttribute("href", "/customers");
     expect(screen.getByText("Pending Approvals").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_APPROVAL,PENDING_OWNER_APPROVAL");
     fireEvent.click(screen.getByText("Quotations", { selector: "summary span" }));
-    expect(screen.getByText("Pending Approval").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_APPROVAL");
+    expect(screen.getByText("Pending Manager Approval").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_APPROVAL");
     expect(screen.getByText("Pending Owner Approval").closest("a")).toHaveAttribute("href", "/quotations?status=PENDING_OWNER_APPROVAL");
-    expect(listQuotationsMock).toHaveBeenCalledWith("token-1", "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT");
+    expect(listQuotationsMock).toHaveBeenCalledWith("token-1", "PENDING_APPROVAL,PENDING_OWNER_APPROVAL,SENT,ACCEPTED");
     expect(screen.getByText("Pending Owner Approval").closest("li")?.textContent).toContain("1");
   });
 
@@ -221,10 +233,96 @@ describe("DashboardPage — role-based section visibility", () => {
     expect(screen.queryByText(/land in later phases/i)).not.toBeInTheDocument();
   });
 
+  it("shows a supervisor's pending extracted report in Needs Attention", async () => {
+    authAs(["service_reports.read", "service_reports.verify", "service_reports.technical_approve"], ["Technical Supervisor"]);
+    render(<DashboardPage />);
+
+    expect(await screen.findByRole("link", { name: /SR-001 · Supervisor review/ })).toHaveAttribute("href", "/service-reports/sr1/verify");
+    expect(screen.queryByRole("link", { name: /Final approval/ })).not.toBeInTheDocument();
+  });
+
+  it.each([["Manager"], ["Admin/Owner"]])("shows verified reports awaiting final approval to %s", async (role) => {
+    authAs(["service_reports.read_assigned", "service_reports.verify", "service_reports.confirm"], [role]);
+    listServiceReportsMock.mockResolvedValue([{ id: "sr-final", serviceReportNumber: "SR-FINAL", status: "VERIFIED" }]);
+    render(<DashboardPage />);
+
+    expect(await screen.findByRole("link", { name: /SR-FINAL · Final approval/ })).toHaveAttribute("href", "/service-reports/sr-final/verify");
+    expect(screen.queryByRole("link", { name: /Supervisor review/ })).not.toBeInTheDocument();
+  });
+
+  it("does not show approval attention actions to report readers", async () => {
+    authAs(["service_reports.read"], ["Office Staff"]);
+    render(<DashboardPage />);
+    await screen.findByText("Service Reports — Pending Verification");
+    expect(screen.queryByRole("heading", { name: "Needs Attention" })).not.toBeInTheDocument();
+  });
+
+  it.each(["technical_approve", "document_approve", "confirm"])("does not link to an inaccessible review page with %s but no verify permission", async (grant) => {
+    authAs(["service_reports.read", `service_reports.${grant}`], ["Custom Role"]);
+    render(<DashboardPage />);
+    await screen.findByText("Service Reports — Pending Verification");
+    expect(screen.queryByRole("heading", { name: "Needs Attention" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Supervisor review|Final approval/ })).not.toBeInTheDocument();
+  });
+
   it("re-fetches every permitted section on load and settles without leaving anything stuck loading", async () => {
     authAs(ADMIN_PERMISSIONS);
     render(<DashboardPage />);
     await waitFor(() => expect(listCustomersMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(listAuditLogsMock).toHaveBeenCalledWith("token-1", 8));
+  });
+
+  it.each(["Admin/Owner", "Manager"])("paginates every attention item in groups of five for %s", async (role) => {
+    authAs(["quotations.read", "quotations.approve"], [role]);
+    listQuotationsMock.mockResolvedValue(Array.from({ length: 12 }, (_, index) => ({ id: `page-${index + 1}`, quotationNumber: `PAGE-${index + 1}`, status: "PENDING_APPROVAL" })));
+    render(<DashboardPage />);
+    const navigation = await screen.findByRole("navigation", { name: "Needs Attention pages" });
+    expect(screen.getAllByRole("link", { name: /PAGE-\d+ · Manager review/ })).toHaveLength(5);
+    expect(within(navigation).getByRole("button", { name: "Previous page" })).toBeDisabled();
+    fireEvent.click(within(navigation).getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("Showing 6–10 of 12 · Page 2 of 3")).toBeInTheDocument();
+    fireEvent.click(within(navigation).getByRole("button", { name: "Next page" }));
+    expect(screen.getAllByRole("link", { name: /PAGE-\d+ · Manager review/ })).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /PAGE-12 · Manager review/ })).toHaveAttribute("href", "/quotations/page-12");
+    expect(within(navigation).getByRole("button", { name: "Next page" })).toBeDisabled();
+    fireEvent.click(within(navigation).getByRole("button", { name: "Previous page" }));
+    expect(screen.getByText("Showing 6–10 of 12 · Page 2 of 3")).toBeInTheDocument();
+  });
+
+  it("resets attention pagination when refreshed data shrinks", async () => {
+    const permissions = ["quotations.read", "quotations.approve"];
+    authAs(permissions);
+    listQuotationsMock.mockResolvedValueOnce(Array.from({ length: 7 }, (_, index) => ({ id: `old-${index}`, quotationNumber: `OLD-${index}`, status: "PENDING_APPROVAL" }))).mockResolvedValue([{ id: "remaining", quotationNumber: "REMAINING", status: "PENDING_APPROVAL" }]);
+    const { rerender } = render(<DashboardPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(screen.getByText("Showing 6–7 of 7 · Page 2 of 2")).toBeInTheDocument();
+    authAs(permissions, ["Admin/Owner"], "token-2");
+    rerender(<DashboardPage />);
+    expect(await screen.findByRole("link", { name: /REMAINING · Manager review/ })).toBeInTheDocument();
+    expect(screen.getByText("Showing 1–1 of 1 · Page 1 of 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+  });
+
+  it("shows all four quotation states to Office Staff with working filtered links", async () => {
+    authAs(["quotations.read"], ["Office Staff"]);
+    listQuotationsMock.mockResolvedValue([
+      { id: "pending", status: "PENDING_APPROVAL" }, { id: "owner", status: "PENDING_OWNER_APPROVAL" },
+      { id: "sent1", status: "SENT" }, { id: "sent2", status: "SENT" }, { id: "accepted", status: "ACCEPTED" },
+    ]);
+    render(<DashboardPage />);
+    expect((await screen.findByText("Quotations — Sent")).closest("a")).toHaveTextContent("2");
+    for (const [label, status] of [["Pending Manager Approval", "PENDING_APPROVAL"], ["Pending Owner Approval", "PENDING_OWNER_APPROVAL"], ["Sent", "SENT"], ["Accepted", "ACCEPTED"]]) {
+      expect(screen.getByText(`Quotations — ${label}`).closest("a")).toHaveAttribute("href", `/quotations?status=${status}`);
+    }
+  });
+
+  it("includes sent and accepted counts in the administrative workflow overview", async () => {
+    authAs(["quotations.read"]);
+    listQuotationsMock.mockResolvedValue([{ id: "sent", status: "SENT" }, { id: "accepted1", status: "ACCEPTED" }, { id: "accepted2", status: "ACCEPTED" }]);
+    render(<DashboardPage />);
+    fireEvent.click(await screen.findByText("Quotations", { selector: "summary span" }));
+    expect(screen.getByRole("link", { name: "Sent" })).toHaveAttribute("href", "/quotations?status=SENT");
+    expect(screen.getByRole("link", { name: "Accepted" }).closest("li")).toHaveTextContent("2");
   });
 });

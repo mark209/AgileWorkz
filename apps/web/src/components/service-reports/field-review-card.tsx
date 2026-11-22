@@ -46,11 +46,11 @@ export function FieldReviewCard({ field, disabled, onSubmit }: FieldReviewCardPr
   }
 
   return (
-    <div className="rounded-md border p-3">
+    <div className="min-w-0 rounded-lg border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0 flex-1 break-words">
           <p className="text-sm font-medium text-foreground">{field.fieldName}</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-sm leading-relaxed text-muted-foreground">
             AI value: <span className="font-mono">{formatAiValue(field)}</span>
             {field.aiConfidence && <span className="ml-2 text-xs uppercase tracking-wide">confidence: {field.aiConfidence}</span>}
           </p>
@@ -65,7 +65,7 @@ export function FieldReviewCard({ field, disabled, onSubmit }: FieldReviewCardPr
       </div>
 
       {!disabled && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 [&_button]:min-h-9">
           {!correcting ? (
             <>
               <Button size="sm" variant="outline" disabled={submitting} onClick={() => act("CONFIRMED")}>
@@ -90,13 +90,13 @@ export function FieldReviewCard({ field, disabled, onSubmit }: FieldReviewCardPr
               </Button>
             </>
           ) : (
-            <div className="flex w-full items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2">
               <Input
                 aria-label={`Corrected value for ${field.fieldName}`}
                 value={draftValue}
                 onChange={(e) => setDraftValue(e.target.value)}
                 placeholder="Corrected value"
-                className="h-8 max-w-xs"
+                className="h-9 min-w-0 flex-1 basis-full sm:basis-auto"
                 autoFocus
               />
               <Button size="sm" disabled={submitting} onClick={() => act("CORRECTED", draftValue)}>

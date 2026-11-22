@@ -1,4 +1,5 @@
-import { IsEnum, IsOptional, IsString, MinLength } from "class-validator";
+import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { Transform } from "class-transformer";
 import { ServiceReportSourceType } from "@prisma/client";
 
 // The binary file itself arrives via @UploadedFile(), not this DTO — these
@@ -10,7 +11,7 @@ import { ServiceReportSourceType } from "@prisma/client";
 // body field that could disagree.
 //
 // Only upload-time identifying fields are accepted here (siteId,
-// workOrderId, reportTypeCode, sourceType, contactName/contactPhone) — every
+// workOrderId, reportTypeCode/reportTypeOther, sourceType, contactName/contactPhone) — every
 // other Service Report field (serviceDate, technicians, measurements,
 // problems, narrative, signoffs) is populated later, either by the
 // extraction pipeline into staging tables or by the future Confirm
@@ -30,6 +31,13 @@ export class UploadServiceReportDto {
   @IsString()
   @MinLength(1)
   reportTypeCode!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => typeof value === "string" ? value.trim() : value)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  reportTypeOther?: string;
 
   // Nullable at the schema level, but app-validated required when
   // workOrderId is absent (ServiceReport.sourceType's own doc comment:

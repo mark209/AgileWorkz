@@ -27,7 +27,7 @@ function report(overrides: Partial<ServiceReportListItem> = {}): ServiceReportLi
 describe("WorkOrderServiceReportsPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAuthMock.mockReturnValue({ accessToken: "token-1" });
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => true });
   });
 
   it("shows an empty state when no reports are linked yet", async () => {
@@ -52,6 +52,22 @@ describe("WorkOrderServiceReportsPanel", () => {
     render(<WorkOrderServiceReportsPanel workOrderId="wo-42" />);
     await screen.findByText(/no service reports yet/i);
     expect(listServiceReportsForWorkOrderMock).toHaveBeenCalledWith("token-1", "wo-42");
+  });
+
+  it.each(["CONFIRMED", "LOCKED"] as const)("opens the canonical report for %s instead of the restricted verification page", async (status) => {
+    listServiceReportsForWorkOrderMock.mockResolvedValue([report({ status })]);
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => false });
+    render(<WorkOrderServiceReportsPanel workOrderId="wo1" />);
+    expect(await screen.findByRole("link", { name: /view/i })).toHaveAttribute("href", "/service-reports/sr1/canonical");
+  });
+
+  it("does not send read-only users to a verification page they cannot access", async () => {
+    listServiceReportsForWorkOrderMock.mockResolvedValue([report()]);
+    useAuthMock.mockReturnValue({ accessToken: "token-1", hasPermission: () => false });
+    render(<WorkOrderServiceReportsPanel workOrderId="wo1" />);
+    await screen.findByText("SR-2026-08-00001");
+    expect(screen.queryByRole("link", { name: /view/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/awaiting review/i)).toBeInTheDocument();
   });
 
   it("surfaces a load error with a retry option", async () => {

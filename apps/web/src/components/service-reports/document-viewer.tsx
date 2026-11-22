@@ -8,7 +8,7 @@
 export function DocumentViewer({ url, mimeType, fileName }: { url: string; mimeType: string; fileName: string }) {
   if (mimeType === "application/pdf") {
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary underline">
           Open original PDF in a new tab
         </a>
@@ -16,17 +16,19 @@ export function DocumentViewer({ url, mimeType, fileName }: { url: string; mimeT
         <iframe
           src={url}
           title={fileName}
-          className="h-full w-full rounded-md border bg-muted"
-          style={{ minHeight: "70vh" }}
+          className="h-[65vh] min-h-80 w-full rounded-lg border bg-muted lg:h-[70vh]"
         />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full w-full items-start justify-center overflow-auto rounded-md border bg-muted p-2">
+    <div className="space-y-3">
+      <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary underline underline-offset-2">Open original image in a new tab</a>
+      <div className="flex max-h-[75vh] min-h-64 w-full items-start justify-center overflow-auto rounded-lg border bg-muted p-3">
       {/* eslint-disable-next-line @next/next/no-img-element -- external signed storage URL, not a local/optimizable asset */}
-      <img src={url} alt={fileName} className="max-w-full" />
+      <img src={url} alt={fileName} className="h-auto max-w-full" />
+      </div>
     </div>
   );
 }

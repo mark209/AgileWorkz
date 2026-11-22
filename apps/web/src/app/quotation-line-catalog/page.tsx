@@ -71,8 +71,8 @@ export default function QuotationLineCatalogPage() {
   }
   if (isLoading || !user) return null;
   if (!canManage) return <main className="p-6"><h1 className="text-xl font-semibold">Access denied</h1><p>You cannot manage saved line items.</p></main>;
-  return <main className="space-y-5 p-4 sm:p-6"><PageHeader title="Saved line items" description="Maintain reusable quotation lines. Staff can adjust each copied line on its quotation." />
-    <form onSubmit={save} className="grid max-w-3xl gap-3 rounded-md border p-4 sm:grid-cols-2">
+  return <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8"><PageHeader title="Saved line items" description="Maintain reusable quotation lines. Staff can adjust each copied line on its quotation." />
+    <form onSubmit={save} className="grid max-w-3xl gap-3 rounded-lg border bg-card p-4 sm:p-5 sm:grid-cols-2">
       <div className="space-y-1"><Label htmlFor="catalog-description">Description</Label><Input id="catalog-description" value={description} onChange={(e) => setDescription(e.target.value)} required maxLength={255} /></div>
       <div className="space-y-1"><Label htmlFor="catalog-specification">Specification</Label><Input id="catalog-specification" value={specification} onChange={(e) => setSpecification(e.target.value)} /></div>
       <div className="space-y-1"><Label htmlFor="catalog-brand">Brand</Label><Input id="catalog-brand" value={brand} onChange={(e) => setBrand(e.target.value)} maxLength={100} /></div>

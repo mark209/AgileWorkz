@@ -66,6 +66,7 @@ export interface VerificationView {
     status: ServiceReportStatus;
     verificationBasis: ServiceReportVerificationBasis | null;
     reportTypeCode: string;
+    reportTypeOther: string | null;
     documentFileName: string;
     documentMimeType: string;
     uploadedBy: string | null;
@@ -174,6 +175,7 @@ export class ServiceReportVerificationService {
         status: report.status,
         verificationBasis: report.verificationBasis,
         reportTypeCode: report.reportTypeCode,
+        reportTypeOther: report.reportTypeOther,
         documentFileName: report.documentFileName,
         documentMimeType: report.documentMimeType,
         uploadedBy: report.uploadedBy,

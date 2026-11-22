@@ -223,6 +223,8 @@ export interface Inquiry {
 }
 
 export interface Quotation {
+  sourceWorkOrderId?: string | null;
+  workOrders?: Array<{ id: string; workOrderNumber: string; status: WorkOrderStatus }>;
   id: string;
   customer?: { name: string };
   inquiryId: string | null;
@@ -243,6 +245,11 @@ export interface Quotation {
 }
 
 export interface QuotationRevision {
+  pdfLayout?: "AUTO" | "STANDARD" | "MAINTENANCE";
+  recipientName?: string | null;
+  preparedByName?: string | null;
+  paymentInstructions?: string | null;
+  scopeChecklistTitle?: string | null;
   id: string;
   quotationId: string;
   revisionNumber: number;
@@ -339,6 +346,8 @@ export interface QuotationMaintenanceDetails {
 }
 
 export interface QuotationTestingCommissioningItem {
+  method?: string | null;
+  indications?: string | null;
   id: string;
   quotationRevisionId: string;
   description: string;
@@ -411,7 +420,15 @@ export interface WorkOrderAssignment {
   technician: { id: string; fullName: string };
 }
 
+export interface QuotationWorkOrderGeneration {
+  generated: boolean;
+  totalCount: number;
+  workOrders: Array<{ id: string; workOrderNumber: string; status: WorkOrderStatus; scheduledDate: string | null }>;
+}
+
 export interface WorkOrderTask {
+  method?: string | null;
+  indications?: string | null;
   id: string;
   description: string;
   sortOrder: number;
@@ -435,6 +452,7 @@ export interface WorkOrder {
   scheduledDate: string | null;
   description: string | null;
   startedAt: string | null;
+  fieldCompletedAt?: string | null;
   completedAt: string | null;
   closedAt: string | null;
   cancellationRequestedAt: string | null;

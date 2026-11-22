@@ -37,7 +37,6 @@ function ServiceReportsQueueContent() {
   const ownOnly = !canRead && canReadOwn;
   const listKey = ownOnly ? "mine" : status ?? "all";
   const canVerify = hasPermission("service_reports", "verify");
-  const canDocumentApprove = hasPermission("service_reports", "document_approve");
   const canConfirm = hasPermission("service_reports", "confirm");
   const canLock = hasPermission("service_reports", "lock");
 
@@ -57,12 +56,12 @@ function ServiceReportsQueueContent() {
     try {
       const rows = ownOnly
         ? await listMyServiceReports(accessToken)
-        : await listServiceReports(accessToken, status || (canDocumentApprove ? "EXTRACTION_FAILED,PENDING_VERIFICATION,VERIFIED,CONFIRMED" : "PENDING_VERIFICATION,VERIFIED,CONFIRMED"));
+        : await listServiceReports(accessToken, status || undefined);
       if (request === requestId.current) { setReports(rows); setLoadedKey(listKey); }
     } catch (e) {
       if (request === requestId.current) setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Service Reports." : e instanceof ApiError ? e.message : "Failed to load Service Reports.");
     }
-  }, [accessToken, canRead, canReadOwn, canDocumentApprove, ownOnly, status, listKey]);
+  }, [accessToken, canRead, canReadOwn, ownOnly, status, listKey]);
 
   useEffect(() => {
     load();
@@ -81,14 +80,14 @@ function ServiceReportsQueueContent() {
   const currentReports = loadedKey === listKey ? reports : null;
   const visibleReports = currentReports?.filter((report) =>
     report.serviceReportNumber.toLowerCase().includes(query) ||
+    (report.reportTypeOther ?? "").toLowerCase().includes(query) ||
     report.reportTypeCode.replaceAll("_", " ").toLowerCase().includes(query),
   ) ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <PageHeader title={ownOnly ? "My Service Reports" : "Service Reports"} description={ownOnly ? "Reports you submitted, including direct visits without a Work Order." : status ? `Filtered by status: ${status.replaceAll("_", " ").toLowerCase()}.` : canDocumentApprove ? "Review reports awaiting document approval, verification, confirmation, or locking." : canVerify ? "Review reports awaiting Super Admin document approval, verification, confirmation, or locking." : "Service Reports available to you."} />
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <PageHeader title={ownOnly ? "My Service Reports" : "Service Reports"} description={ownOnly ? "Reports you submitted, including direct visits without a Work Order." : status ? `Filtered by status: ${status.replaceAll("_", " ").toLowerCase()}.` : "All Service Reports available to you, including completed reports."} actions={ownOnly && hasPermission("service_reports", "upload") ? <DirectReportUploadDialog onUploaded={load} /> : undefined} />
       {status && !ownOnly && <Link href="/service-reports" className="mb-4 inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
-      {ownOnly && hasPermission("service_reports", "upload") && <div className="mb-4"><DirectReportUploadDialog onUploaded={load} /></div>}
 
       <div className="relative mb-4 max-w-sm">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -98,7 +97,7 @@ function ServiceReportsQueueContent() {
       {error && <ErrorState message={error} onRetry={load} />}
       {!currentReports && !error && <LoadingState label={ownOnly ? "Loading your reports…" : "Loading queue…"} />}
       {currentReports && currentReports.length === 0 && (
-        <EmptyState title={ownOnly ? "No submitted reports yet" : status ? "No reports with this status" : "No reports to review"} description={ownOnly ? "Your uploaded Service Reports will appear here." : status ? `No Service Reports currently have status ${status.replaceAll("_", " ").toLowerCase()}.` : "No Service Reports are currently awaiting verification, confirmation, or locking."} />
+          <EmptyState title={ownOnly ? "No submitted reports yet" : status ? "No reports with this status" : "No reports to review"} description={ownOnly ? "Your uploaded Service Reports will appear here." : status ? `No Service Reports currently have status ${status.replaceAll("_", " ").toLowerCase()}.` : "No Service Reports are available to you."} />
       )}
       {currentReports && currentReports.length > 0 && visibleReports.length === 0 && (
         <EmptyState title="No matching service reports" description="Try a different search term." />
@@ -106,7 +105,7 @@ function ServiceReportsQueueContent() {
 
       {visibleReports.length > 0 && (
         <Card>
-          <CardContent className="overflow-x-auto pt-6">
+          <CardContent className="overflow-x-auto p-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -120,16 +119,16 @@ function ServiceReportsQueueContent() {
               <TableBody>
                 {visibleReports.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-medium">{!ownOnly && (r.status === "CONFIRMED" || canVerify) ? <Link href={r.status === "CONFIRMED" ? `/service-reports/${r.id}/canonical` : `/service-reports/${r.id}/verify`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{r.serviceReportNumber}</Link> : r.serviceReportNumber}</TableCell>
-                    <TableCell>{formatReportType(r.reportTypeCode)}</TableCell>
+                    <TableCell className="font-medium">{!ownOnly && (r.status === "CONFIRMED" || r.status === "LOCKED" || canVerify) ? <Link href={(r.status === "CONFIRMED" || r.status === "LOCKED") ? `/service-reports/${r.id}/canonical` : `/service-reports/${r.id}/verify`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{r.serviceReportNumber}</Link> : r.serviceReportNumber}</TableCell>
+                    <TableCell>{formatReportType(r.reportTypeCode, r.reportTypeOther)}</TableCell>
                     <TableCell>
                       <StatusBadge status={r.status} />
                     </TableCell>
                     <TableCell>{formatDateTime(r.uploadedAt)}</TableCell>
                     <TableCell className="text-right">
-                      {ownOnly ? <details className="text-left text-sm"><summary className="cursor-pointer font-medium text-primary">File details</summary><div className="mt-2 min-w-48 space-y-1 text-muted-foreground"><p>File: {r.documentFileName ?? "Unavailable"}</p></div></details> : r.status === "CONFIRMED" ? (
+                      {ownOnly ? <details className="text-left text-sm"><summary className="cursor-pointer font-medium text-primary">File details</summary><div className="mt-2 min-w-48 space-y-1 text-muted-foreground"><p>File: {r.documentFileName ?? "Unavailable"}</p></div></details> : (r.status === "CONFIRMED" || r.status === "LOCKED") ? (
                         <Link href={`/service-reports/${r.id}/canonical`} className="text-sm font-medium text-primary hover:underline">
-                          {canLock ? "Lock →" : "View →"}
+                          {canLock && r.status === "CONFIRMED" ? "Lock →" : "View →"}
                         </Link>
                       ) : canVerify ? (
                         <Link href={`/service-reports/${r.id}/verify`} className="text-sm font-medium text-primary hover:underline">

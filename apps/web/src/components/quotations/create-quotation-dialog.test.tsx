@@ -21,6 +21,16 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 const sites = [{ id: "site-1", label: "Test Site" }] as Site[];
 
 describe("CreateQuotationDialog editable choices", () => {
+  it("preselects the job site and preserves the source Work Order for an additional quotation", async () => {
+    createQuotationMock.mockResolvedValue({ id: "additional" });
+    const user = userEvent.setup();
+    render(<CreateQuotationDialog customerId="customer-1" sites={sites} sourceWorkOrderId="wo-original" />);
+    await user.click(screen.getByRole("button", { name: "Additional Quotation" }));
+    expect(screen.getByLabelText("Site")).toHaveValue("site-1");
+    await user.type(screen.getByLabelText("Primary trade"), "HVAC");
+    await user.click(screen.getByRole("button", { name: "Create quotation" }));
+    await waitFor(() => expect(createQuotationMock).toHaveBeenCalledWith("office-token", "customer-1", expect.objectContaining({ siteId: "site-1", sourceWorkOrderId: "wo-original" })));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     createQuotationMock.mockResolvedValue({ id: "quotation-1" });

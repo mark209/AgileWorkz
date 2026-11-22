@@ -3,6 +3,7 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
+    "assets": [{ "include": "modules/quotations/pdf/assets/**/*", "watchAssets": true }],
     "deleteOutDir": true,
     "tsConfigPath": "tsconfig.build.json"
   }

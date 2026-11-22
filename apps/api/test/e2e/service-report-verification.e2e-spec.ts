@@ -22,6 +22,7 @@ describe("Service Report Human Verification Workflow (live)", () => {
 
   let technician: { user: { id: string }; authHeader: string };
   let officeStaff: { user: { id: string }; authHeader: string };
+  let supervisor: { user: { id: string }; authHeader: string };
   let documentApprover: { user: { id: string }; authHeader: string };
   let managerNoVerify: { user: { id: string }; authHeader: string };
 
@@ -52,6 +53,7 @@ describe("Service Report Human Verification Workflow (live)", () => {
       ["service_reports", "read"],
       ["service_reports", "verify"],
     ]);
+    supervisor = await userWithPermissions("supervisor", [["service_reports", "read"], ["service_reports", "verify"], ["service_reports", "technical_approve"]]);
     documentApprover = await userWithPermissions("document-approver", [
       ["service_reports", "read"],
       ["service_reports", "document_approve"],
@@ -192,12 +194,14 @@ describe("Service Report Human Verification Workflow (live)", () => {
       expect(res.body.map((r: { id: string }) => r.id)).not.toContain(report.id);
     });
 
-    it("lists PENDING_VERIFICATION reports by default for a user with service_reports.read", async () => {
+    it("lists reports across statuses by default for a user with service_reports.read", async () => {
       const { report } = await createPendingVerificationReport("queue", technician.user.id, []);
       const res = await request(app.getHttpServer()).get("/service-reports").set("Authorization", officeStaff.authHeader);
       expect(res.status).toBe(200);
       expect(res.body.map((r: { id: string }) => r.id)).toContain(report.id);
-      expect(res.body.every((r: { status: string }) => r.status === "PENDING_VERIFICATION")).toBe(true);
+      await prisma.serviceReport.update({ where: { id: report.id }, data: { status: "LOCKED" } });
+      const historical = await request(app.getHttpServer()).get("/service-reports").set("Authorization", officeStaff.authHeader);
+      expect(historical.body.map((r: { id: string }) => r.id)).toContain(report.id);
     });
   });
 
@@ -329,13 +333,20 @@ describe("Service Report Human Verification Workflow (live)", () => {
   });
 
   describe("Completeness and NEEDS_FOLLOW_UP blocking", () => {
+    it("does not let Office Staff provide supervisor approval", async () => {
+      const { report } = await createPendingVerificationReport("office-no-approval", technician.user.id, [
+        { fieldName: "a", aiValue: "1", aiConfidence: "HIGH", reviewStatus: "CONFIRMED" },
+      ]);
+      const res = await request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", officeStaff.authHeader);
+      expect(res.status).toBe(403);
+    });
     it("rejects completion while a field remains unreviewed", async () => {
       const { report } = await createPendingVerificationReport("incomplete", technician.user.id, [
         { fieldName: "low_side_pressure", aiValue: "65", aiConfidence: "HIGH" },
       ]);
       const res = await request(app.getHttpServer())
         .post(`/service-reports/${report.id}/verification/complete`)
-        .set("Authorization", officeStaff.authHeader);
+        .set("Authorization", supervisor.authHeader);
       expect(res.status).toBe(400);
     });
 
@@ -347,7 +358,7 @@ describe("Service Report Human Verification Workflow (live)", () => {
 
       const res = await request(app.getHttpServer())
         .post(`/service-reports/${report.id}/verification/complete`)
-        .set("Authorization", officeStaff.authHeader);
+        .set("Authorization", supervisor.authHeader);
       expect(res.status).toBe(400);
 
       const stillPending = await prisma.serviceReport.findUnique({ where: { id: report.id } });
@@ -363,14 +374,14 @@ describe("Service Report Human Verification Workflow (live)", () => {
 
       const res = await request(app.getHttpServer())
         .post(`/service-reports/${report.id}/verification/complete`)
-        .set("Authorization", officeStaff.authHeader);
+        .set("Authorization", supervisor.authHeader);
       expect(res.status).toBe(201);
       expect(res.body.status).toBe("VERIFIED");
 
       const updated = await prisma.serviceReport.findUnique({ where: { id: report.id } });
       expect(updated!.status).toBe("VERIFIED");
       expect(updated!.uploadedBy).toBe(technician.user.id);
-      expect(updated!.verifiedBy).toBe(officeStaff.user.id);
+      expect(updated!.verifiedBy).toBe(supervisor.user.id);
       expect(updated!.uploadedAt).not.toBeNull();
       expect(updated!.verifiedAt).not.toBeNull();
       expect(updated!.uploadedBy).not.toBe(updated!.verifiedBy);
@@ -386,7 +397,7 @@ describe("Service Report Human Verification Workflow (live)", () => {
       const { report } = await createPendingVerificationReport("no-rows", technician.user.id, []);
       const res = await request(app.getHttpServer())
         .post(`/service-reports/${report.id}/verification/complete`)
-        .set("Authorization", officeStaff.authHeader);
+        .set("Authorization", supervisor.authHeader);
       expect(res.status).toBe(400);
       expect(res.body.message).toMatch(/document-only approval/i);
     });
@@ -424,8 +435,8 @@ describe("Service Report Human Verification Workflow (live)", () => {
       ]);
 
       const [a, b] = await Promise.all([
-        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", officeStaff.authHeader),
-        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", officeStaff.authHeader),
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", supervisor.authHeader),
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/verification/complete`).set("Authorization", supervisor.authHeader),
       ]);
       const statuses = [a.status, b.status].sort();
       expect(statuses).toEqual([201, 409]);

@@ -8,12 +8,10 @@ import {
   deleteLineItem,
   deleteSection,
   reorderSections,
-  TAX_TREATMENT_LABEL,
   updateSection,
   type Asset,
   type QuotationLineItem,
   type QuotationSection,
-  type TaxTreatment,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { formatMoney, formatPercent } from "@/lib/format";
@@ -49,8 +47,7 @@ function LineItemsTable({
               <TableHead>Qty</TableHead>
               <TableHead>Unit</TableHead>
               <TableHead>Unit Price</TableHead>
-              <TableHead>Tax</TableHead>
-              <TableHead>Line Total</TableHead>
+              <TableHead>Amount before discount</TableHead>
               {canEdit && <TableHead />}
             </TableRow>
           </TableHeader>
@@ -68,8 +65,7 @@ function LineItemsTable({
                 </TableCell>
                 <TableCell>{item.unit}</TableCell>
                 <TableCell>{formatMoney(item.unitPrice)}</TableCell>
-                <TableCell>{TAX_TREATMENT_LABEL[item.taxTreatment]}</TableCell>
-                <TableCell className="font-medium">{formatMoney(item.lineFinalAmount)}</TableCell>
+                <TableCell className="font-medium">{formatMoney(item.lineAmount)}</TableCell>
                 {canEdit && (
                   <TableCell>
                     <div className="flex justify-end gap-1">
@@ -129,7 +125,6 @@ export function RevisionEditor({
   sections,
   lineItems,
   assets,
-  defaultTaxTreatment,
   onChanged,
 }: {
   quotationId: string;
@@ -138,7 +133,6 @@ export function RevisionEditor({
   sections: QuotationSection[];
   lineItems: QuotationLineItem[];
   assets: Asset[];
-  defaultTaxTreatment: TaxTreatment;
   onChanged: () => void;
 }) {
   const { accessToken } = useAuth();
@@ -348,7 +342,7 @@ export function RevisionEditor({
         </CardContent>
       </Card>
 
-      <LineItemDialog
+      {lineDialogOpen && <LineItemDialog
         key={editingItem?.id ?? `new-${presetSectionId ?? "ungrouped"}`}
         open={lineDialogOpen}
         onOpenChange={setLineDialogOpen}
@@ -356,11 +350,10 @@ export function RevisionEditor({
         revisionId={revisionId}
         sections={sortedSections}
         assets={assets}
-        defaultTaxTreatment={defaultTaxTreatment}
         editingItem={editingItem}
         defaultSectionId={presetSectionId}
         onSaved={onChanged}
-      />
+      />}
     </div>
   );
 }

@@ -1,19 +1,47 @@
+import { OutcomeProvider } from "@/components/outcome-provider";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReportsPage from "./page";
 
-const { useAuthMock, listMineMock, listTypesMock, searchTargetsMock } = vi.hoisted(() => ({
-  useAuthMock: vi.fn(), listMineMock: vi.fn(), listTypesMock: vi.fn(), searchTargetsMock: vi.fn(),
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
+});
+
+const { useAuthMock, listMineMock, listTypesMock, searchTargetsMock, uploadMock } = vi.hoisted(() => ({
+  useAuthMock: vi.fn(), listMineMock: vi.fn(), listTypesMock: vi.fn(), searchTargetsMock: vi.fn(), uploadMock: vi.fn(),
 }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, listMyServiceReports: listMineMock, listServiceReportTypes: listTypesMock, searchDirectReportTargets: searchTargetsMock };
+  return { ...actual, listMyServiceReports: listMineMock, listServiceReportTypes: listTypesMock, searchDirectReportTargets: searchTargetsMock, uploadDirectServiceReport: uploadMock };
 });
 
 describe("ReportsPage", () => {
+  it("uploads a custom direct report and shows its received reference in the dialog", async () => {
+    searchTargetsMock.mockResolvedValue([{ id: "c1", name: "Acme", sites: [{ id: "s1", label: "Main" }] }]);
+    uploadMock.mockResolvedValue({ serviceReportNumber: "SR-FIELD-DIRECT" });
+    const user = userEvent.setup();
+    render(<ReportsPage />);
+    fireEvent.change(screen.getByLabelText("Find customer"), { target: { value: "Acme" } });
+    await screen.findByRole("option", { name: "Acme" });
+    await user.selectOptions(screen.getByLabelText("Customer"), "c1");
+    await user.selectOptions(screen.getByLabelText("Site"), "s1");
+    await user.selectOptions(screen.getByLabelText("Report type"), "__custom__");
+    fireEvent.change(screen.getByLabelText("Custom report type"), { target: { value: "Drain inspection" } });
+    await user.selectOptions(screen.getByLabelText("Reason for direct report"), "CALLBACK_VISIT");
+    await user.upload(screen.getByLabelText(/Signed report/i), new File(["report"], "report.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Upload report" }));
+    await waitFor(() => expect(uploadMock).toHaveBeenCalledWith("token", "c1", expect.objectContaining({ reportTypeCode: "OTHER", reportTypeOther: "Drain inspection" })));
+    expect(await screen.findByRole("dialog", { name: "Report uploaded" })).toHaveTextContent("SR-FIELD-DIRECT");
+  });
+  it("displays a report-specific custom label in My Reports", async () => {
+    listMineMock.mockResolvedValue([{ id: "r1", serviceReportNumber: "SR-CUSTOM", reportTypeCode: "OTHER", reportTypeOther: "Cooling assessment", status: "PENDING_VERIFICATION", uploadedAt: "2026-11-21T00:00:00Z", workOrderId: null }]);
+    render(<ReportsPage />);
+    expect(await screen.findByText(/Cooling assessment/)).toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token", hasPermission: () => true });
@@ -70,3 +98,5 @@ describe("ReportsPage", () => {
     expect(screen.getByText("Selected report: direct-photo.jpg")).toBeInTheDocument();
   });
 });
+
+function render(ui: React.ReactElement) { return baseRender(<OutcomeProvider>{ui}</OutcomeProvider>); }

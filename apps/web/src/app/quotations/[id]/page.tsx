@@ -205,7 +205,7 @@ export default function QuotationDetailPage() {
 
   if (error) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotations", href: "/quotations" }, { label: "Quotation" }]} />
         <ErrorState message={error} onRetry={loadQuotation} />
       </main>
@@ -214,7 +214,7 @@ export default function QuotationDetailPage() {
 
   if (!quotation || !customer) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Quotations", href: "/quotations" }, { label: "Quotation" }]} />
         <LoadingState label="Loading quotation…" />
       </main>
@@ -224,6 +224,7 @@ export default function QuotationDetailPage() {
   const site = sites.find((s) => s.id === quotation.siteId) ?? null;
   const trade = trades.find((t) => t.code === quotation.primaryTradeCode) ?? null;
   const canEdit = !!revision && revision.isCurrent && revision.status === "DRAFT" && hasPermission("quotations", "update");
+  const hasTaxMismatch = !!revision && lineItems.some(item => item.taxTreatment !== revision.defaultTaxTreatment);
 
   function viewRevision(revisionId: string) {
     if (revisionId === viewingRevisionId) return;
@@ -285,6 +286,7 @@ export default function QuotationDetailPage() {
 
       <h2 className="mb-3 text-base font-semibold">Customer and Site</h2>
       <QuotationHeaderCard quotation={quotation} customer={customer} site={site} trade={trade} />
+      {quotation.sourceWorkOrderId && <Link href={`/work-orders/${quotation.sourceWorkOrderId}`} className="mb-4 inline-block text-sm text-primary underline">View original Work Order</Link>}
 
       {revisions.length > 0 && viewingRevisionId && (
         <RevisionHistoryNav revisions={revisions} viewingRevisionId={viewingRevisionId} onSelect={handleSelectRevision} />
@@ -335,14 +337,13 @@ export default function QuotationDetailPage() {
           )}
           {revision.isCurrent && revision.status !== "DRAFT" && (
             <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-              This revision is {revision.status.replace("_", " ").toLowerCase()} — its content is locked. Create a
-              new revision to make further changes.
+              {revision.status === "ACCEPTED" ? "This accepted quotation is commercially final. For additional work, create an additional quotation from the original Work Order." : `This revision is ${revision.status.replaceAll("_", " ").toLowerCase()} — its content is locked. Create a new revision to make further changes.`}
             </p>
           )}
           <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] xl:items-start">
             <div className="min-w-0 space-y-5">
               <section id="quotation-details" className="scroll-mt-6">
-                <RevisionFreeTextForm quotationId={quotation.id} revisionId={revision.id} canEdit={canEdit} revision={revision} onChanged={refreshAll} onDirtyChange={setHasUnsavedDetails} />
+                <RevisionFreeTextForm quotationId={quotation.id} revisionId={revision.id} canEdit={canEdit} revision={revision} hasTaxMismatch={hasTaxMismatch} onChanged={refreshAll} onDirtyChange={setHasUnsavedDetails} />
               </section>
 
               <section id="quotation-line-items" className="scroll-mt-6">
@@ -353,19 +354,21 @@ export default function QuotationDetailPage() {
                   sections={sections}
                   lineItems={lineItems}
                   assets={assets}
-                  defaultTaxTreatment={revision.defaultTaxTreatment}
                   onChanged={refreshAll}
                 />
               </section>
 
               {quotation.quotationType === "PREVENTIVE_MAINTENANCE" && (
+                <section id="quotation-maintenance" className="scroll-mt-6">
                 <MaintenanceDetailsPanel
                   quotationId={quotation.id}
                   revisionId={revision.id}
-                  canEdit={canEdit}
+                  canEdit={canEdit || (revision.isCurrent && revision.status === "ACCEPTED" && !maintenanceDetails && hasPermission("quotations", "update"))}
+                  repairAccepted={revision.status === "ACCEPTED" && !maintenanceDetails}
                   details={maintenanceDetails}
                   onChanged={refreshAll}
                 />
+                </section>
               )}
 
               <section id="quotation-checklist" className="scroll-mt-6">
@@ -389,7 +392,7 @@ export default function QuotationDetailPage() {
                     {lineItems.length === 0 ? (
                       <p>At least one saved <a href="#quotation-line-items" className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">line item</a> is required to submit for internal approval.</p>
                     ) : (
-                      <p>{lineItems.length} saved line {lineItems.length === 1 ? "item" : "items"} · ready for internal submission.</p>
+                      <p>{lineItems.length} saved line {lineItems.length === 1 ? "item" : "items"}{hasTaxMismatch ? " · apply the overall quotation tax to all saved items before submission." : quotation.quotationType === "PREVENTIVE_MAINTENANCE" && !maintenanceDetails ? " · maintenance visit plan still required." : " · ready for internal submission."}</p>
                     )}
                     {revision.termsAndConditions?.includes("[PLACEHOLDER") && (
                       <p className="border-t pt-2 text-muted-foreground">Before customer sending, replace the placeholder <a href="#quotation-commercial-terms" className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Terms &amp; Conditions</a>.</p>
@@ -401,11 +404,13 @@ export default function QuotationDetailPage() {
               {revision.isCurrent && (
                 <LifecycleActionBar
                   quotationId={quotation.id}
+                  quotationNumber={quotation.quotationNumber}
                   revision={revision}
                   lineItemCount={lineItems.length}
                   quotationType={quotation.quotationType}
                   sectionCount={sections.length}
-                  hasUnsavedDetails={hasUnsavedDetails}
+                  maintenanceReady={quotation.quotationType !== "PREVENTIVE_MAINTENANCE" || !!maintenanceDetails}
+                  hasUnsavedDetails={hasUnsavedDetails || (canEdit && hasTaxMismatch)}
                   onChanged={refreshAll}
                   onConflict={handleConflict}
                   onNextRevisionCreated={handleNextRevisionCreated}
@@ -414,9 +419,13 @@ export default function QuotationDetailPage() {
               {revision.isCurrent && revision.status === "ACCEPTED" && (
                 <ConvertToWorkOrdersPanel
                   quotationId={quotation.id}
+                  quotationNumber={quotation.quotationNumber}
                   revisionId={revision.id}
                   quotationType={quotation.quotationType}
                   sectionCount={sections.length}
+                  maintenanceReady={quotation.quotationType !== "PREVENTIVE_MAINTENANCE" || !!maintenanceDetails}
+                  maintenanceFrequency={maintenanceDetails?.frequency}
+                  scheduledVisits={maintenanceDetails?.scheduledVisits}
                   onConverted={refreshAll}
                 />
               )}

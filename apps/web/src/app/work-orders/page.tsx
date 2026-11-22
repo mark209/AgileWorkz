@@ -83,7 +83,7 @@ function WorkOrdersListPageContent() {
   ) ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         title="Work Orders"
         description={assignedScope ? `Work Orders assigned to you${status ? ` · Status: ${status.replaceAll(",", ", ")}` : ""}.` : status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}

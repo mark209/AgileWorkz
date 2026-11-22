@@ -21,7 +21,9 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/home");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed");
+      setError(err instanceof ApiError
+        ? err.status === 429 ? "Too many sign-in attempts. Please wait a moment and try again." : err.message
+        : "Login failed");
     }
   }
 

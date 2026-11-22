@@ -14,6 +14,7 @@ export interface VerificationToolbarProps {
   onBulkConfirm: () => Promise<void>;
   onComplete: () => Promise<void>;
   disabled: boolean;
+  canApprove?: boolean;
 }
 
 export function VerificationToolbar({
@@ -23,19 +24,21 @@ export function VerificationToolbar({
   onBulkConfirm,
   onComplete,
   disabled,
+  canApprove = true,
 }: VerificationToolbarProps) {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [completeBusy, setCompleteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const percent = progress.total === 0 ? 100 : Math.round((progress.reviewed / progress.total) * 100);
-  const canComplete = !disabled && canCompleteVerification(progress);
+  const canComplete = canApprove && !disabled && canCompleteVerification(progress);
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-4 pt-6">
+      <CardContent className="flex flex-col gap-4 p-4 sm:p-5">
+        <h3 className="text-sm font-semibold">Review progress</h3>
         <div>
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="font-medium text-foreground">
               Reviewed: {progress.reviewed} / {progress.total}
             </span>
@@ -48,7 +51,7 @@ export function VerificationToolbar({
         </div>
 
         {!disabled && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 border-t pt-4 [&_button]:min-h-10 [&_button]:whitespace-normal">
             {bulkEligibleCount === null ? (
               <Button
                 size="sm"
@@ -84,7 +87,7 @@ export function VerificationToolbar({
               size="sm"
               variant="default"
               disabled={!canComplete || completeBusy}
-              title={!canComplete ? "Every field must be reviewed, with no field left Needs Follow-Up, before completing verification" : undefined}
+              title={!canApprove ? "Technical Supervisor or Supervisor review is required" : !canComplete ? "Every field must be reviewed, with no field left Needs Follow-Up, before completing verification" : undefined}
               onClick={async () => {
                 setCompleteBusy(true);
                 setError(null);

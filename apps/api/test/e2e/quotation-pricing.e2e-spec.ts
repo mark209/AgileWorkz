@@ -74,6 +74,38 @@ describe("Quotations — Step 6 calculation layer (live)", () => {
     return (await request(app.getHttpServer()).get(revisionUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)).body;
   }
 
+  it("applies the quotation tax selection to all existing lines, including a simultaneous percentage discount", async () => {
+    const { quotationId, revisionId } = await createQuotation("overall-tax");
+    for (const price of [1000, 2000]) await request(app.getHttpServer()).post(linesUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)
+      .send({ description: `Service ${price}`, quantity: 1, unit: "lot", unitPriceBeforeVat: price });
+    const exempt = await request(app.getHttpServer()).patch(revisionUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)
+      .send({ defaultTaxTreatment: "VAT_EXEMPT", discountPercent: 10 });
+    expect(exempt.status).toBe(200);
+    expect(Number(exempt.body.subtotal)).toBe(3000);
+    expect(Number(exempt.body.discountAmount)).toBe(300);
+    expect(Number(exempt.body.vatAmount)).toBe(0);
+    expect(Number(exempt.body.netAmount)).toBe(2700);
+    expect(Number(exempt.body.totalAmount)).toBe(2700);
+    const lines = await request(app.getHttpServer()).get(linesUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader);
+    expect(lines.body.every((line: { taxTreatment: string; lineVatAmount: string }) => line.taxTreatment === "VAT_EXEMPT" && Number(line.lineVatAmount) === 0)).toBe(true);
+    const inclusive = await request(app.getHttpServer()).patch(revisionUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)
+      .send({ defaultTaxTreatment: "VAT_INCLUSIVE", discountAmount: 0 });
+    expect(Number(inclusive.body.totalAmount)).toBe(3360);
+    expect(Number(inclusive.body.vatAmount)).toBe(360);
+  });
+
+  it("reapplies the saved overall tax to legacy draft lines even when the selected value is unchanged", async () => {
+    const { quotationId, revisionId } = await createQuotation("reapply-tax");
+    await request(app.getHttpServer()).post(linesUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)
+      .send({ description: "Legacy line", quantity: 1, unit: "lot", unitPriceBeforeVat: 1000 });
+    await prisma.quotationRevision.update({ where: { id: revisionId }, data: { defaultTaxTreatment: "VAT_EXEMPT" } });
+    const response = await request(app.getHttpServer()).patch(revisionUrl(quotationId, revisionId)).set("Authorization", sharedAuthHeader)
+      .send({ defaultTaxTreatment: "VAT_EXEMPT" });
+    expect(response.status).toBe(200);
+    expect(Number(response.body.vatAmount)).toBe(0);
+    expect(Number(response.body.totalAmount)).toBe(1000);
+  });
+
   it("markup vs. gross margin: distinct fields, distinct formulas, never conflated (Example 1)", async () => {
     const { quotationId, revisionId } = await createQuotation("markup-margin");
 

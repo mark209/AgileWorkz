@@ -25,12 +25,12 @@ import {
 // the same lean field set as ConvertToQuotationDialog: everything else
 // (payment terms, warranty, T&C, scope) is editable on Revision 0
 // immediately afterward in the quotation editor.
-export function CreateQuotationDialog({ customerId, sites }: { customerId: string; sites: Site[] }) {
+export function CreateQuotationDialog({ customerId, sites, sourceWorkOrderId }: { customerId: string; sites: Site[]; sourceWorkOrderId?: string }) {
   const router = useRouter();
   const { accessToken } = useAuth();
   const { trades } = useReferenceData();
   const [open, setOpen] = useState(false);
-  const [siteId, setSiteId] = useState("");
+  const [siteId, setSiteId] = useState(sourceWorkOrderId ? sites[0]?.id ?? "" : "");
   const [quotationType, setQuotationType] = useState<QuotationType>("REPAIR");
   const [typeChoice, setTypeChoice] = useState("REPAIR");
   const [quotationTypeOther, setQuotationTypeOther] = useState("");
@@ -46,7 +46,7 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
   }, [open, accessToken]);
 
   function resetForm() {
-    setSiteId("");
+    setSiteId(sourceWorkOrderId ? sites[0]?.id ?? "" : "");
     setQuotationType("REPAIR");
     setTypeChoice("REPAIR");
     setQuotationTypeOther("");
@@ -63,6 +63,7 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
     setError(null);
     try {
       const quotation = await createQuotation(accessToken, customerId, {
+        ...(sourceWorkOrderId ? { sourceWorkOrderId } : {}),
         siteId,
         quotationType,
         quotationTypeOther: typeChoice === "__custom__" ? quotationTypeOther.trim() : typeChoice.startsWith("approved:") ? approvedTypes.find((item) => `approved:${item.id}` === typeChoice)?.label : undefined,
@@ -90,7 +91,7 @@ export function CreateQuotationDialog({ customerId, sites }: { customerId: strin
       }}
     >
       <DialogTrigger asChild>
-        <Button>New Quotation</Button>
+        <Button>{sourceWorkOrderId ? "Additional Quotation" : "New Quotation"}</Button>
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={handleSubmit}>

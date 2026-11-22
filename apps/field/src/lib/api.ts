@@ -32,6 +32,7 @@ export interface WorkOrderAssignment {
 }
 
 export interface WorkOrder {
+  tasks?: Array<{ id: string; description: string; method?: string | null; indications?: string | null; status: string }>;
   id: string;
   workOrderNumber: string;
   customerId: string;
@@ -43,6 +44,7 @@ export interface WorkOrder {
   scheduledDate: string | null;
   description: string | null;
   startedAt: string | null;
+  fieldCompletedAt?: string | null;
   completedAt: string | null;
   customer: { id: string; name: string };
   site: { id: string; label: string };
@@ -59,6 +61,10 @@ export function getWorkOrder(accessToken: string, id: string) {
 
 export function startWorkOrder(accessToken: string, id: string) {
   return apiRequest<WorkOrder>(`/work-orders/${id}/start`, { method: "PATCH", accessToken });
+}
+
+export function completeFieldWorkOrder(accessToken: string, id: string) {
+  return apiRequest<Pick<WorkOrder, "id" | "status" | "fieldCompletedAt">>(`/work-orders/${id}/field-complete`, { method: "PATCH", accessToken });
 }
 
 export interface ServiceReportType {
@@ -82,6 +88,7 @@ export function searchDirectReportTargets(accessToken: string, search: string) {
 }
 
 export interface MyServiceReport {
+  reportTypeOther?: string | null;
   id: string;
   documentFileName?: string | null;
   serviceReportNumber: string;
@@ -104,12 +111,13 @@ export interface UploadedServiceReport {
 export function uploadServiceReport(
   accessToken: string,
   customerId: string,
-  input: { siteId: string; workOrderId: string; reportTypeCode: string; file: File; idempotencyKey?: string },
+  input: { siteId: string; workOrderId: string; reportTypeCode: string; reportTypeOther?: string; file: File; idempotencyKey?: string },
 ) {
   const formData = new FormData();
   formData.append("siteId", input.siteId);
   formData.append("workOrderId", input.workOrderId);
   formData.append("reportTypeCode", input.reportTypeCode);
+  if (input.reportTypeOther) formData.append("reportTypeOther", input.reportTypeOther);
   formData.append("file", input.file);
   return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken, input.idempotencyKey);
 }
@@ -117,11 +125,12 @@ export function uploadServiceReport(
 export function uploadDirectServiceReport(
   accessToken: string,
   customerId: string,
-  input: { siteId: string; reportTypeCode: string; sourceType: string; file: File; idempotencyKey: string },
+  input: { siteId: string; reportTypeCode: string; reportTypeOther?: string; sourceType: string; file: File; idempotencyKey: string },
 ) {
   const formData = new FormData();
   formData.append("siteId", input.siteId);
   formData.append("reportTypeCode", input.reportTypeCode);
+  if (input.reportTypeOther) formData.append("reportTypeOther", input.reportTypeOther);
   formData.append("sourceType", input.sourceType);
   formData.append("file", input.file);
   return apiUpload<UploadedServiceReport>(`/customers/${customerId}/service-reports`, formData, accessToken, input.idempotencyKey);

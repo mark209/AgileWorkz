@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useOutcome } from "@/components/outcome-provider";
 import { useAuth } from "@/lib/auth-context";
 import { listServiceReportTypes, uploadServiceReport, type ServiceReportType, type WorkOrder } from "@/lib/api";
 import { ApiError, ApiTimeoutError } from "@/lib/api-client";
@@ -46,7 +47,7 @@ function writeDraftReportType(workOrderId: string, reportTypeCode: string): void
 /**
  * Phase 4 Operations Frontend — uploads a Service Report against this Work
  * Order and hands off to the document-only review workflow
- * (POST /customers/:id/service-reports -> upload -> Super Admin approval).
+ * (POST /customers/:id/service-reports -> Supervisor review -> final approval).
  * Nothing about that workflow is
  * duplicated here: this form's only job is collecting the three upload-time
  * fields the DTO actually accepts (reportTypeCode, siteId, workOrderId) plus
@@ -54,6 +55,7 @@ function writeDraftReportType(workOrderId: string, reportTypeCode: string): void
  */
 export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder }) {
   const { user, accessToken, hasPermission } = useAuth();
+  const { showOutcome } = useOutcome();
   const online = useNetworkStatus();
   const canUpload = hasPermission("service_reports", "upload");
 
@@ -61,11 +63,11 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
   const [typesError, setTypesError] = useState<string | null>(null);
   const [offlineTypes, setOfflineTypes] = useState(false);
   const [reportTypeCode, setReportTypeCodeState] = useState(() => readDraftReportType(workOrder.id));
+  const [reportTypeOther, setReportTypeOther] = useState(() => readDraftReportType(`${workOrder.id}:custom`));
   const [file, setFile] = useState<File | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [uploaded, setUploaded] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
   // Phase 7 (F7.1) — generated once per logical upload attempt, not once
   // per submit click: a retry (button click again after a timeout/error)
@@ -111,10 +113,9 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!accessToken || !user || !reportTypeCode || !file) return;
+    if (!accessToken || !user || !reportTypeCode || !file || (reportTypeCode === "__custom__" && !reportTypeOther.trim())) return;
     setSubmitting(true);
     setError(null);
-    setUploaded(null);
     setQueued(false);
 
     const saveForLater = async () => {
@@ -124,7 +125,8 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
         customerId: workOrder.customerId,
         siteId: workOrder.siteId,
         workOrderId: workOrder.id,
-        reportTypeCode,
+        reportTypeCode: reportTypeCode === "__custom__" ? "OTHER" : reportTypeCode,
+        ...(reportTypeCode === "__custom__" ? { reportTypeOther: reportTypeOther.trim() } : {}),
         file,
         fileName: file.name,
         fileType: file.type,
@@ -132,6 +134,8 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
       setQueued(true);
       setFile(null);
       setReportTypeCode("");
+      setReportTypeOther("");
+      writeDraftReportType(`${workOrder.id}:custom`, "");
       setIdempotencyKey(crypto.randomUUID());
       window.dispatchEvent(new Event(OFFLINE_QUEUE_UPDATED_EVENT));
     };
@@ -149,12 +153,15 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
         const result = await uploadServiceReport(accessToken, workOrder.customerId, {
           siteId: workOrder.siteId,
           workOrderId: workOrder.id,
-          reportTypeCode,
+          reportTypeCode: reportTypeCode === "__custom__" ? "OTHER" : reportTypeCode,
+          ...(reportTypeCode === "__custom__" ? { reportTypeOther: reportTypeOther.trim() } : {}),
           file,
           idempotencyKey,
         });
-        setUploaded(result.serviceReportNumber);
-        setReportTypeCode(""); // also clears the persisted draft, via the wrapper above
+        showOutcome({ title: "Report uploaded", reference: result.serviceReportNumber, description: "A Supervisor reviews the report first, followed by final approval from the responsible Manager or Super Admin. You can upload another document for this job." });
+        setReportTypeCode("");
+        setReportTypeOther("");
+        writeDraftReportType(`${workOrder.id}:custom`, "");
         setFile(null);
         setIdempotencyKey(crypto.randomUUID()); // this attempt is done — the next one gets its own key
       } catch (e) {
@@ -175,12 +182,6 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
 
   return (
     <form onSubmit={handleSubmit} aria-busy={submitting}>
-      {uploaded && (
-        <p role="status" style={{ color: colors.green, fontWeight: 600 }}>
-          Uploaded — {uploaded}. Your office will verify it from here; you can upload another if you have more paperwork for this job.
-        </p>
-      )}
-
       {queued && (
         <p role="status" style={{ color: colors.textMuted, fontWeight: 600 }}>
           Saved on this device — not confirmed as received by the office. It will sync after you reconnect and sign in as this technician.
@@ -217,12 +218,15 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
                 {t.label}
               </option>
             ))}
+            <option value="__custom__">Custom report type…</option>
           </select>
+          {reportTypeCode === "__custom__" && <><label style={label} htmlFor="sr-report-type-other">Custom report type</label><input id="sr-report-type-other" style={input} value={reportTypeOther} onChange={(e) => { setReportTypeOther(e.target.value); writeDraftReportType(`${workOrder.id}:custom`, e.target.value); }} maxLength={120} required placeholder="Enter the report type" /></>}
 
           <label style={label} htmlFor="sr-file">
             Signed report (PDF or image, up to 25 MB)
           </label>
           <input
+            key={`${idempotencyKey}:file`}
             id="sr-file"
             type="file"
             style={input}
@@ -230,7 +234,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           <input
-            key={idempotencyKey}
+            key={`${idempotencyKey}:camera`}
             ref={cameraInputRef}
             type="file"
             accept={CAMERA_MIME_TYPES}
@@ -247,7 +251,7 @@ export function ServiceReportUploadForm({ workOrder }: { workOrder: WorkOrder })
           {error && <p role="alert" style={{ ...dangerText, marginTop: 12 }}>{error}</p>}
           {submitting && <p role="status" style={{ color: colors.textMuted }}>Uploading the report. Keep this page open until it finishes.</p>}
 
-          <button type="submit" style={{ ...primaryButton, width: "100%", marginTop: 16, ...(submitting || !reportTypeCode || !file ? { background: "#d1d5db", color: "#374151", cursor: "not-allowed" } : {}) }} disabled={submitting || !reportTypeCode || !file}>
+          <button type="submit" style={{ ...primaryButton, width: "100%", marginTop: 16, ...(submitting || !reportTypeCode || !file || (reportTypeCode === "__custom__" && !reportTypeOther.trim()) ? { background: "#d1d5db", color: "#374151", cursor: "not-allowed" } : {}) }} disabled={submitting || !reportTypeCode || !file || (reportTypeCode === "__custom__" && !reportTypeOther.trim())}>
             {submitting ? "Uploading…" : "Upload Service Report"}
           </button>
         </>

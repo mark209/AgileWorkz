@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { getCanonicalServiceReport, lockServiceReport, type CanonicalServiceReportView } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
@@ -9,7 +10,7 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { formatDate, formatTime } from "@/lib/format";
+import { formatDate, formatDateTime, formatTime } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LockReportDialog } from "@/components/service-reports/lock-report-dialog";
 
@@ -66,13 +67,13 @@ export default function CanonicalServiceReportPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-6">
+    <div className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs
         items={[{ label: "Service Reports", href: "/service-reports" }, { label: "Verify", href: `/service-reports/${params.id}/verify` }, { label: "Canonical" }]}
       />
-      <PageHeader
+      <PageHeader className="mb-0"
         title={view ? `Service Report ${view.report.serviceReportNumber}` : "Canonical Service Report"}
-        description="Official confirmed data — read-only."
+        description={view?.report.reportTypeOther ? `${view.report.reportTypeOther} · Official confirmed data — read-only.` : "Official confirmed data — read-only."}
         actions={
           view ? (
             <>
@@ -88,6 +89,19 @@ export default function CanonicalServiceReportPage() {
 
       {view && (
         <>
+          <Card>
+            <CardHeader><CardTitle>Approval history</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p>First review: {view.report.verifiedByName ?? "Recorded reviewer"}{view.report.verifiedAt ? ` · ${formatDateTime(view.report.verifiedAt)}` : ""}</p>
+              <p>Final approval: {view.report.confirmedByName ?? "Recorded approver"}{view.report.confirmedAt ? ` · ${formatDateTime(view.report.confirmedAt)}` : ""}</p>
+              {view.report.lockedAt && <p>Locked by: {view.report.lockedByName ?? "Recorded administrator"} · {formatDateTime(view.report.lockedAt)}</p>}
+              {hasPermission("service_reports", "verify") && <Link href={`/service-reports/${params.id}/verify`} className="inline-block text-primary underline-offset-2 hover:underline">View original document and review history</Link>}
+            </CardContent>
+          </Card>
+          {view.report.verificationBasis === "DOCUMENT_ONLY" ? <Card>
+            <CardHeader><CardTitle>Approved original document</CardTitle></CardHeader>
+            <CardContent className="text-sm text-muted-foreground">This report was reviewed and approved using the original uploaded document. Structured equipment and measurement fields were not extracted.</CardContent>
+          </Card> :
           <Card>
             <CardHeader>
               <CardTitle>Basic Information</CardTitle>
@@ -118,7 +132,7 @@ export default function CanonicalServiceReportPage() {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card>}
 
           {view.technicians.length > 0 && (
             <Card>

@@ -23,6 +23,7 @@ export interface QueuedServiceReport {
   siteId: string;
   workOrderId: string;
   reportTypeCode: string;
+  reportTypeOther?: string;
   file: Blob;
   fileName: string;
   fileType: string;

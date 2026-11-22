@@ -70,7 +70,7 @@ export function WorkOrderLifecycleActions({ workOrder, onChanged }: { workOrder:
       <div className="flex flex-wrap items-end gap-2">
         {canUpdate && workOrder.status === "DRAFT" && (
           <>
-            <Input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} className="h-9 w-auto" />
+            <Input aria-label="Scheduled date" type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} className="h-9 w-auto" />
             <Button size="sm" disabled={submitting || !scheduledDate} onClick={() => run(() => scheduleWorkOrder(accessToken!, workOrder.id, scheduledDate))}>
               Schedule
             </Button>

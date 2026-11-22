@@ -16,6 +16,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NumberingService } from "../../common/numbering/numbering.service";
 import { PermissionsService } from "../identity/permissions.service";
+import { ServiceAccessService } from "../identity/service-access.service";
 import { ActorContext } from "../identity/users.service";
 import { changedKeysOf, pickDefined } from "../../common/diff-fields.util";
 import { assertRevisionEditable } from "./revision-lock.util";
@@ -144,6 +145,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
     private readonly numbering: NumberingService,
     private readonly pricing: QuotationPricingService,
     private readonly permissions: PermissionsService,
+    private readonly access: ServiceAccessService,
   ) {}
 
   async findByIdOrThrow(id: string) {
@@ -211,32 +213,44 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
 
     const changedKeys = changedKeysOf(dto);
     const after = await this.prisma.$transaction(async (tx) => {
-      let discountAmountOverride: Prisma.Decimal | undefined;
-      if (dto.discountAmount !== undefined) {
-        discountAmountOverride = round2(dto.discountAmount);
-      } else if (dto.discountPercent !== undefined) {
-        discountAmountOverride = round2(before.subtotal.times(dto.discountPercent).dividedBy(100));
-      }
-
-      await tx.quotationRevision.update({
+      const editable = await tx.quotationRevision.updateMany({
+        where: { id: revisionId, status: QuotationRevisionStatus.DRAFT, isCurrent: true }, data: { updatedAt: new Date() },
+      });
+      if (!editable.count) throw new ConflictException("This revision is no longer an editable draft; reload the quotation");
+      const updated = await tx.quotationRevision.update({
         where: { id: revisionId },
         data: {
           scopeOfWork: dto.scopeOfWork,
+          recipientName: dto.recipientName,
+          preparedByName: dto.preparedByName,
+          paymentInstructions: dto.paymentInstructions,
+          scopeChecklistTitle: dto.scopeChecklistTitle,
+          pdfLayout: dto.pdfLayout,
           paymentTerms: dto.paymentTerms,
           warranty: dto.warranty,
           leadTime: dto.leadTime,
           notes: dto.notes,
           exclusions: dto.exclusions,
           termsAndConditions: dto.termsAndConditions,
-          validUntil: dto.validUntil ? new Date(dto.validUntil) : undefined,
+          validUntil: dto.validUntil === null ? null : dto.validUntil ? new Date(dto.validUntil) : undefined,
           defaultTaxTreatment: dto.defaultTaxTreatment,
-          discountAmount: discountAmountOverride,
         },
       });
 
-      // Only line-item/discount-affecting changes need a recalculation —
-      // pure free-text edits (notes, warranty, etc.) don't touch pricing.
+      // The overall quotation choice applies to existing items as well as
+      // future ones. Retain stored per-line fields for historical revisions.
+      if (dto.defaultTaxTreatment !== undefined) {
+        await tx.quotationLineItem.updateMany({ where: { quotationRevisionId: revisionId }, data: { taxTreatment: dto.defaultTaxTreatment } });
+        await this.pricing.recalculate(tx, revisionId);
+      }
+      let discountAmountOverride: Prisma.Decimal | undefined;
+      if (dto.discountAmount !== undefined) discountAmountOverride = round2(dto.discountAmount);
+      else if (dto.discountPercent !== undefined) {
+        const priced = dto.defaultTaxTreatment !== undefined ? await tx.quotationRevision.findUniqueOrThrow({ where: { id: revisionId } }) : updated;
+        discountAmountOverride = round2(priced.subtotal.times(dto.discountPercent).dividedBy(100));
+      }
       if (discountAmountOverride !== undefined) {
+        await tx.quotationRevision.update({ where: { id: revisionId }, data: { discountAmount: discountAmountOverride } });
         await this.pricing.recalculate(tx, revisionId);
       }
 
@@ -294,6 +308,11 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
           isCurrent: true,
           status: QuotationRevisionStatus.DRAFT,
           scopeOfWork: current.scopeOfWork,
+          recipientName: current.recipientName,
+          preparedByName: current.preparedByName,
+          paymentInstructions: current.paymentInstructions,
+          scopeChecklistTitle: current.scopeChecklistTitle,
+          pdfLayout: current.pdfLayout,
           defaultTaxTreatment: current.defaultTaxTreatment, // C3: copied forward, not re-resolved
           vatRatePercent,
           // Copied as the starting anchor; QuotationPricingService.recalculate()
@@ -377,6 +396,8 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
           data: {
             quotationRevisionId: newRevision.id,
             description: item.description,
+            method: item.method,
+            indications: item.indications,
             included: item.included,
             sortOrder: item.sortOrder,
           },
@@ -488,6 +509,11 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
       if (sectionCount === 0) {
         throw new BadRequestException("Add at least one section to a PROJECT quotation before submitting for approval");
       }
+    }
+
+    if (quotation.quotationType === QuotationType.PREVENTIVE_MAINTENANCE) {
+      const maintenance = await this.prisma.quotationMaintenanceDetails.findUnique({ where: { quotationRevisionId: revisionId } });
+      if (!maintenance) throw new BadRequestException("Complete the maintenance contract details before submitting for approval");
     }
 
     const after = await this.prisma.$transaction(async (tx) => {
@@ -887,6 +913,13 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
     await this.assertSiteValid(customerId, dto.siteId);
     await this.assertTradeValid(dto.primaryTradeCode);
     this.validateCustomQuotationChoice(dto);
+    if (dto.sourceWorkOrderId) {
+      await this.access.assertWorkOrderReadable(dto.sourceWorkOrderId, actor.userId);
+      const source = await this.prisma.workOrder.findUniqueOrThrow({ where: { id: dto.sourceWorkOrderId } });
+      if (source.customerId !== customerId || source.siteId !== dto.siteId) {
+        throw new BadRequestException("An additional quotation must use the source Work Order's customer and site");
+      }
+    }
 
     const { quotation, revision, template } = await this.prisma.$transaction((tx) =>
       this.createQuotationAndRevision0(tx, {
@@ -894,6 +927,8 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
         siteId: dto.siteId,
         inquiryId: null,
         customerReferenceNo: dto.customerReferenceNo,
+        sourceWorkOrderId: dto.sourceWorkOrderId,
+        createdBy: actor.userId,
         content: dto,
       }),
     );
@@ -945,6 +980,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
         customerId: inquiry.customerId,
         siteId: dto.siteId,
         inquiryId,
+        createdBy: actor.userId,
         customerReferenceNo: dto.customerReferenceNo ?? inquiry.customerReferenceNo ?? undefined,
         content: {
           ...dto,
@@ -988,6 +1024,8 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
       siteId: string;
       inquiryId: string | null;
       customerReferenceNo?: string;
+      sourceWorkOrderId?: string;
+      createdBy: string;
       content: Revision0Content;
     },
   ) {
@@ -1000,6 +1038,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
       data: {
         customerId: params.customerId,
         siteId: params.siteId,
+        sourceWorkOrderId: params.sourceWorkOrderId,
         inquiryId: params.inquiryId,
         quotationNumber,
         quotationType: params.content.quotationType,
@@ -1029,6 +1068,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
       data: {
         quotationId: quotation.id,
         revisionNumber: 0,
+        createdBy: params.createdBy,
         isCurrent: true,
         scopeOfWork: params.content.scopeOfWork,
         defaultTaxTreatment,
@@ -1062,6 +1102,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
       customerId: string;
       quotationType: QuotationType;
       primaryTradeCode: string;
+      sourceWorkOrderId?: string | null;
     },
     revision: { id: string; defaultTaxTreatment: TaxTreatment; vatRatePercent: Prisma.Decimal },
     template: QuotationTermTemplate | null,
@@ -1078,6 +1119,7 @@ export class QuotationsService implements OnModuleInit, OnModuleDestroy {
         customerId: quotation.customerId,
         quotationType: quotation.quotationType,
         primaryTradeCode: quotation.primaryTradeCode,
+        sourceWorkOrderId: quotation.sourceWorkOrderId,
       },
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,

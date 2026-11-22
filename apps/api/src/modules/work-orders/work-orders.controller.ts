@@ -33,6 +33,12 @@ function actorFrom(req: AuthedRequest) {
 // they never collide with it either.
 @Controller("work-orders")
 export class WorkOrdersController {
+  @Permissions({ module: "quotations", action: "read" })
+  @Get(":id/quotations")
+  async relatedQuotations(@Param("id") id: string, @Req() req: AuthedRequest) {
+    return this.workOrdersService.listRelatedQuotations(id, { userId: req.user.userId });
+  }
+
   constructor(
     private readonly workOrdersService: WorkOrdersService,
     private readonly serviceReportsService: ServiceReportsService,

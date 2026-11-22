@@ -102,6 +102,32 @@ export class WorkOrdersService {
     return workOrder;
   }
 
+  async listRelatedQuotations(id: string, actor: ActorContext) {
+    await this.access.assertWorkOrderReadable(id, actor.userId);
+    const workOrder = await this.plainFindOrThrow(id);
+    const scope = await this.access.workOrderFilter(actor.userId);
+    return this.prisma.quotation.findMany({
+      where: { OR: [{ sourceWorkOrderId: id }, ...(workOrder.quotationId ? [{ id: workOrder.quotationId }] : [])] },
+      include: { workOrders: { where: scope, select: { id: true, workOrderNumber: true, status: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  async revisionWorkOrders(quotationId: string, revisionId: string, actor: ActorContext) {
+    const revision = await this.prisma.quotationRevision.findUnique({ where: { id: revisionId }, select: { quotationId: true } });
+    if (!revision || revision.quotationId !== quotationId) throw new NotFoundException("Quotation revision not found");
+    const source = { quotationRevisionId: revisionId, workOrderType: WorkOrderType.FROM_QUOTATION };
+    const totalCount = await this.prisma.workOrder.count({ where: source });
+    const grants = await this.permissions.getEffectivePermissions(actor.userId);
+    const canRead = grants.some(grant => grant.module === "work_orders" && ["read", "read_assigned", "read_own"].includes(grant.action));
+    const workOrders = canRead && totalCount > 0 ? await this.prisma.workOrder.findMany({
+      where: { ...source, ...(await this.access.workOrderFilter(actor.userId)) },
+      select: { id: true, workOrderNumber: true, status: true, scheduledDate: true },
+      orderBy: [{ scheduledDate: "asc" }, { workOrderNumber: "asc" }],
+    }) : [];
+    return { generated: totalCount > 0, totalCount, workOrders };
+  }
+
   // GET /work-orders/mine — work_orders.read_own (guard-gated: this route
   // has nothing to branch on, unlike getForActor, since it's exclusively a
   // "my own" view). Filters at the query itself, not in application code
@@ -478,6 +504,7 @@ export class WorkOrdersService {
   // exact quotationRevisionId. One generation per revision, ever — see the
   // idempotency guard below.
   async generateMaintenanceVisits(quotationId: string, revisionId: string, dto: GenerateMaintenanceVisitsDto, actor: ActorContext) {
+    if (dto.responsibleManagerId) await this.assertResponsibleManagerEligible(dto.responsibleManagerId);
     const quotation = await this.prisma.quotation.findUnique({ where: { id: quotationId } });
     if (!quotation) throw new NotFoundException("Quotation not found");
 
@@ -504,31 +531,21 @@ export class WorkOrdersService {
         "This revision has no maintenance details configured (contractPeriodMonths/frequency/scheduledVisits/billingFrequency)",
       );
     }
-    if (details.frequency === MaintenanceFrequency.CUSTOM) {
-      throw new BadRequestException(
-        "CUSTOM frequency has no defined interval in the current schema — automatic visit-date generation is not supported for it",
-      );
-    }
     if (details.scheduledVisits < 1) {
       throw new BadRequestException("scheduledVisits must be at least 1 to generate maintenance visits");
     }
 
-    // Idempotency guard — a second trigger on the same revision would
-    // otherwise silently double every visit. Scoped to this exact
-    // revision (not the whole quotation), matching every other
-    // revision-scoped guard in this service (e.g. convertRevision's
-    // ACCEPTED check) — a later revision of the same quotation is free to
-    // generate its own visits independently.
-    const alreadyGenerated = await this.prisma.workOrder.findFirst({
-      where: { quotationRevisionId: revisionId, workOrderType: WorkOrderType.FROM_QUOTATION },
-      select: { id: true },
-    });
-    if (alreadyGenerated) {
-      throw new ConflictException("Maintenance visits have already been generated for this revision");
-    }
-
     const startDate = new Date(dto.startDate);
-    const visitDates = generateMaintenanceVisitDates(startDate, details.frequency, details.scheduledVisits);
+    let visitDates: Date[];
+    if (details.frequency === MaintenanceFrequency.CUSTOM) {
+      if (!dto.visitDates) throw new BadRequestException("CUSTOM frequency has no defined interval; enter an explicit date for every scheduled visit");
+      if (dto.visitDates.length !== details.scheduledVisits || new Set(dto.visitDates).size !== details.scheduledVisits || dto.visitDates.some((value) => !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(new Date(value).getTime()))) {
+        throw new BadRequestException(`Enter ${details.scheduledVisits} distinct visit dates in YYYY-MM-DD format`);
+      }
+      visitDates = dto.visitDates.map((value) => new Date(value)).sort((a, b) => a.getTime() - b.getTime());
+    } else {
+      visitDates = generateMaintenanceVisitDates(startDate, details.frequency, details.scheduledVisits);
+    }
 
     const lineItems = await this.prisma.quotationLineItem.findMany({ where: { quotationRevisionId: revisionId } });
     const testingItems = await this.prisma.quotationTestingCommissioningItem.findMany({
@@ -537,12 +554,19 @@ export class WorkOrdersService {
     });
 
     const created = await this.prisma.$transaction(async (tx) => {
+      // Lock the revision before checking for existing visits. Concurrent
+      // requests serialize here, preventing a second set from being created.
+      const guarded = await tx.quotationRevision.updateMany({ where: { id: revisionId, status: QuotationRevisionStatus.ACCEPTED }, data: { updatedAt: new Date() } });
+      if (!guarded.count) throw new ConflictException("The quotation revision is no longer accepted");
+      const alreadyGenerated = await tx.workOrder.findFirst({ where: { quotationRevisionId: revisionId, workOrderType: WorkOrderType.FROM_QUOTATION }, select: { id: true } });
+      if (alreadyGenerated) throw new ConflictException("Maintenance visits have already been generated for this revision");
       const results: WorkOrder[] = [];
       for (let i = 0; i < visitDates.length; i++) {
         const workOrder = await this.createOneFromRevision(tx, {
           quotation,
           revision,
           description: `Preventive Maintenance — Visit ${i + 1} of ${visitDates.length}`,
+          responsibleManagerId: dto.responsibleManagerId,
           scheduledDate: visitDates[i],
           lineItems,
           testingItems,
@@ -638,13 +662,19 @@ export class WorkOrdersService {
       );
     }
 
-    // PM quotations produce many Work Orders through the dedicated
-    // generateMaintenanceVisits endpoint. This generic conversion path
-    // must not create a single one-off Work Order for them.
+    // Maintenance conversion uses the same recurring generator and its
+    // validations, rather than creating an unrelated one-off Work Order.
     if (quotation.quotationType === QuotationType.PREVENTIVE_MAINTENANCE) {
-      throw new BadRequestException(
-        "Preventive Maintenance quotations cannot use Convert to Work Order. Use Generate Maintenance Visits for an accepted revision.",
-      );
+      const grants = await this.permissions.getEffectivePermissions(actor.userId);
+      if (!grants.some((p) => p.module === "work_orders" && p.action === "generate_maintenance_visits")) {
+        throw new ForbiddenException("Missing maintenance visit generation permission");
+      }
+      if (!dto.scheduledDate) {
+        throw new BadRequestException("A first visit date is required. Use Generate Maintenance Visits or supply scheduledDate.");
+      }
+      return this.generateMaintenanceVisits(quotationId, revisionId, {
+        startDate: dto.scheduledDate, responsibleManagerId: dto.responsibleManagerId,
+      }, actor);
     }
 
     const scheduledDate = dto.scheduledDate ? new Date(dto.scheduledDate) : null;
@@ -672,6 +702,7 @@ export class WorkOrdersService {
       }
 
       created = await this.prisma.$transaction(async (tx) => {
+        await this.lockUnconvertedRevision(tx, revisionId);
         const results: WorkOrder[] = [];
         for (const section of sections) {
           const lineItems = await tx.quotationLineItem.findMany({ where: { sectionId: section.id } });
@@ -692,6 +723,7 @@ export class WorkOrdersService {
     } else {
       // REPAIR / SUPPLY_INSTALLATION — one Work Order for the whole revision.
       created = await this.prisma.$transaction(async (tx) => {
+        await this.lockUnconvertedRevision(tx, revisionId);
         const lineItems = await tx.quotationLineItem.findMany({ where: { quotationRevisionId: revisionId } });
         const workOrder = await this.createOneFromRevision(tx, {
           quotation,
@@ -713,6 +745,21 @@ export class WorkOrdersService {
     return created;
   }
 
+  private async lockUnconvertedRevision(tx: Prisma.TransactionClient, revisionId: string) {
+    // Match maintenance generation's revision lock: serialize repeat and
+    // concurrent requests before any Work Order or section batch is created.
+    const guarded = await tx.quotationRevision.updateMany({
+      where: { id: revisionId, status: QuotationRevisionStatus.ACCEPTED },
+      data: { updatedAt: new Date() },
+    });
+    if (!guarded.count) throw new ConflictException("The quotation revision is no longer accepted");
+    const existing = await tx.workOrder.findFirst({
+      where: { quotationRevisionId: revisionId, workOrderType: WorkOrderType.FROM_QUOTATION },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException("Work Orders have already been created for this revision");
+  }
+
   // The shared core of the conversion path — numbering, the costing
   // snapshot, and the WorkOrder + copied WorkOrderTask rows all happen here
   // exactly once, called once per resulting Work Order (once for a 1:1
@@ -730,7 +777,7 @@ export class WorkOrdersService {
         totalInternalCost: Prisma.Decimal | null;
         grossProfitAmount: Prisma.Decimal | null;
       }>;
-      testingItems: Array<{ id: string; description: string; sortOrder: number }>;
+      testingItems: Array<{ id: string; description: string; method?: string | null; indications?: string | null; sortOrder: number }>;
       actor: ActorContext;
       responsibleManagerId?: string;
     },
@@ -763,6 +810,8 @@ export class WorkOrdersService {
         data: params.testingItems.map((item) => ({
           workOrderId: workOrder.id,
           description: item.description,
+          method: item.method,
+          indications: item.indications,
           sourceTestingItemId: item.id,
           sortOrder: item.sortOrder,
         })),
