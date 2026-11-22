@@ -9,12 +9,14 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WorkOrderLifecycleActions } from "@/components/work-orders/work-order-lifecycle-actions";
 import { WorkOrderAssignmentPanel } from "@/components/work-orders/work-order-assignment-panel";
 import { WorkOrderServiceReportsPanel } from "@/components/work-orders/work-order-service-reports-panel";
 import { ResponsibleManagerPanel } from "@/components/work-orders/responsible-manager-panel";
 import { TechnicianWorkOrderActions } from "@/components/work-orders/technician-work-order-actions";
+import { WorkOrderQuotationsPanel } from "@/components/work-orders/work-order-quotations-panel";
 
 function fmt(value: string | null): string {
   return value === null || value === "" ? "—" : value;
@@ -61,7 +63,7 @@ export default function WorkOrderDetailPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-6">
+    <div className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs items={[{ label: "Work Orders", href: "/work-orders" }, { label: workOrder?.workOrderNumber ?? "Work Order" }]} />
 
       {error && <ErrorState message={error} onRetry={load} />}
@@ -69,7 +71,7 @@ export default function WorkOrderDetailPage() {
 
       {workOrder && (
         <>
-          <PageHeader
+          <PageHeader className="mb-0"
             title={workOrder.workOrderNumber}
             description={`${workOrder.customer.name} — ${workOrder.site.label}`}
             actions={<StatusBadge status={workOrder.status} />}
@@ -96,7 +98,7 @@ export default function WorkOrderDetailPage() {
                 <span className="text-muted-foreground">Type:</span> {workOrder.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}
               </div>
               <div>
-                <span className="text-muted-foreground">Scheduled:</span> {workOrder.scheduledDate ? new Date(workOrder.scheduledDate).toLocaleDateString() : "—"}
+                <span className="text-muted-foreground">Scheduled:</span> {formatDate(workOrder.scheduledDate)}
               </div>
               {workOrder.standaloneReasonType && (
                 <div>
@@ -121,17 +123,17 @@ export default function WorkOrderDetailPage() {
                 </div>
               )}
               <div>
-                <span className="text-muted-foreground">Started:</span> {workOrder.startedAt ? new Date(workOrder.startedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Started:</span> {formatDateTime(workOrder.startedAt)}
               </div>
               <div>
-                <span className="text-muted-foreground">Completed:</span> {workOrder.completedAt ? new Date(workOrder.completedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Completed:</span> {formatDateTime(workOrder.completedAt)}
               </div>
               <div>
-                <span className="text-muted-foreground">Closed:</span> {workOrder.closedAt ? new Date(workOrder.closedAt).toLocaleString() : "—"}
+                <span className="text-muted-foreground">Closed:</span> {formatDateTime(workOrder.closedAt)}
               </div>
               {workOrder.cancelledAt && (
                 <div className="sm:col-span-2">
-                  <span className="text-muted-foreground">Cancelled:</span> {new Date(workOrder.cancelledAt).toLocaleString()}
+                  <span className="text-muted-foreground">Cancelled:</span> {formatDateTime(workOrder.cancelledAt)}
                   {workOrder.cancellationReason && <p className="mt-1">{fmt(workOrder.cancellationReason)}</p>}
                 </div>
               )}
@@ -151,6 +153,20 @@ export default function WorkOrderDetailPage() {
             <CardHeader><CardTitle>Responsible Manager</CardTitle></CardHeader>
             <CardContent><ResponsibleManagerPanel workOrder={workOrder} onChanged={load} /></CardContent>
           </Card>
+
+          {(workOrder.tasks?.length ?? 0) > 0 && <Card>
+            <CardHeader><CardTitle>Scope &amp; work instructions</CardTitle></CardHeader>
+            <CardContent><ol className="list-decimal space-y-4 pl-5">{workOrder.tasks?.map((task) => <li key={task.id} className="text-sm">
+              <p className="whitespace-pre-wrap font-medium">{task.description}</p>
+              {task.method && <p className="mt-1 whitespace-pre-wrap">{task.method}</p>}
+              {task.indications && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">Indications: {task.indications}</p>}
+            </li>)}</ol></CardContent>
+          </Card>}
+
+          {hasPermission("quotations", "read") && <Card>
+            <CardHeader><CardTitle>Related Quotations</CardTitle></CardHeader>
+            <CardContent><WorkOrderQuotationsPanel workOrder={workOrder} /></CardContent>
+          </Card>}
 
           {canReadFullReports && <Card>
             <CardHeader>

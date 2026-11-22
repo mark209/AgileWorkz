@@ -18,6 +18,8 @@ export const DEFAULT_ROLE_NAMES = [
   "Manager",
   "Office Staff",
   "Technician",
+  "Technical Supervisor",
+  "Supervisor",
 ] as const;
 export type DefaultRoleName = (typeof DEFAULT_ROLE_NAMES)[number];
 

@@ -17,7 +17,7 @@ describe("quotation expiry and PDF access", () => {
         $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
       };
       const audit = { write: jest.fn().mockResolvedValue(undefined) };
-      const service = new QuotationsService(prisma as never, audit as never, {} as never, {} as never, {} as never);
+      const service = new QuotationsService(prisma as never, audit as never, {} as never, {} as never, {} as never, {} as never);
 
       await service.expireDueRevisions();
 

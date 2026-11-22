@@ -1,5 +1,6 @@
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import { BullRegistrar, getQueueToken } from "@nestjs/bullmq";
 import * as argon2 from "argon2";
 import {
   AssetStatus,
@@ -36,9 +37,26 @@ export interface TestApp {
  * production — against whatever DATABASE_URL / REDIS_URL are set in the
  * environment. Requires live Postgres and Redis; never used by `pnpm test`.
  */
-export async function bootstrapTestApp(): Promise<TestApp> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+export async function bootstrapTestApp(options: { corsOrigins?: string[] } = {}): Promise<TestApp> {
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  // Explicitly opt in only for an isolated local workflow/HTTP audit.
+  // Redis transport and extraction-worker tests still use the normal path.
+  if (process.env.E2E_ISOLATED_NO_REDIS === "1") {
+    const databaseHost = new URL(process.env.DATABASE_URL ?? "").hostname;
+    if (!["localhost", "127.0.0.1"].includes(databaseHost)) throw new Error("Isolated queue mode requires a local test database");
+    builder.overrideProvider(BullRegistrar).useValue({ onModuleInit() {} });
+    for (const name of ["health-check", "service-report-extraction"]) builder.overrideProvider(getQueueToken(name)).useValue({
+      client: Promise.resolve({ ping: async () => "PONG" }),
+      add: async (_name: string, _data: unknown, options?: { jobId?: string }) => ({ id: options?.jobId ?? "isolated-audit-job" }),
+      close: async () => undefined,
+    });
+  }
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
+  if (options.corsOrigins) {
+    if (process.env.E2E_ISOLATED_NO_REDIS !== "1") throw new Error("UI test CORS is limited to isolated local test mode");
+    app.enableCors({ origin: options.corsOrigins, credentials: true });
+  }
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new AllExceptionsFilter());
   await app.init();

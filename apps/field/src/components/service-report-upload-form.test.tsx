@@ -1,9 +1,15 @@
+import { OutcomeProvider } from "@/components/outcome-provider";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render as baseRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServiceReportType, WorkOrder } from "@/lib/api";
 import { ApiError, ApiTimeoutError } from "@/lib/api-client";
 import { ServiceReportUploadForm } from "./service-report-upload-form";
+
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
+});
 
 const { useAuthMock } = vi.hoisted(() => ({ useAuthMock: vi.fn() }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: useAuthMock }));
@@ -55,6 +61,31 @@ function reportType(overrides: Partial<ServiceReportType> = {}): ServiceReportTy
 }
 
 describe("ServiceReportUploadForm", () => {
+  it("shows an upload success dialog for a typed report after online receipt", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockResolvedValue({ serviceReportNumber: "SR-CUSTOM" });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Report type"), "__custom__");
+    await user.type(screen.getByLabelText("Custom report type"), "Cooling assessment");
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["report"], "report.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledWith("token-1", "c1", expect.objectContaining({ reportTypeCode: "OTHER", reportTypeOther: "Cooling assessment" })));
+    expect(await screen.findByRole("dialog", { name: "Report uploaded" })).toHaveTextContent("SR-CUSTOM");
+  });
+  it("queues a custom report label offline without announcing office receipt", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
+    networkStatusMock.mockReturnValue(false);
+    render(<ServiceReportUploadForm workOrder={job()} />);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Report type"), "__custom__");
+    await user.type(screen.getByLabelText("Custom report type"), "Cooling assessment");
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["report"], "report.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(queueServiceReportMock).toHaveBeenCalledWith(expect.objectContaining({ reportTypeCode: "OTHER", reportTypeOther: "Cooling assessment" })));
+    expect(screen.queryByRole("dialog", { name: "Report uploaded" })).not.toBeInTheDocument();
+    expect(screen.getByText(/not confirmed as received/i)).toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
@@ -90,7 +121,7 @@ describe("ServiceReportUploadForm", () => {
     await user.selectOptions(select, "MAINTENANCE_CLEANING");
 
     const file = new File(["binary"], "photo.jpg", { type: "image/jpeg" });
-    const fileInput = screen.getByLabelText(/photo or document/i);
+    const fileInput = screen.getByLabelText(/signed report/i);
     await user.upload(fileInput, file);
 
     const submit = screen.getByRole("button", { name: /upload service report/i });
@@ -109,6 +140,27 @@ describe("ServiceReportUploadForm", () => {
     expect(await screen.findByText(/SR-2026-08-00001/)).toBeInTheDocument();
   });
 
+  it("uses a camera photo as the report file", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
+    uploadServiceReportMock.mockResolvedValue({ id: "sr1", serviceReportNumber: "SR-2026-08-00001", status: "PENDING_VERIFICATION" });
+    render(<ServiceReportUploadForm workOrder={job()} />);
+
+    const user = userEvent.setup();
+    const cameraInput = (await screen.findByLabelText("Camera photo")) as HTMLInputElement;
+    expect(cameraInput).toHaveAttribute("capture", "environment");
+    expect(cameraInput).toHaveAttribute("accept", "image/jpeg,image/png,image/webp");
+    const openCamera = vi.spyOn(cameraInput, "click");
+    await user.click(screen.getByRole("button", { name: "Take Photo" }));
+    expect(openCamera).toHaveBeenCalledOnce();
+
+    const photo = new File(["image"], "site-photo.jpg", { type: "image/jpeg" });
+    await user.upload(cameraInput, photo);
+    expect(screen.getByText("Selected report: site-photo.jpg")).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
+    await user.click(screen.getByRole("button", { name: /upload service report/i }));
+    await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledWith("token-1", "c1", expect.objectContaining({ file: photo })));
+  });
+
   it("surfaces an upload error without losing the loaded report types", async () => {
     useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: () => true });
     uploadServiceReportMock.mockRejectedValue(new ApiError(400, "Unsupported file type"));
@@ -116,7 +168,7 @@ describe("ServiceReportUploadForm", () => {
 
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
 
     expect(await screen.findByText(/unsupported file type/i)).toBeInTheDocument();
@@ -130,7 +182,7 @@ describe("ServiceReportUploadForm", () => {
 
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
 
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
     expect(await screen.findByText(/not confirmed as received/i)).toBeInTheDocument();
@@ -160,7 +212,7 @@ describe("ServiceReportUploadForm", () => {
 
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
 
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
     await screen.findByText(/internal server error/i);
@@ -180,13 +232,16 @@ describe("ServiceReportUploadForm", () => {
 
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f1.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["x"], "f1.pdf", { type: "application/pdf" }));
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
     await screen.findByText(/SR-2026-08-00001/);
 
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(2);
+
     // A second, genuinely different document for the same job.
     await user.selectOptions(screen.getByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["y"], "f2.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["y"], "f2.pdf", { type: "application/pdf" }));
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
     await waitFor(() => expect(uploadServiceReportMock).toHaveBeenCalledTimes(2));
 
@@ -226,7 +281,7 @@ describe("ServiceReportUploadForm", () => {
 
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
-    await user.upload(screen.getByLabelText(/photo or document/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText(/signed report/i), new File(["x"], "f.pdf", { type: "application/pdf" }));
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
 
     await waitFor(() => expect(sessionStorage.getItem("sr-upload-draft:wo1")).toBeNull());
@@ -240,7 +295,7 @@ describe("ServiceReportUploadForm", () => {
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText(/report type/i), "MAINTENANCE_CLEANING");
     const file = new File(["service report"], "report.jpg", { type: "image/jpeg" });
-    await user.upload(screen.getByLabelText(/photo or document/i), file);
+    await user.upload(screen.getByLabelText(/signed report/i), file);
     await user.click(screen.getByRole("button", { name: /upload service report/i }));
 
     expect(await screen.findByText(/saved on this device — not confirmed as received/i)).toBeInTheDocument();
@@ -267,3 +322,5 @@ describe("ServiceReportUploadForm", () => {
     expect(await screen.findByText(/using recently saved report types/i)).toBeInTheDocument();
   });
 });
+
+function render(ui: React.ReactElement) { return baseRender(<OutcomeProvider>{ui}</OutcomeProvider>); }

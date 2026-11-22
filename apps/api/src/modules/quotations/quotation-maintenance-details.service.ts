@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { ActorType, QuotationType } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -12,6 +12,22 @@ export class QuotationMaintenanceDetailsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  async completeMissingAcceptedDetails(revisionId: string, dto: UpdateMaintenanceDetailsDto, actor: ActorContext) {
+    const revision = await this.findRevisionOrThrow(revisionId);
+    if (revision.status !== "ACCEPTED" || !revision.isCurrent || revision.quotation.quotationType !== QuotationType.PREVENTIVE_MAINTENANCE) {
+      throw new BadRequestException("Only the current accepted Maintenance revision can receive missing contract details");
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.quotationRevision.updateMany({ where: { id: revisionId, status: "ACCEPTED", isCurrent: true }, data: { updatedAt: new Date() } });
+      if (!guarded.count) throw new ConflictException("The accepted revision changed; reload before completing its details");
+      const existing = await tx.quotationMaintenanceDetails.findUnique({ where: { quotationRevisionId: revisionId } });
+      if (existing) throw new ConflictException("Maintenance details already exist and cannot be replaced on an accepted quotation");
+      const after = await tx.quotationMaintenanceDetails.create({ data: { quotationRevisionId: revisionId, ...dto } });
+      await this.audit.write({ actorType: ActorType.USER, actorUserId: actor.userId, action: "maintenance_missing_details_completed", entityType: "quotation_maintenance_details", entityId: revisionId, afterData: after, ipAddress: actor.ipAddress, userAgent: actor.userAgent }, tx);
+      return after;
+    });
+  }
 
   async get(revisionId: string) {
     await this.findRevisionOrThrow(revisionId);

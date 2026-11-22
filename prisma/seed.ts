@@ -53,7 +53,7 @@ import * as argon2 from "argon2";
 
 const prisma = new PrismaClient();
 
-const ROLE_NAMES = ["Admin/Owner", "Manager", "Office Staff", "Technician"] as const;
+const ROLE_NAMES = ["Admin/Owner", "Manager", "Office Staff", "Technician", "Technical Supervisor", "Supervisor"] as const;
 
 // Phase 1 only seeds permissions for modules that actually have a table this phase.
 const PHASE1_PERMISSIONS: Array<{ module: string; action: string; description: string }> = [
@@ -460,24 +460,24 @@ const PHASE5_PERMISSIONS: Array<{ module: string; action: string; description: s
   // uploader" rule, which was never implemented (no verification endpoint
   // existed until Step 5). Technician structurally lacks this permission
   // regardless of who uploaded what.
-  { module: "service_reports", action: "verify", description: "Review/correct staged extraction fields and mark VERIFIED — role-based only, not restricted by uploader identity" },
-  { module: "service_reports", action: "document_approve", description: "Approve an original Service Report document without extracted fields — Admin/Owner only" },
-  { module: "service_reports", action: "confirm", description: "Execute Confirm — populate canonical data from verified staging values (VERIFIED -> CONFIRMED)" },
+  { module: "service_reports", action: "verify", description: "Review and correct staged extraction fields; first-stage approval requires technical_approve" },
+  { module: "service_reports", action: "document_approve", description: "Supervisor review of an original Service Report document without extracted fields" },
+  { module: "service_reports", action: "technical_approve", description: "Supervisor first-stage approval of a reviewed Service Report" },
+  { module: "service_reports", action: "confirm", description: "Manager/Admin-Owner final approval (VERIFIED -> CONFIRMED); populate canonical details only for extracted-field reports" },
   { module: "service_reports", action: "lock", description: "Final administrative lock (CONFIRMED -> LOCKED) — terminal, Manager/Admin-Owner only" },
 ];
 
-// Admin/Owner and Manager: every Phase 5 permission (§03 — identical column
-// for both roles, same pattern as every prior phase).
+// Management reviews fields and provides final approval; Supervisor roles
+// hold the separate first-stage approval permissions.
 const ADMIN_MANAGER_PHASE5_GRANTS = [
   "service_reports.upload", "service_reports.read", "service_reports.verify",
   "service_reports.confirm", "service_reports.lock",
 ] as const;
 
-// Office Staff: upload/read/verify/confirm — never lock (final sign-off is
-// management-only, mirroring Work Order close's D2 precedent), and no
-// Technician-only read_own.
+// Office Staff prepares and reviews reports. Supervisor and management
+// approval permissions are granted separately.
 const OFFICE_STAFF_PHASE5_GRANTS = [
-  "service_reports.upload", "service_reports.read", "service_reports.verify", "service_reports.confirm",
+  "service_reports.upload", "service_reports.read", "service_reports.verify",
 ] as const;
 
 // Technician: upload (own only, app-enforced) and read_own only — no
@@ -881,11 +881,24 @@ async function main() {
 
   console.log("Granting Office Staff its Phase 5 permission set (no lock, no Technician-only read_own)...");
   const documentApprovalPermission = phase5Permissions.get("service_reports.document_approve")!;
-  await prisma.rolePermission.upsert({
-    where: { roleId_permissionId: { roleId: roles.get("Admin/Owner")!.id, permissionId: documentApprovalPermission.id } },
-    update: {},
-    create: { roleId: roles.get("Admin/Owner")!.id, permissionId: documentApprovalPermission.id },
+  await prisma.rolePermission.deleteMany({
+    where: {
+      roleId: { in: [roles.get("Admin/Owner")!.id, roles.get("Manager")!.id, officeStaff.id] },
+      permissionId: { in: [documentApprovalPermission.id, phase5Permissions.get("service_reports.technical_approve")!.id] },
+    },
   });
+  await prisma.rolePermission.deleteMany({ where: {
+    roleId: officeStaff.id, permissionId: phase5Permissions.get("service_reports.confirm")!.id,
+  } });
+  for (const roleName of ["Technical Supervisor", "Supervisor"] as const) {
+    for (const key of ["service_reports.read", "service_reports.verify", "service_reports.technical_approve", "service_reports.document_approve"]) {
+      const permission = phase5Permissions.get(key)!;
+      await prisma.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: roles.get(roleName)!.id, permissionId: permission.id } },
+        update: {}, create: { roleId: roles.get(roleName)!.id, permissionId: permission.id },
+      });
+    }
+  }
   for (const key of OFFICE_STAFF_PHASE5_GRANTS) {
     const permission = phase5Permissions.get(key)!;
     await prisma.rolePermission.upsert({

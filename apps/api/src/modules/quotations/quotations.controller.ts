@@ -76,6 +76,12 @@ export class QuotationsController {
     return this.quotationsService.findRevisionOrThrow(id, revisionId);
   }
 
+  @Permissions({ module: "quotations", action: "read" })
+  @Get(":id/revisions/:revisionId/work-orders")
+  async revisionWorkOrders(@Param("id") id: string, @Param("revisionId") revisionId: string, @Req() req: AuthedRequest) {
+    return this.workOrdersService.revisionWorkOrders(id, revisionId, actorFrom(req));
+  }
+
   @Permissions({ module: "quotations", action: "update" })
   @Patch(":id/revisions/:revisionId")
   async updateRevision(

@@ -53,6 +53,7 @@ describe("Service Report upload API (live)", () => {
     return userWithPermissions(suffix, [
       ["service_reports", "upload"],
       ["service_reports", "read"],
+      ["service_reports", "confirm"],
     ]);
   }
 
@@ -128,6 +129,55 @@ describe("Service Report upload API (live)", () => {
 
     expect(res.status).toBe(400);
     expect(await prisma.serviceReport.count({ where: { reportTypeCode: "NOT_A_REAL_TYPE" } })).toBe(0);
+  });
+
+  it("persists a custom OTHER label through upload, lists, detail, technical review and canonical final approval", async () => {
+    const { customer, site } = await createCustomerSite("custom-type");
+    const reviewer = await userWithPermissions("custom-reviewer", [["service_reports", "read"], ["service_reports", "verify"], ["service_reports", "document_approve"]]);
+    const typeCount = await prisma.serviceReportType.count();
+    const uploaded = await request(app.getHttpServer()).post(`/customers/${customer.id}/service-reports`).set("Authorization", technician.authHeader)
+      .field("siteId", site.id).field("reportTypeCode", "OTHER").field("reportTypeOther", "  Refrigerant leak investigation  ").field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", pngBuffer(), { filename: "custom-report.png", contentType: "image/png" });
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.body.reportTypeOther).toBe("Refrigerant leak investigation");
+    const id = uploaded.body.id;
+    expect((await prisma.serviceReport.findUniqueOrThrow({ where: { id } })).reportTypeOther).toBe("Refrigerant leak investigation");
+    for (const endpoint of ["/service-reports/mine", "/service-reports", `/customers/${customer.id}/service-reports`]) {
+      const response = await request(app.getHttpServer()).get(endpoint).set("Authorization", technician.authHeader);
+      expect(response.status).toBe(200);
+      expect(response.body.find((report: { id: string }) => report.id === id).reportTypeOther).toBe("Refrigerant leak investigation");
+    }
+    const detail = await request(app.getHttpServer()).get(`/service-reports/${id}`).set("Authorization", manager.authHeader);
+    expect(detail.body.reportTypeOther).toBe("Refrigerant leak investigation");
+    const verification = await request(app.getHttpServer()).get(`/service-reports/${id}/verification`).set("Authorization", reviewer.authHeader);
+    expect(verification.status).toBe(200);
+    expect(verification.body.report.reportTypeOther).toBe("Refrigerant leak investigation");
+    expect((await request(app.getHttpServer()).post(`/service-reports/${id}/verification/document-approve`).set("Authorization", reviewer.authHeader).send({ documentReviewed: true })).status).toBe(201);
+    expect((await request(app.getHttpServer()).post(`/service-reports/${id}/confirm`).set("Authorization", manager.authHeader).send({})).status).toBe(201);
+    const canonical = await request(app.getHttpServer()).get(`/service-reports/${id}/canonical`).set("Authorization", manager.authHeader);
+    expect(canonical.status).toBe(200);
+    expect(canonical.body.report.reportTypeOther).toBe("Refrigerant leak investigation");
+    expect(await prisma.serviceReportType.count()).toBe(typeCount);
+  });
+
+  it("preserves legacy OTHER uploads without a custom label", async () => {
+    const { customer, site } = await createCustomerSite("legacy-other");
+    const uploaded = await request(app.getHttpServer()).post(`/customers/${customer.id}/service-reports`).set("Authorization", technician.authHeader)
+      .field("siteId", site.id).field("reportTypeCode", "OTHER").field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", pngBuffer(), { filename: "legacy-other.png", contentType: "image/png" });
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.body.reportTypeOther).toBeNull();
+  });
+
+  it.each([
+    ["OTHER", "   "], ["OTHER", "x".repeat(121)], ["GENERAL_SERVICE_REPAIR", "Contradictory custom label"],
+  ])("rejects invalid custom report type %s/%s without creating a record", async (code, label) => {
+    const { customer, site } = await createCustomerSite("invalid-custom");
+    const response = await request(app.getHttpServer()).post(`/customers/${customer.id}/service-reports`).set("Authorization", technician.authHeader)
+      .field("siteId", site.id).field("reportTypeCode", code).field("reportTypeOther", label).field("sourceType", "INTERNAL_SERVICE")
+      .attach("file", pngBuffer(), { filename: "invalid-custom.png", contentType: "image/png" });
+    expect(response.status).toBe(400);
+    expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(0);
   });
 
   it("rejects an unsupported file type with 415 and clear messaging", async () => {

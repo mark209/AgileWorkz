@@ -23,12 +23,9 @@ class ApproveDocumentOnlyDto {
 }
 
 /**
- * Phase 5 Step 5 — Human Verification Workflow. Every route requires
- * service_reports.verify, which PermissionsGuard checks purely against the
- * caller's role-granted permissions (Office Staff/Manager/Admin-Owner have
- * it seeded, Technician never does) — no uploader-identity check anywhere
- * in this controller or the service it calls, per the approved Step 5
- * decision that verification authorization is role-based only.
+ * Field review uses service_reports.verify. Completing the first approval
+ * stage requires Supervisor technical_approve or document_approve authority.
+ * Work Order/report access scopes apply independently of these grants.
  */
 @Controller("service-reports/:id/verification")
 export class ServiceReportVerificationController {
@@ -71,7 +68,7 @@ export class ServiceReportVerificationController {
     return this.verification.bulkConfirmEligibleFields(id, actorFrom(req));
   }
 
-  @Permissions({ module: "service_reports", action: "verify" })
+  @Permissions({ module: "service_reports", action: "technical_approve" })
   @Post("complete")
   async complete(@Param("id") id: string, @Req() req: AuthedRequest) {
     await this.access.assertManagerScopedReportAction(id, req.user.userId);

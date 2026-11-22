@@ -82,6 +82,32 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
   const maintenanceDetailsUrl = (q: string, r: string) => `${revisionUrl(q, r)}/maintenance-details`;
   const linesUrl = (q: string, r: string) => `${revisionUrl(q, r)}/line-items`;
 
+  it("reports persisted generation status and accessible Work Order links after reload", async () => {
+    const { quotationId, revisionId } = await createAcceptedPmRevision("generation-status");
+    const url = `${revisionUrl(quotationId, revisionId)}/work-orders`;
+    const before = await request(app.getHttpServer()).get(url).set("Authorization", officeHeader);
+    expect(before.status).toBe(200);
+    expect(before.body).toEqual({ generated: false, totalCount: 0, workOrders: [] });
+    const generated = await request(app.getHttpServer()).post(generateUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ startDate: "2026-12-01" });
+    expect(generated.status).toBe(201);
+    const after = await request(app.getHttpServer()).get(url).set("Authorization", officeHeader);
+    expect(after.status).toBe(200);
+    expect(after.body.generated).toBe(true);
+    expect(after.body.totalCount).toBe(4);
+    expect(after.body.workOrders.map((order: { id: string }) => order.id).sort()).toEqual(generated.body.map((order: { id: string }) => order.id).sort());
+    expect(after.body.workOrders[0]).toEqual(expect.objectContaining({ workOrderNumber: expect.any(String), scheduledDate: expect.any(String), status: "DRAFT" }));
+    const permission = await fixtures.ensurePermission("quotations", "read");
+    const role = await fixtures.createRole("generation-status-only", [permission.id]);
+    const user = await fixtures.createUser("generation-status-only", UserStatus.ACTIVE, [role.id]);
+    const limitedHeader = await loginHeader(user.email, user.password);
+    const limited = await request(app.getHttpServer()).get(url).set("Authorization", limitedHeader);
+    expect(limited.status).toBe(200);
+    expect(limited.body).toEqual({ generated: true, totalCount: 4, workOrders: [] });
+    expect((await request(app.getHttpServer()).get(url).set("Authorization", techHeader)).status).toBe(403);
+    await prisma.workOrder.updateMany({ where: { quotationRevisionId: revisionId }, data: { status: "CANCELLED" } });
+    expect((await request(app.getHttpServer()).get(url).set("Authorization", officeHeader)).body.generated).toBe(true);
+  });
+
   /** Creates a PM quotation + Revision 0, sets maintenance details, adds a costed line, and drives it to ACCEPTED. */
   async function createAcceptedPmRevision(
     suffix: string,
@@ -287,7 +313,48 @@ describe("Work Order Maintenance Visit Generation — Step 6 (live)", () => {
 
   // --- Step 3 regression: regular conversion still defers PM quotations -----
 
-  it("Step 3 regression: the regular convert-to-work-orders endpoint still refuses PREVENTIVE_MAINTENANCE revisions", async () => {
+  it("converts accepted maintenance through the existing recurring generator", async () => {
+    const { quotationId, revisionId } = await createAcceptedPmRevision("convert-recurring", { scheduledVisits: 2 });
+    const res = await request(app.getHttpServer())
+      .post(`${revisionUrl(quotationId, revisionId)}/convert-to-work-orders`)
+      .set("Authorization", officeHeader)
+      .send({ scheduledDate: "2026-12-01" });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveLength(2);
+    for (const order of res.body) {
+      expect(order.quotationId).toBe(quotationId);
+      expect(order.quotationRevisionId).toBe(revisionId);
+      expect(order.workOrderType).toBe("FROM_QUOTATION");
+    }
+  });
+
+  it("generates a custom schedule from explicit dates without inventing an interval", async () => {
+    const { quotationId, revisionId } = await createAcceptedPmRevision("custom-explicit", { frequency: "CUSTOM", scheduledVisits: 2 });
+    const res = await request(app.getHttpServer()).post(generateUrl(quotationId, revisionId)).set("Authorization", officeHeader)
+      .send({ startDate: "2026-12-01", visitDates: ["2026-12-15", "2026-12-01"] });
+    expect(res.status).toBe(201);
+    expect(res.body.map((row: { scheduledDate: string }) => row.scheduledDate.slice(0, 10))).toEqual(["2026-12-01", "2026-12-15"]);
+  });
+
+  it("creates only one visit set under concurrent generation requests", async () => {
+    const { quotationId, revisionId } = await createAcceptedPmRevision("concurrent-visits", { scheduledVisits: 2 });
+    const responses = await Promise.all([1, 2].map(() => request(app.getHttpServer()).post(generateUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ startDate: "2026-12-01" })));
+    expect(responses.map((row) => row.status).sort()).toEqual([201, 409]);
+    expect(await prisma.workOrder.count({ where: { quotationRevisionId: revisionId } })).toBe(2);
+  });
+
+  it("allows an audited completion of missing legacy accepted details but never replaces existing details", async () => {
+    const { quotationId, revisionId } = await createAcceptedPmRevision("missing-legacy-details", { scheduledVisits: 2 });
+    await prisma.quotationMaintenanceDetails.delete({ where: { quotationRevisionId: revisionId } });
+    const body = { contractPeriodMonths: 6, frequency: "MONTHLY", scheduledVisits: 2, billingFrequency: "MONTHLY" };
+    const correctionUrl = `${maintenanceDetailsUrl(quotationId, revisionId)}/accepted-correction`;
+    expect((await request(app.getHttpServer()).post(correctionUrl).set("Authorization", officeHeader).send(body)).status).toBe(201);
+    expect((await request(app.getHttpServer()).post(correctionUrl).set("Authorization", officeHeader).send(body)).status).toBe(409);
+    expect((await request(app.getHttpServer()).post(generateUrl(quotationId, revisionId)).set("Authorization", officeHeader).send({ startDate: "2026-12-01" })).status).toBe(201);
+    expect(await prisma.auditLog.count({ where: { action: "maintenance_missing_details_completed", entityId: revisionId } })).toBe(1);
+  });
+
+  it("requires a first visit date when converting a PREVENTIVE_MAINTENANCE revision", async () => {
     const { quotationId, revisionId } = await createAcceptedPmRevision("regression-convert-defer", { scheduledVisits: 2 });
     const res = await request(app.getHttpServer())
       .post(`${revisionUrl(quotationId, revisionId)}/convert-to-work-orders`)

@@ -90,7 +90,7 @@ export default function CustomerDetailPage() {
 
   if (error) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Customer" }]} />
         <ErrorState message={error} onRetry={load} />
       </main>
@@ -99,7 +99,7 @@ export default function CustomerDetailPage() {
 
   if (!customer) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Customer" }]} />
         <LoadingState label="Loading customer…" />
       </main>
@@ -107,7 +107,7 @@ export default function CustomerDetailPage() {
   }
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: customer.name }]} />
       <PageHeader
         title={customer.name}

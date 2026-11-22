@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import { SAMPLE_BANK_INSTRUCTIONS } from "@/lib/quotation-samples";
 import { useAuth } from "@/lib/auth-context";
 import { listPaymentTerms, listQuotationTemplates, TAX_TREATMENT_LABEL, updateRevisionContent, type QuotationRevision, type QuotationTermTemplate, type TaxTreatment } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
@@ -16,10 +17,8 @@ import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 
 type DiscountMode = "percent" | "amount";
 
-const isDateValue = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
-
 function textUpdate(value: string, previousValue: string | null) {
-  return value === "" && !previousValue ? undefined : value;
+  return value === (previousValue ?? "") ? undefined : value;
 }
 
 // DRAFT-only, per assertRevisionEditable — the parent only renders this
@@ -33,6 +32,7 @@ export function RevisionFreeTextForm({
   revision,
   onChanged,
   onDirtyChange,
+  hasTaxMismatch = false,
 }: {
   quotationId: string;
   revisionId: string;
@@ -40,8 +40,14 @@ export function RevisionFreeTextForm({
   revision: QuotationRevision;
   onChanged: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  hasTaxMismatch?: boolean;
 }) {
   const { accessToken } = useAuth();
+  const [recipientName, setRecipientName] = useState(revision.recipientName ?? "");
+  const [preparedByName, setPreparedByName] = useState(revision.preparedByName ?? "");
+  const [paymentInstructions, setPaymentInstructions] = useState(revision.paymentInstructions ?? "");
+  const [scopeChecklistTitle, setScopeChecklistTitle] = useState(revision.scopeChecklistTitle ?? "");
+  const [pdfLayout, setPdfLayout] = useState<"AUTO" | "STANDARD" | "MAINTENANCE">(revision.pdfLayout ?? "AUTO");
   const [scopeOfWork, setScopeOfWork] = useState(revision.scopeOfWork ?? "");
   const [paymentTerms, setPaymentTerms] = useState(revision.paymentTerms ?? "");
   const [customPayment, setCustomPayment] = useState(false);
@@ -53,10 +59,10 @@ export function RevisionFreeTextForm({
   const [validUntil, setValidUntil] = useState(revision.validUntil?.slice(0, 10) ?? "");
   const [defaultTaxTreatment, setDefaultTaxTreatment] = useState<TaxTreatment>(revision.defaultTaxTreatment);
   const [discountMode, setDiscountMode] = useState<DiscountMode>(
-    Number(revision.discountPercent) > 0 ? "percent" : Number(revision.discountAmount) > 0 ? "amount" : "percent",
+    Number(revision.discountAmount) > 0 ? "amount" : "percent",
   );
   const [discountValue, setDiscountValue] = useState(
-    Number(revision.discountPercent) > 0 ? revision.discountPercent : Number(revision.discountAmount) > 0 ? revision.discountAmount : "0",
+    Number(revision.discountAmount) > 0 ? revision.discountAmount : "0",
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +74,39 @@ export function RevisionFreeTextForm({
   const latestVersion = useRef(0);
   const savedVersion = useRef(0);
   const saving = useRef(false);
+  const applyOverallTax = useRef(false);
+  const savedDiscount = useRef({ mode: discountMode, value: discountValue });
+  const fieldBaseline = useRef(revision);
+  const initialPaymentTerms = useRef(revision.paymentTerms ?? "");
+
+  useEffect(() => {
+    const previous = fieldBaseline.current;
+    if (previous.id === revision.id && previous.updatedAt && revision.updatedAt && new Date(revision.updatedAt).getTime() < new Date(previous.updatedAt).getTime()) return;
+    const fields = [
+      [setRecipientName, revision.recipientName, previous.recipientName],
+      [setPreparedByName, revision.preparedByName, previous.preparedByName],
+      [setPaymentInstructions, revision.paymentInstructions, previous.paymentInstructions],
+      [setScopeChecklistTitle, revision.scopeChecklistTitle, previous.scopeChecklistTitle],
+      [setScopeOfWork, revision.scopeOfWork, previous.scopeOfWork],
+      [setPaymentTerms, revision.paymentTerms, previous.paymentTerms],
+      [setWarranty, revision.warranty, previous.warranty],
+      [setLeadTime, revision.leadTime, previous.leadTime],
+      [setNotes, revision.notes, previous.notes],
+      [setExclusions, revision.exclusions, previous.exclusions],
+      [setTermsAndConditions, revision.termsAndConditions, previous.termsAndConditions],
+    ] as const;
+    for (const [setValue, next, before] of fields) setValue((value) => value === (before ?? "") ? next ?? "" : value);
+    setPdfLayout((value) => value === (previous.pdfLayout ?? "AUTO") ? revision.pdfLayout ?? "AUTO" : value);
+    setValidUntil((value) => value === (previous.validUntil?.slice(0, 10) ?? "") ? revision.validUntil?.slice(0, 10) ?? "" : value);
+    setDefaultTaxTreatment((value) => value === previous.defaultTaxTreatment ? revision.defaultTaxTreatment : value);
+    if (latestValues.current.discountMode === savedDiscount.current.mode && latestValues.current.discountValue === savedDiscount.current.value && revision.discountAmount !== previous.discountAmount) {
+      const mode: DiscountMode = Number(revision.discountAmount) > 0 ? "amount" : "percent";
+      const value = Number(revision.discountAmount) > 0 ? revision.discountAmount : "0";
+      setDiscountMode(mode); setDiscountValue(value); savedDiscount.current = { mode, value };
+      latestValues.current = { ...latestValues.current, discountMode: mode, discountValue: value };
+    }
+    fieldBaseline.current = revision;
+  }, [revision]);
 
   const hasPlaceholder = termsAndConditions.includes("[PLACEHOLDER");
 
@@ -77,7 +116,7 @@ export function RevisionFreeTextForm({
     listPaymentTerms(accessToken).then((values) => {
       if (active) {
         setPaymentOptions(values);
-        if (paymentTerms && !values.includes(paymentTerms)) setCustomPayment(true);
+        if (initialPaymentTerms.current && !values.includes(initialPaymentTerms.current)) setCustomPayment(true);
       }
     }).catch(() => undefined);
     return () => { active = false; };
@@ -92,8 +131,8 @@ export function RevisionFreeTextForm({
     return () => { active = false; };
   }, [accessToken]);
 
-  const latestValues = useRef({ scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision });
-  latestValues.current = { scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision };
+  const latestValues = useRef({ recipientName, preparedByName, paymentInstructions, scopeChecklistTitle, pdfLayout, scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision });
+  latestValues.current = { recipientName, preparedByName, paymentInstructions, scopeChecklistTitle, pdfLayout, scopeOfWork, paymentTerms, warranty, leadTime, notes, exclusions, termsAndConditions, validUntil, defaultTaxTreatment, discountMode, discountValue, revision };
 
   async function saveChanges() {
     if (!accessToken || saving.current) return;
@@ -109,19 +148,60 @@ export function RevisionFreeTextForm({
       while (savedVersion.current < latestVersion.current) {
         const version = latestVersion.current;
         const value = latestValues.current;
-        await updateRevisionContent(accessToken, quotationId, revisionId, {
-          scopeOfWork: textUpdate(value.scopeOfWork, value.revision.scopeOfWork),
-          paymentTerms: textUpdate(value.paymentTerms, value.revision.paymentTerms),
-          warranty: textUpdate(value.warranty, value.revision.warranty),
-          leadTime: textUpdate(value.leadTime, value.revision.leadTime),
-          notes: textUpdate(value.notes, value.revision.notes),
-          exclusions: textUpdate(value.exclusions, value.revision.exclusions),
-          termsAndConditions: textUpdate(value.termsAndConditions, value.revision.termsAndConditions),
-          validUntil: value.validUntil || undefined,
-          defaultTaxTreatment: value.defaultTaxTreatment,
-          discountPercent: value.discountMode === "percent" ? Number(value.discountValue) : undefined,
-          discountAmount: value.discountMode === "amount" ? Number(value.discountValue) : undefined,
+        const discountChanged = value.discountMode !== savedDiscount.current.mode || value.discountValue !== savedDiscount.current.value;
+        const saved = await updateRevisionContent(accessToken, quotationId, revisionId, {
+          pdfLayout: value.pdfLayout === (fieldBaseline.current.pdfLayout ?? "AUTO") ? undefined : value.pdfLayout,
+          recipientName: textUpdate(value.recipientName, fieldBaseline.current.recipientName ?? null),
+          preparedByName: textUpdate(value.preparedByName, fieldBaseline.current.preparedByName ?? null),
+          paymentInstructions: textUpdate(value.paymentInstructions, fieldBaseline.current.paymentInstructions ?? null),
+          scopeChecklistTitle: textUpdate(value.scopeChecklistTitle, fieldBaseline.current.scopeChecklistTitle ?? null),
+          scopeOfWork: textUpdate(value.scopeOfWork, fieldBaseline.current.scopeOfWork),
+          paymentTerms: textUpdate(value.paymentTerms, fieldBaseline.current.paymentTerms),
+          warranty: textUpdate(value.warranty, fieldBaseline.current.warranty),
+          leadTime: textUpdate(value.leadTime, fieldBaseline.current.leadTime),
+          notes: textUpdate(value.notes, fieldBaseline.current.notes),
+          exclusions: textUpdate(value.exclusions, fieldBaseline.current.exclusions),
+          termsAndConditions: textUpdate(value.termsAndConditions, fieldBaseline.current.termsAndConditions),
+          validUntil: value.validUntil === (fieldBaseline.current.validUntil?.slice(0, 10) ?? "") ? undefined : value.validUntil || null,
+          defaultTaxTreatment: !applyOverallTax.current && value.defaultTaxTreatment === fieldBaseline.current.defaultTaxTreatment ? undefined : value.defaultTaxTreatment,
+          discountPercent: discountChanged && value.discountMode === "percent" ? Number(value.discountValue) : undefined,
+          discountAmount: discountChanged && value.discountMode === "amount" ? Number(value.discountValue) : undefined,
         });
+        const fields = [
+          ["recipientName", setRecipientName, value.recipientName, saved.recipientName],
+          ["preparedByName", setPreparedByName, value.preparedByName, saved.preparedByName],
+          ["paymentInstructions", setPaymentInstructions, value.paymentInstructions, saved.paymentInstructions],
+          ["scopeChecklistTitle", setScopeChecklistTitle, value.scopeChecklistTitle, saved.scopeChecklistTitle],
+          ["scopeOfWork", setScopeOfWork, value.scopeOfWork, saved.scopeOfWork],
+          ["paymentTerms", setPaymentTerms, value.paymentTerms, saved.paymentTerms],
+          ["warranty", setWarranty, value.warranty, saved.warranty],
+          ["leadTime", setLeadTime, value.leadTime, saved.leadTime],
+          ["notes", setNotes, value.notes, saved.notes],
+          ["exclusions", setExclusions, value.exclusions, saved.exclusions],
+          ["termsAndConditions", setTermsAndConditions, value.termsAndConditions, saved.termsAndConditions],
+        ] as const;
+        for (const [key, setValue, submitted, persisted] of fields) {
+          if (latestValues.current[key] === submitted) latestValues.current = { ...latestValues.current, [key]: persisted ?? "" };
+          setValue((current) => current === submitted ? persisted ?? "" : current);
+        }
+        if (latestValues.current.validUntil === value.validUntil) {
+          const persisted = saved.validUntil?.slice(0, 10) ?? "";
+          latestValues.current = { ...latestValues.current, validUntil: persisted };
+          setValidUntil((current) => current === value.validUntil ? persisted : current);
+        }
+        if (latestValues.current.defaultTaxTreatment === value.defaultTaxTreatment) {
+          latestValues.current = { ...latestValues.current, defaultTaxTreatment: saved.defaultTaxTreatment };
+          setDefaultTaxTreatment((current) => current === value.defaultTaxTreatment ? saved.defaultTaxTreatment : current);
+        }
+        if (latestValues.current.pdfLayout === value.pdfLayout) {
+          const persisted = saved.pdfLayout ?? "AUTO";
+          latestValues.current = { ...latestValues.current, pdfLayout: persisted };
+          setPdfLayout((current) => current === value.pdfLayout ? persisted : current);
+        }
+
+        fieldBaseline.current = saved;
+        if (latestVersion.current === version) applyOverallTax.current = false;
+        savedDiscount.current = { mode: value.discountMode, value: value.discountValue };
         savedVersion.current = version;
       }
       setSavedNotice(true);
@@ -157,6 +237,11 @@ export function RevisionFreeTextForm({
           <CardTitle className="text-base">Quotation details</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 px-4 pb-4 pt-0 sm:grid-cols-2 sm:px-5">
+          <ReadField label="Recipient / attention" value={revision.recipientName ?? null} />
+          <ReadField label="Prepared by / from" value={revision.preparedByName ?? null} />
+          <ReadField label="Mode of payment" value={revision.paymentInstructions ?? null} />
+          <ReadField label="PDF table layout" value={revision.pdfLayout === "STANDARD" ? "Standard item table" : revision.pdfLayout === "MAINTENANCE" ? "Maintenance pricing table" : "Automatic"} />
+          <ReadField label="Scope appendix title" value={revision.scopeChecklistTitle ?? null} />
           <ReadField label="Scope of work" value={revision.scopeOfWork} />
           <ReadField label="Payment terms" value={revision.paymentTerms} />
           <ReadField label="Warranty" value={revision.warranty} />
@@ -170,7 +255,7 @@ export function RevisionFreeTextForm({
           <div id="quotation-commercial-terms" className="scroll-mt-6 border-t pt-4 sm:col-span-2">
             <h3 className="mb-3 text-base font-semibold">Commercial terms</h3>
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <ReadField label="Default tax treatment" value={TAX_TREATMENT_LABEL[revision.defaultTaxTreatment]} />
+          <ReadField label="Quotation tax treatment" value={TAX_TREATMENT_LABEL[revision.defaultTaxTreatment]} />
               <ReadField label="Discount" value={Number(revision.discountPercent) > 0 ? `${revision.discountPercent}%` : formatMoney(revision.discountAmount)} />
             </dl>
           </div>
@@ -186,6 +271,10 @@ export function RevisionFreeTextForm({
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 sm:px-5">
         <div onChangeCapture={markChanged} className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5"><Label htmlFor="rf-recipient">Recipient / attention</Label><Input id="rf-recipient" value={recipientName} onChange={(e) => setRecipientName(e.target.value)} maxLength={160} placeholder="Uses the saved customer contact when blank" /></div>
+            <div className="space-y-1.5"><Label htmlFor="rf-prepared">Prepared by / from</Label><Input id="rf-prepared" value={preparedByName} onChange={(e) => setPreparedByName(e.target.value)} maxLength={160} placeholder="Uses the quotation creator when blank" /></div>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="rf-scope">Scope of work</Label>
             <Textarea id="rf-scope" value={scopeOfWork} onChange={(e) => setScopeOfWork(e.target.value)} rows={3} />
@@ -199,6 +288,9 @@ export function RevisionFreeTextForm({
                 setPaymentTerms(e.target.value === "__custom__" ? "" : e.target.value);
               }}>
                 <option value="">— Select payment terms —</option>
+                {paymentTerms && !customPayment && !paymentOptions.includes(paymentTerms) && (
+                  <option value={paymentTerms}>{paymentTerms}</option>
+                )}
                 {paymentOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                 <option value="__custom__">Custom…</option>
               </Select>
@@ -208,16 +300,16 @@ export function RevisionFreeTextForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-warranty">Warranty</Label>
-              <Input id="rf-warranty" type="date" value={isDateValue(warranty) ? warranty : ""} onChange={(e) => setWarranty(e.target.value)} />
-              {warranty && !isDateValue(warranty) && <p className="text-xs text-muted-foreground">Previous wording: {warranty}. Choose a date to replace it.</p>}
+              <Input id="rf-warranty" value={warranty} onChange={(e) => setWarranty(e.target.value)} placeholder="e.g. 2 weeks from completion, or a date" />
+
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="rf-leadtime">Lead time</Label>
-              <Input id="rf-leadtime" type="date" value={isDateValue(leadTime) ? leadTime : ""} onChange={(e) => setLeadTime(e.target.value)} />
-              {leadTime && !isDateValue(leadTime) && <p className="text-xs text-muted-foreground">Previous wording: {leadTime}. Choose a date to replace it.</p>}
+              <Input id="rf-leadtime" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} placeholder="e.g. 5 working days, or a date" />
+
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-valid-until">Valid until</Label>
@@ -225,6 +317,13 @@ export function RevisionFreeTextForm({
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><Label htmlFor="rf-payment-instructions">Mode of payment</Label><Button type="button" size="sm" variant="outline" onClick={() => { setPaymentInstructions(SAMPLE_BANK_INSTRUCTIONS); markChanged(); }}>Use sample bank details</Button></div>
+            <Textarea id="rf-payment-instructions" rows={6} value={paymentInstructions} onChange={(e) => setPaymentInstructions(e.target.value)} />
+            <p className="text-xs text-muted-foreground">Review the account details before sending. The PDF uses this saved text.</p>
+          </div>
+          <div className="space-y-1.5"><Label htmlFor="rf-pdf-layout">PDF table layout</Label><Select id="rf-pdf-layout" value={pdfLayout} onChange={(e) => setPdfLayout(e.target.value as "AUTO" | "STANDARD" | "MAINTENANCE")}><option value="AUTO">Automatic</option><option value="STANDARD">Standard item table (DataSpring sample)</option><option value="MAINTENANCE">Maintenance pricing table (Ford sample)</option></Select><p className="text-xs text-muted-foreground">Changes the table layout. Prices and tax treatment follow the saved line items.</p></div>
+          <div className="space-y-1.5"><Label htmlFor="rf-scope-title">Scope appendix title</Label><Input id="rf-scope-title" value={scopeChecklistTitle} onChange={(e) => setScopeChecklistTitle(e.target.value)} maxLength={160} placeholder="Scope of work details" /><p className="text-xs text-muted-foreground">Included checklist items appear in the PDF appendix.</p></div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="rf-notes">Notes</Label>
@@ -254,7 +353,7 @@ export function RevisionFreeTextForm({
           <div id="quotation-commercial-terms" className="grid scroll-mt-6 grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-3">
             <h3 className="text-base font-semibold sm:col-span-3">Commercial terms</h3>
             <div className="space-y-1.5">
-              <Label htmlFor="rf-tax">Default tax treatment</Label>
+              <Label htmlFor="rf-tax">Quotation tax treatment</Label>
               <Select id="rf-tax" value={defaultTaxTreatment} onChange={(e) => setDefaultTaxTreatment(e.target.value as TaxTreatment)}>
                 {Object.entries(TAX_TREATMENT_LABEL).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -263,8 +362,9 @@ export function RevisionFreeTextForm({
                 ))}
               </Select>
               <p className="text-xs text-muted-foreground">
-                Applies to new line items; each line can be changed separately. Enter the price before VAT. VAT Inclusive adds VAT to show the customer total; VAT Exempt adds no VAT.
+                Applies to all items in this quotation when saved. Enter selling prices before VAT. VAT Inclusive applies the saved VAT rate; VAT Exempt means no VAT is charged. The summary and PDF use the saved totals.
               </p>
+              {hasTaxMismatch && <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"><p>Some saved items still use a different tax setting. Apply the overall quotation tax to recalculate them.</p><Button type="button" size="sm" variant="outline" disabled={submitting} onClick={() => { applyOverallTax.current = true; markChanged(); }}>Apply quotation tax to all items</Button></div>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rf-discount-mode">Discount</Label>

@@ -21,6 +21,13 @@ export class QuotationTestingCommissioningItemsController {
     private readonly itemsService: QuotationTestingCommissioningItemsService,
   ) {}
 
+  @Permissions({ module: "quotations", action: "update" })
+  @Post("cleaning-scope")
+  async applyCleaningScope(@Param("quotationId") quotationId: string, @Param("revisionId") revisionId: string, @Req() req: AuthedRequest) {
+    await this.quotationsService.findRevisionOrThrow(quotationId, revisionId);
+    return this.itemsService.applyCleaningScope(revisionId, actorFrom(req));
+  }
+
   @Permissions({ module: "quotations", action: "read" })
   @Get()
   async list(@Param("quotationId") quotationId: string, @Param("revisionId") revisionId: string) {

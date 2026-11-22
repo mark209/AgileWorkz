@@ -16,8 +16,19 @@ import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
+import { useOutcome, type OutcomeMessage } from "@/components/shared/outcome-provider";
 
 type DialogKind = "submit" | "approve" | "approveFinal" | "reject" | "send" | "accept" | "decline" | "newRevision" | null;
+
+const transitionOutcomes: Partial<Record<QuotationRevision["status"], Omit<OutcomeMessage, "reference">>> = {
+  PENDING_APPROVAL: { title: "Quotation submitted for approval", description: "This revision is locked for Manager review." },
+  PENDING_OWNER_APPROVAL: { title: "Manager review recorded", description: "Manager review is complete. Owner approval is still required before this quotation can be sent." },
+  APPROVED: { title: "Quotation internally approved", description: "The quotation's internal approval is complete. Download the approved PDF and send it to the customer outside the system, then mark it as sent." },
+  SENT: { title: "Quotation marked as sent", description: "External delivery has been recorded. This action does not email the customer." },
+  ACCEPTED: { title: "Customer acceptance recorded", description: "This revision is commercially final. Use Operations to create its Work Orders or maintenance visits." },
+  REJECTED: { title: "Quotation internally rejected", description: "This revision was rejected during internal review. Create a new revision if changes are needed." },
+  DECLINED: { title: "Customer decline recorded", description: "The customer declined this revision. Create a new revision if further changes are agreed." },
+};
 
 // Contextual lifecycle actions — only the transitions valid from the
 // CURRENT revision's CURRENT status are rendered, mirroring the backend's
@@ -42,26 +53,31 @@ function isStaleStatusError(e: unknown): e is ApiError {
 }
 export function LifecycleActionBar({
   quotationId,
+  quotationNumber,
   revision,
   lineItemCount,
   quotationType,
   sectionCount = 1,
+  maintenanceReady = true,
   hasUnsavedDetails = false,
   onChanged,
   onConflict,
   onNextRevisionCreated,
 }: {
   quotationId: string;
+  quotationNumber?: string;
   revision: QuotationRevision;
   lineItemCount: number;
   quotationType?: QuotationType;
   sectionCount?: number;
+  maintenanceReady?: boolean;
   hasUnsavedDetails?: boolean;
   onChanged: () => void;
   onConflict: () => void;
   onNextRevisionCreated: (newRevisionId: string) => void;
 }) {
   const { accessToken, hasPermission } = useAuth();
+  const { showOutcome } = useOutcome();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,13 +102,15 @@ export function LifecycleActionBar({
     setDialog(kind);
   }
 
-  async function run(action: () => Promise<unknown>) {
+  async function run(action: () => Promise<QuotationRevision>) {
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
     try {
-      await action();
+      const result = await action();
       setDialog(null);
+      const outcome = transitionOutcomes[result.status];
+      if (outcome) showOutcome({ ...outcome, reference: quotationNumber });
       onChanged();
     } catch (e) {
       if (isStaleStatusError(e)) {
@@ -130,10 +148,11 @@ export function LifecycleActionBar({
   if (revision.status === "DRAFT" && canUpdate) {
     buttons.push(
       <div key="submit" className="flex flex-col items-start gap-1">
-        <Button onClick={() => openDialog("submit")} disabled={submitting || lineItemCount === 0 || hasUnsavedDetails || (quotationType === "PROJECT" && sectionCount === 0)}>
+        <Button onClick={() => openDialog("submit")} disabled={submitting || lineItemCount === 0 || hasUnsavedDetails || !maintenanceReady || (quotationType === "PROJECT" && sectionCount === 0)}>
           Submit for Approval
         </Button>
         {lineItemCount === 0 && <p className="text-xs text-muted-foreground">Add at least one line item first.</p>}
+        {!maintenanceReady && <p className="text-xs text-muted-foreground">Complete the maintenance contract details before submitting.</p>}
         {quotationType === "PROJECT" && sectionCount === 0 && <p className="text-xs text-muted-foreground">Add a project section before submitting.</p>}
         {hasUnsavedDetails && <p className="text-xs text-muted-foreground">Wait for details and commercial terms to save before submitting.</p>}
       </div>,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api-client";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -42,6 +43,8 @@ function QuotationsListPageContent() {
   const status = searchParams.get("status") ?? undefined;
 
   const [quotations, setQuotations] = useState<Quotation[] | null>(null);
+  const [loadedStatus, setLoadedStatus] = useState<string | undefined>(undefined);
+  const requestId = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
@@ -49,11 +52,14 @@ function QuotationsListPageContent() {
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
+    const request = ++requestId.current;
     setError(null);
+    setQuotations(null);
     try {
-      setQuotations(await listQuotations(accessToken, status));
+      const rows = await listQuotations(accessToken, status);
+      if (request === requestId.current) { setQuotations(rows); setLoadedStatus(status); }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load quotations.");
+      if (request === requestId.current) setError(e instanceof ApiError ? e.message : "Failed to load quotations.");
     }
   }, [accessToken, canRead, status]);
 
@@ -71,13 +77,15 @@ function QuotationsListPageContent() {
   }
 
   const query = search.trim().toLowerCase();
-  const visibleQuotations = quotations?.filter((q) =>
+  const currentQuotations = loadedStatus === status ? quotations : null;
+  const visibleQuotations = currentQuotations?.filter((q) =>
     q.quotationNumber.toLowerCase().includes(query) ||
+    (q.customer?.name ?? "").toLowerCase().includes(query) ||
     (q.customerReferenceNo ?? "").toLowerCase().includes(query),
   ) ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         title="Quotations"
         description={status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All quotations."}
@@ -85,18 +93,18 @@ function QuotationsListPageContent() {
 
       <div className="relative mb-4 max-w-sm">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input aria-label="Search quotations" placeholder="Search quotation or reference number" className="pl-8" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <Input aria-label="Search quotations" placeholder="Search quotation, customer, or reference" className="pl-8" value={search} onChange={(event) => setSearch(event.target.value)} />
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
-      {!quotations && !error && <div className="rounded-lg border p-5"><SkeletonTable columns={6} /></div>}
-      {quotations && quotations.length === 0 && (
+      {!currentQuotations && !error && <div className="rounded-lg border p-5"><SkeletonTable columns={6} /></div>}
+      {currentQuotations && currentQuotations.length === 0 && (
         <div className="space-y-3">
           <EmptyState title="No quotations found" description="No quotations match the current filter." />
           {status && <Link href="/quotations" className="inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
         </div>
       )}
-      {quotations && quotations.length > 0 && visibleQuotations.length === 0 && (
+      {currentQuotations && currentQuotations.length > 0 && visibleQuotations.length === 0 && (
         <EmptyState title="No matching quotations" description="Try a different search term." />
       )}
 
@@ -107,6 +115,7 @@ function QuotationsListPageContent() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Quotation #</TableHead>
+                  <TableHead>Customer</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
@@ -117,11 +126,12 @@ function QuotationsListPageContent() {
                 {visibleQuotations.map((q) => (
                   <TableRow key={q.id}>
                     <TableCell className="font-medium"><Link href={`/quotations/${q.id}`} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{q.quotationNumber}</Link></TableCell>
+                    <TableCell>{q.customer?.name ?? "—"}</TableCell>
                     <TableCell>{q.quotationTypeOther || QUOTATION_TYPE_LABEL[q.quotationType]}</TableCell>
                     <TableCell>
                       <StatusBadge status={q.status} />
                     </TableCell>
-                    <TableCell>{new Date(q.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{formatDate(q.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <Link href={`/quotations/${q.id}`} className="whitespace-nowrap text-sm font-medium text-primary hover:underline">
                         View →

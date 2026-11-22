@@ -24,10 +24,17 @@ describe("MainNavigation", () => {
     const desktopNav = screen.getAllByRole("navigation", { name: "Main navigation" })[0];
     expect(desktopNav.querySelector('a[href="/quotations"]')).toHaveAttribute("aria-current", "page");
     expect(desktopNav.querySelector('a[href="/work-orders"]')).toBeNull();
+    expect(desktopNav.querySelector('a[href="/work-schedule"]')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
     expect(desktopNav.querySelector('a[href="/quotations"]')).toHaveAttribute("aria-label", "Quotations");
     expect(window.localStorage.getItem("agileworks-sidebar-collapsed")).toBe("true");
+  });
+
+  it.each(["read", "read_assigned", "read_own"])("shows Work Schedule for existing Work Order %s permission", (grant) => {
+    useAuthMock.mockReturnValue({ user: { fullName: "Schedule User" }, hasPermission: (module: string, action: string) => module === "work_orders" && action === grant, logout: vi.fn() });
+    render(<MainNavigation><main>Schedule</main></MainNavigation>);
+    expect(screen.getByRole("link", { name: "Work Schedule" })).toHaveAttribute("href", "/work-schedule");
   });
 
   it("opens the mobile drawer and closes it after a destination is selected", () => {

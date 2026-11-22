@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api-client";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -38,22 +39,27 @@ function WorkOrdersListPageContent() {
   const createdOutsideScope = searchParams.get("created") === "outside-scope";
 
   const [workOrders, setWorkOrders] = useState<WorkOrder[] | null>(null);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const requestId = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const canRead = hasPermission("work_orders", "read") || hasPermission("work_orders", "read_assigned") || hasPermission("work_orders", "read_own");
   const assignedScope = assignedOnly || !hasPermission("work_orders", "read");
+  const listKey = `${assignedOnly ? "assigned" : "all"}:${status ?? ""}`;
 
   const load = useCallback(async () => {
     if (!accessToken || !canRead) return;
+    const request = ++requestId.current;
     setError(null);
     setWorkOrders(null);
     try {
-        setWorkOrders(await (assignedOnly ? listWorkOrders(accessToken, status, true) : listWorkOrders(accessToken, status)));
+      const rows = await (assignedOnly ? listWorkOrders(accessToken, status, true) : listWorkOrders(accessToken, status));
+      if (request === requestId.current) { setWorkOrders(rows); setLoadedKey(listKey); }
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Work Orders." : e instanceof ApiError ? e.message : "Failed to load work orders.");
+      if (request === requestId.current) setError(e instanceof ApiError && e.status === 403 ? "Access denied to these Work Orders." : e instanceof ApiError ? e.message : "Failed to load work orders.");
     }
-  }, [accessToken, canRead, status, assignedOnly]);
+  }, [accessToken, canRead, status, assignedOnly, listKey]);
 
   useEffect(() => {
     load();
@@ -69,17 +75,18 @@ function WorkOrdersListPageContent() {
   }
 
   const query = search.trim().toLowerCase();
-  const visibleWorkOrders = workOrders?.filter((wo) =>
+  const currentWorkOrders = loadedKey === listKey ? workOrders : null;
+  const visibleWorkOrders = currentWorkOrders?.filter((wo) =>
     wo.workOrderNumber.toLowerCase().includes(query) ||
     wo.customer.name.toLowerCase().includes(query) ||
     wo.site.label.toLowerCase().includes(query),
   ) ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         title="Work Orders"
-        description={assignedScope ? "Work Orders assigned to you." : status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}
+        description={assignedScope ? `Work Orders assigned to you${status ? ` · Status: ${status.replaceAll(",", ", ")}` : ""}.` : status ? `Filtered by status: ${status.replaceAll(",", ", ")}` : "All work orders."}
       />
 
       {createdOutsideScope && <p role="status" className="mb-4 rounded-md border border-primary/30 bg-accent px-4 py-3 text-sm">Work Order created. It is not assigned to you, so it will not appear in this list. Super Admin can assign it to you if needed.</p>}
@@ -90,14 +97,14 @@ function WorkOrdersListPageContent() {
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
-      {!workOrders && !error && <LoadingState label="Loading work orders…" />}
-      {workOrders && workOrders.length === 0 && (
+      {!currentWorkOrders && !error && <LoadingState label="Loading work orders…" />}
+      {currentWorkOrders && currentWorkOrders.length === 0 && (
         <div className="space-y-3">
-          <EmptyState title={assignedScope ? "No assigned Work Orders" : "No work orders found"} description={assignedScope ? "Work Orders assigned to you will appear here." : "No work orders match the current filter."} />
-          {status && <Link href="/work-orders" className="inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
+          <EmptyState title={assignedScope && status ? "No assigned Work Orders with this status" : assignedScope ? "No assigned Work Orders" : "No work orders found"} description={assignedScope && status ? "No assigned Work Orders match the current status filter." : assignedScope ? "Work Orders assigned to you will appear here." : "No work orders match the current filter."} />
+          {status && <Link href={assignedOnly ? "/work-orders?scope=assigned" : "/work-orders"} className="inline-block text-sm font-medium text-primary underline underline-offset-2">Clear status filter</Link>}
         </div>
       )}
-      {workOrders && workOrders.length > 0 && visibleWorkOrders.length === 0 && (
+      {currentWorkOrders && currentWorkOrders.length > 0 && visibleWorkOrders.length === 0 && (
         <EmptyState title="No matching work orders" description="Try a different search term." />
       )}
 
@@ -116,7 +123,7 @@ function WorkOrdersListPageContent() {
                   <p className="text-muted-foreground">{wo.site.label}</p>
                 </div>
                 <dl className="grid gap-1 text-sm text-muted-foreground">
-                  <div><dt className="inline">Scheduled: </dt><dd className="inline text-foreground">{wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : "—"}</dd></div>
+                  <div><dt className="inline">Scheduled: </dt><dd className="inline text-foreground">{formatDate(wo.scheduledDate)}</dd></div>
                   <div><dt className="inline">Responsible Manager: </dt><dd className="inline text-foreground">{wo.responsibleManager?.fullName ?? "Unassigned"}</dd></div>
                   <div><dt className="inline">Technician(s): </dt><dd className="inline text-foreground">{wo.assignments.length > 0 ? wo.assignments.map((a) => a.technician.fullName).join(", ") : "Unassigned"}</dd></div>
                 </dl>
@@ -148,7 +155,7 @@ function WorkOrdersListPageContent() {
                     <TableCell>{wo.customer.name}</TableCell>
                     <TableCell>{wo.site.label}</TableCell>
                     <TableCell>{wo.workOrderType === "FROM_QUOTATION" ? "From Quotation" : "Standalone"}</TableCell>
-                    <TableCell>{wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : "—"}</TableCell>
+                    <TableCell>{formatDate(wo.scheduledDate)}</TableCell>
                     <TableCell>
                       <StatusBadge status={wo.status} />
                     </TableCell>

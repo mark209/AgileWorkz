@@ -397,7 +397,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
 
   // --- Concurrency: two simultaneous transitions on the same revision ------
 
-  it("only one of two concurrent decision requests on the same SENT revision succeeds — the other gets 409", async () => {
+  it("only one of two concurrent decision requests on the same SENT revision succeeds", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("concurrent-decision", 1000);
     await submitAndApprove(quotationId, revisionId);
     await request(app.getHttpServer()).patch(sendUrl(quotationId, revisionId)).set("Authorization", managerHeader);
@@ -407,7 +407,10 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
       request(app.getHttpServer()).patch(decisionUrl(quotationId, revisionId)).set("Authorization", managerHeader).send({ decision: "DECLINED" }),
     ]);
     const statuses = [a.status, b.status].sort();
-    expect(statuses).toEqual([200, 409]);
+    expect(statuses[0]).toBe(200);
+    // A request that reads after the winner commits fails the SENT guard;
+    // one that already read SENT fails the transactional conflict guard.
+    expect([400, 409]).toContain(statuses[1]);
 
     const finalRevision = await getRevision(quotationId, revisionId);
     expect(["ACCEPTED", "DECLINED"]).toContain(finalRevision.status);
@@ -416,7 +419,7 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
     expect(decisionAudits).toHaveLength(1); // exactly one transition actually happened
   });
 
-  it("only one of two concurrent submit requests on the same DRAFT revision succeeds — the other gets 409", async () => {
+  it("only one of two concurrent submit requests on the same DRAFT revision succeeds", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("concurrent-submit", 1000);
 
     const [a, b] = await Promise.all([
@@ -424,13 +427,14 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
       request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader),
     ]);
     const statuses = [a.status, b.status].sort();
-    expect(statuses).toEqual([200, 409]);
+    expect(statuses[0]).toBe(200);
+    expect([400, 409]).toContain(statuses[1]);
 
     const submittedAudits = await prisma.auditLog.findMany({ where: { action: "revision_submitted", entityId: revisionId } });
     expect(submittedAudits).toHaveLength(1);
   });
 
-  it("only one of two concurrent Manager-approve requests on the same PENDING_APPROVAL revision succeeds — the other gets 409", async () => {
+  it("only one of two concurrent Manager-approve requests on the same PENDING_APPROVAL revision succeeds", async () => {
     const { quotationId, revisionId } = await createReadyQuotation("concurrent-approve", 1000);
     await request(app.getHttpServer()).patch(submitUrl(quotationId, revisionId)).set("Authorization", managerHeader);
 
@@ -439,7 +443,8 @@ describe("Quotations — Step 7 approval/decision workflow (live)", () => {
       request(app.getHttpServer()).patch(approveUrl(quotationId, revisionId)).set("Authorization", managerHeader),
     ]);
     const statuses = [a.status, b.status].sort();
-    expect(statuses).toEqual([200, 409]);
+    expect(statuses[0]).toBe(200);
+    expect([400, 409]).toContain(statuses[1]);
 
     const approvedAudits = await prisma.auditLog.findMany({ where: { action: "revision_manager_approved", entityId: revisionId } });
     expect(approvedAudits).toHaveLength(1);

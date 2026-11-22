@@ -102,6 +102,23 @@ describe("Service Report upload idempotency (F7.1, live)", () => {
   });
 
   describe("retry with the same key", () => {
+    it("reuses the trimmed custom label but rejects changed custom text with the same key", async () => {
+      const { customer, site } = await createCustomerSite("custom-type-retry");
+      const key = `custom-type-${Date.now()}`;
+      const upload = (label: string) => request(app.getHttpServer()).post(`/customers/${customer.id}/service-reports`)
+        .set("Authorization", technician.authHeader).set("Idempotency-Key", key)
+        .field("siteId", site.id).field("reportTypeCode", "OTHER").field("reportTypeOther", label).field("sourceType", "INTERNAL_SERVICE")
+        .attach("file", pngBuffer(), { filename: "custom.png", contentType: "image/png" });
+      const first = await upload("Leak investigation");
+      expect(first.status).toBe(201);
+      const retry = await upload("  Leak investigation  ");
+      expect(retry.status).toBe(201);
+      expect(retry.body.id).toBe(first.body.id);
+      const changed = await upload("Insulation assessment");
+      expect(changed.status).toBe(409);
+      expect(await prisma.serviceReport.count({ where: { customerId: customer.id } })).toBe(1);
+      expect((await prisma.serviceReport.findUniqueOrThrow({ where: { id: first.body.id } })).reportTypeOther).toBe("Leak investigation");
+    });
     it("returns the original result without creating a second Service Report or review request", async () => {
       const { customer, site } = await createCustomerSite("retry");
       const key = `key-retry-${Date.now()}`;

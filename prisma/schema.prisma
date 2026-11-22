@@ -741,6 +741,8 @@ model QuotationTermTemplate {
 // of the current revision's — see `status` below.
 model Quotation {
   id                  String                  @id @default(uuid())
+  sourceWorkOrderId   String?                 @map("source_work_order_id")
+  sourceWorkOrder     WorkOrder?              @relation("SupplementaryQuotations", fields: [sourceWorkOrderId], references: [id], onDelete: Restrict)
   inquiryId           String?                 @map("inquiry_id")
   customerId          String                  @map("customer_id")
   siteId              String                  @map("site_id")
@@ -776,6 +778,7 @@ model Quotation {
   workOrders WorkOrder[]
 
   @@index([customerId])
+  @@index([sourceWorkOrderId])
   @@index([siteId])
   @@index([inquiryId])
   @@index([primaryTradeCode])
@@ -821,6 +824,11 @@ model QuotationRevision {
   isCurrent           Boolean                 @map("is_current")
   status              QuotationRevisionStatus @default(DRAFT)
   scopeOfWork         String?                 @map("scope_of_work") @db.Text
+  recipientName       String?                 @map("recipient_name") @db.VarChar(160)
+  preparedByName      String?                 @map("prepared_by_name") @db.VarChar(160)
+  paymentInstructions String?                 @map("payment_instructions") @db.Text
+  scopeChecklistTitle String?                 @map("scope_checklist_title") @db.VarChar(160)
+  pdfLayout           String                  @default("AUTO") @map("pdf_layout") @db.VarChar(20)
   defaultTaxTreatment TaxTreatment            @map("default_tax_treatment")
   vatRatePercent      Decimal                 @map("vat_rate_percent") @db.Decimal(6, 2)
   subtotal            Decimal                 @default(0) @db.Decimal(14, 2)
@@ -980,6 +988,8 @@ model QuotationTestingCommissioningItem {
   id                  String  @id @default(uuid())
   quotationRevisionId String  @map("quotation_revision_id")
   description         String  @db.VarChar(200)
+  method              String? @db.Text
+  indications         String? @db.Text
   included            Boolean @default(true)
   sortOrder           Int     @default(0) @map("sort_order")
 
@@ -1200,6 +1210,7 @@ enum WorkOrderCostType {
 // quotation_revision_id — never duplicated onto this table, so there is
 // exactly one place pricing can ever drift from (§05 of the plan).
 model WorkOrder {
+  supplementaryQuotations Quotation[] @relation("SupplementaryQuotations")
   id                   String                @id @default(uuid())
   workOrderNumber      String                @unique @map("work_order_number") @db.VarChar(30)
   customerId           String                @map("customer_id")
@@ -1349,6 +1360,8 @@ model WorkOrderTask {
   id                  String              @id @default(uuid())
   workOrderId         String              @map("work_order_id")
   description         String              @db.VarChar(200)
+  method              String?             @db.Text
+  indications         String?             @db.Text
   sourceTestingItemId String?             @map("source_testing_item_id")
   sortOrder           Int                 @default(0) @map("sort_order")
   status              WorkOrderTaskStatus @default(PENDING)
@@ -1519,6 +1532,8 @@ model ServiceReport {
   // signoff_role/measurement_stage below), never a Postgres enum, so a new
   // report template is a seeded row, never a migration.
   reportTypeCode      String                   @map("report_type_code") @db.VarChar(40)
+  // Optional per-report description for the existing OTHER classification.
+  reportTypeOther     String?                  @map("report_type_other") @db.VarChar(120)
   sourceType          ServiceReportSourceType? @map("source_type")
   status              ServiceReportStatus      @default(PENDING_EXTRACTION)
   verificationBasis   ServiceReportVerificationBasis? @map("verification_basis")

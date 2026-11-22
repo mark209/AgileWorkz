@@ -36,6 +36,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const body = exception.getResponse();
       if (typeof body === "string") {
         message = body;
+        if (status === HttpStatus.TOO_MANY_REQUESTS) error = "Too Many Requests";
       } else if (typeof body === "object" && body !== null) {
         const b = body as Record<string, unknown>;
         message = (b.message as string | string[]) ?? exception.message;

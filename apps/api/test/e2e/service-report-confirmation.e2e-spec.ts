@@ -21,7 +21,7 @@ describe("Service Report Confirm (live)", () => {
   let fixtures: E2eFixtures;
 
   let technician: { user: { id: string }; authHeader: string };
-  let officeStaff: { user: { id: string }; authHeader: string };
+  let manager: { user: { id: string }; authHeader: string };
 
   async function loginHeader(email: string, password: string) {
     const res = await request(app.getHttpServer()).post("/auth/login").send({ email, password });
@@ -43,7 +43,7 @@ describe("Service Report Confirm (live)", () => {
       ["service_reports", "upload"],
       ["service_reports", "read_own"],
     ]);
-    officeStaff = await userWithPermissions("office", [
+    manager = await userWithPermissions("manager", [
       ["service_reports", "upload"],
       ["service_reports", "read"],
       ["service_reports", "verify"],
@@ -98,7 +98,7 @@ describe("Service Report Confirm (live)", () => {
         documentFileSize: 17,
         uploadedBy: technician.user.id,
         uploadedAt: new Date(),
-        verifiedBy: officeStaff.user.id,
+        verifiedBy: manager.user.id,
         verifiedAt: new Date(),
       },
     });
@@ -124,7 +124,7 @@ describe("Service Report Confirm (live)", () => {
             aiConfidence: r.aiConfidence ?? null,
             reviewStatus: r.reviewStatus,
             verifiedValue: r.verifiedValue,
-            verifiedBy: officeStaff.user.id,
+            verifiedBy: manager.user.id,
             verifiedAt: new Date(),
             ...(category === "measurement" ? { aiUnit: r.aiUnit ?? null, stage: r.stage ?? null, suggestedMeasurementTypeCode: r.suggestedMeasurementTypeCode ?? null } : {}),
           },
@@ -149,9 +149,9 @@ describe("Service Report Confirm (live)", () => {
       expect(canonical.status).toBe(403);
     });
 
-    it("allows an Office Staff holder of service_reports.confirm to preview and confirm", async () => {
+    it("allows a Manager holder of service_reports.confirm to preview final approval", async () => {
       const { report } = await seedVerifiedReport("rbac-office", { measurement: [{ fieldName: "x", aiValue: "1", reviewStatus: "CONFIRMED", verifiedValue: "1", suggestedMeasurementTypeCode: null }] });
-      const preview = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", officeStaff.authHeader);
+      const preview = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", manager.authHeader);
       expect(preview.status).toBe(200);
     });
   });
@@ -162,7 +162,7 @@ describe("Service Report Confirm (live)", () => {
         measurement: [{ fieldName: "Breaker Capacity", aiValue: "ISA", reviewStatus: "CONFIRMED", verifiedValue: "ISA", suggestedMeasurementTypeCode: null }],
       });
 
-      const res = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", officeStaff.authHeader);
+      const res = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", manager.authHeader);
       expect(res.status).toBe(200);
       expect(res.body.isConfirmable).toBe(true);
       expect(res.body.measurements[0].measurementTypeCode).toBe("OTHER_UNMAPPED");
@@ -177,10 +177,10 @@ describe("Service Report Confirm (live)", () => {
 
     it("reports not confirmable, and confirm itself refuses, for a report that isn't VERIFIED", async () => {
       const { report } = await seedVerifiedReport("not-verified", {}, { status: "PENDING_VERIFICATION" });
-      const preview = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", officeStaff.authHeader);
+      const preview = await request(app.getHttpServer()).get(`/service-reports/${report.id}/confirm/preview`).set("Authorization", manager.authHeader);
       expect(preview.body.isConfirmable).toBe(false);
 
-      const confirm = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const confirm = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect(confirm.status).toBe(400);
     });
 
@@ -188,7 +188,7 @@ describe("Service Report Confirm (live)", () => {
       const { report } = await seedVerifiedReport("needs-follow-up", {
         measurement: [{ fieldName: "x", aiValue: "1", reviewStatus: "NEEDS_FOLLOW_UP", verifiedValue: null }],
       });
-      const confirm = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const confirm = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect(confirm.status).toBe(400);
       const stillVerified = await prisma.serviceReport.findUnique({ where: { id: report.id } });
       expect(stillVerified!.status).toBe("VERIFIED");
@@ -211,14 +211,14 @@ describe("Service Report Confirm (live)", () => {
         signoff: [{ fieldName: "Technician Signature", aiValue: "John Arnold Candia", reviewStatus: "CONFIRMED", verifiedValue: "John Arnold Candia" }],
       });
 
-      const res = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const res = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect(res.status).toBe(201);
       expect(res.body.report.status).toBe("CONFIRMED");
       expect(res.body.createdCounts).toEqual({ technicians: 0, equipmentUnits: 1, problems: 1, measurements: 2, narrativeItems: 0, signoffs: 1 });
 
       const updated = await prisma.serviceReport.findUnique({ where: { id: report.id } });
       expect(updated!.status).toBe("CONFIRMED");
-      expect(updated!.confirmedBy).toBe(officeStaff.user.id);
+      expect(updated!.confirmedBy).toBe(manager.user.id);
       expect(updated!.confirmedAt).not.toBeNull();
       expect(updated!.serviceDate?.toISOString().slice(0, 10)).toBe("2026-08-27"); // CORRECTED value, not the original AI value
       expect(updated!.contactName).toBeNull(); // CONFIRMED_BLANK
@@ -251,7 +251,7 @@ describe("Service Report Confirm (live)", () => {
 
       const audit = await prisma.auditLog.findFirst({ where: { action: "service_report_confirmed", entityId: report.id }, orderBy: { createdAt: "desc" } });
       expect(audit).not.toBeNull();
-      expect(audit!.actorUserId).toBe(officeStaff.user.id);
+      expect(audit!.actorUserId).toBe(manager.user.id);
     });
 
     it("never creates an empty equipment unit for a group that is entirely blank", async () => {
@@ -259,7 +259,7 @@ describe("Service Report Confirm (live)", () => {
         equipmentUnit: [{ fieldName: "Unit Tag", rowIndex: 0, aiValue: null, reviewStatus: "CONFIRMED_BLANK", verifiedValue: null }],
         measurement: [{ fieldName: "x", aiValue: "1", reviewStatus: "CONFIRMED", verifiedValue: "1", suggestedMeasurementTypeCode: null }],
       });
-      const res = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const res = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect(res.status).toBe(201);
       const equipmentUnits = await prisma.serviceReportEquipmentUnit.findMany({ where: { serviceReportId: report.id } });
       expect(equipmentUnits).toEqual([]);
@@ -272,10 +272,10 @@ describe("Service Report Confirm (live)", () => {
         measurement: [{ fieldName: "x", aiValue: "1", reviewStatus: "CONFIRMED", verifiedValue: "1", suggestedMeasurementTypeCode: null }],
       });
 
-      const first = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const first = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect(first.status).toBe(201);
 
-      const second = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      const second = await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
       expect([400, 409]).toContain(second.status);
 
       const measurements = await prisma.serviceReportMeasurement.findMany({ where: { serviceReportId: report.id } });
@@ -288,8 +288,8 @@ describe("Service Report Confirm (live)", () => {
       });
 
       const [a, b] = await Promise.all([
-        request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader),
-        request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader),
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader),
+        request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader),
       ]);
 
       const statuses = [a.status, b.status].sort();
@@ -311,12 +311,12 @@ describe("Service Report Confirm (live)", () => {
         signoff: [{ fieldName: "Customer Signature", aiValue: "Jane Doe", reviewStatus: "CONFIRMED", verifiedValue: "Jane Doe" }],
       });
 
-      const before = await request(app.getHttpServer()).get(`/service-reports/${report.id}/canonical`).set("Authorization", officeStaff.authHeader);
+      const before = await request(app.getHttpServer()).get(`/service-reports/${report.id}/canonical`).set("Authorization", manager.authHeader);
       expect(before.status).toBe(400);
 
-      await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", officeStaff.authHeader);
+      await request(app.getHttpServer()).post(`/service-reports/${report.id}/confirm`).set("Authorization", manager.authHeader);
 
-      const after = await request(app.getHttpServer()).get(`/service-reports/${report.id}/canonical`).set("Authorization", officeStaff.authHeader);
+      const after = await request(app.getHttpServer()).get(`/service-reports/${report.id}/canonical`).set("Authorization", manager.authHeader);
       expect(after.status).toBe(200);
       expect(after.body.report.status).toBe("CONFIRMED");
       expect(after.body.measurements).toHaveLength(1);

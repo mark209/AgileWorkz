@@ -5,13 +5,11 @@ import { useAuth } from "@/lib/auth-context";
 import {
   createLineItem,
   listQuotationLineCatalog,
-  TAX_TREATMENT_LABEL,
   updateLineItem,
   type Asset,
   type QuotationLineItem,
   type QuotationLineCatalogItem,
   type QuotationSection,
-  type TaxTreatment,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -47,7 +45,6 @@ export function LineItemDialog({
   revisionId,
   sections,
   assets,
-  defaultTaxTreatment,
   editingItem,
   defaultSectionId,
   onSaved,
@@ -58,7 +55,6 @@ export function LineItemDialog({
   revisionId: string;
   sections: QuotationSection[];
   assets: Asset[];
-  defaultTaxTreatment: TaxTreatment;
   editingItem: QuotationLineItem | null;
   defaultSectionId?: string | null;
   onSaved: () => void;
@@ -80,7 +76,6 @@ export function LineItemDialog({
     setModel(item.model ?? "");
     setUnit(item.unit);
     setUnitPriceBeforeVat(item.unitPriceBeforeVat);
-    setTaxTreatment(item.taxTreatment);
     setCostingMode("direct");
   }
 
@@ -94,7 +89,6 @@ export function LineItemDialog({
   const [unitCostExpense, setUnitCostExpense] = useState(editingItem?.unitCostExpense ?? "");
   const [markupPercent, setMarkupPercent] = useState(editingItem?.markupPercent ?? "");
   const [unitPriceBeforeVat, setUnitPriceBeforeVat] = useState(editingItem?.unitPriceBeforeVat ?? "");
-  const [taxTreatment, setTaxTreatment] = useState<TaxTreatment>(editingItem?.taxTreatment ?? defaultTaxTreatment);
   const [sectionId, setSectionId] = useState(editingItem?.sectionId ?? defaultSectionId ?? "");
   const [assetId, setAssetId] = useState(editingItem?.assetId ?? "");
   const [showBreakdown, setShowBreakdown] = useState(!!(editingItem?.materialAmount || editingItem?.laborAmount));
@@ -127,15 +121,14 @@ export function LineItemDialog({
     try {
       const body = {
         description,
-        specification: specification || undefined,
-        brand: brand || undefined,
-        model: model || undefined,
+        specification: specification || (isEdit ? "" : undefined),
+        brand: brand || (isEdit ? "" : undefined),
+        model: model || (isEdit ? "" : undefined),
         quantity: Number(quantity),
         unit,
         unitCostExpense: costingMode === "cost_markup" ? Number(unitCostExpense) : isEdit ? null : undefined,
         markupPercent: costingMode === "cost_markup" ? Number(markupPercent) : isEdit ? null : undefined,
         unitPriceBeforeVat: costingMode === "direct" ? Number(unitPriceBeforeVat) : undefined,
-        taxTreatment,
         materialAmount: showBreakdown && materialAmount !== "" ? Number(materialAmount) : isEdit ? null : undefined,
         laborAmount: showBreakdown && laborAmount !== "" ? Number(laborAmount) : isEdit ? null : undefined,
         sectionId: sectionId || (isEdit ? null : undefined),
@@ -192,7 +185,7 @@ export function LineItemDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="li-qty">Quantity</Label>
                 <Input id="li-qty" type="number" min="0.001" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} required aria-invalid={!!fieldErrors?.quantity} aria-describedby={fieldErrors?.quantity ? "li-qty-error" : undefined} />
@@ -202,21 +195,6 @@ export function LineItemDialog({
                 <Label htmlFor="li-unit">Unit</Label>
                 <SuggestedInput id="li-unit" value={unit} onChange={(e) => setUnit(e.target.value)} suggestions={history.unit ?? []} placeholder="pcs, lot, set, m" required aria-invalid={!!fieldErrors?.unit} aria-describedby={fieldErrors?.unit ? "li-unit-error" : undefined} />
                 {fieldErrors?.unit && <p id="li-unit-error" className="text-xs text-destructive">{fieldErrors.unit}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="li-tax">Tax treatment</Label>
-                <Select id="li-tax" value={taxTreatment} onChange={(e) => setTaxTreatment(e.target.value as TaxTreatment)}>
-                  {Object.entries(TAX_TREATMENT_LABEL).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {taxTreatment === "VAT_INCLUSIVE"
-                    ? "Enter the unit selling price before VAT. The calculated customer total includes VAT."
-                    : "No VAT is added or extracted. The entered unit selling price is the final price."}
-                </p>
               </div>
             </div>
 

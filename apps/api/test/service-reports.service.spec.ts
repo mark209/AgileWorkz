@@ -109,6 +109,27 @@ function buildHarness(overrides: {
 }
 
 describe("ServiceReportsService.upload", () => {
+  it("stores and exposes a trimmed custom report type without creating a global type", async () => {
+    const create = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...data, id: "custom-sr" }));
+    const { service, prisma } = buildHarness({ prisma: { $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn({ serviceReport: { create } })) } });
+    const dto = { ...baseDto, reportTypeCode: "OTHER", reportTypeOther: "  Refrigerant leak investigation  " };
+    const result = await service.upload("cust-1", makeFile(), dto, actor);
+    expect(create).toHaveBeenCalledWith({ data: expect.objectContaining({ reportTypeCode: "OTHER", reportTypeOther: "Refrigerant leak investigation" }) });
+    expect(result.reportTypeOther).toBe("Refrigerant leak investigation");
+    expect(prisma.serviceReportType.findUnique).toHaveBeenCalledWith({ where: { code: "OTHER" }, select: { status: true } });
+  });
+
+  it.each([
+    { reportTypeCode: "OTHER", reportTypeOther: "   " },
+    { reportTypeCode: "OTHER", reportTypeOther: "x".repeat(121) },
+    { reportTypeCode: "MAINTENANCE_CLEANING", reportTypeOther: "Custom label" },
+  ])("rejects invalid or contradictory custom report type input %j before storage", async (reportType) => {
+    const { service, storage } = buildHarness();
+    const dto = { ...baseDto, ...reportType };
+    await expect(service.upload("cust-1", makeFile(), dto, actor)).rejects.toThrow(BadRequestException);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
   it("rejects an upload with no file", async () => {
     const { service, storage } = buildHarness();
     await expect(service.upload("cust-1", undefined, baseDto, actor)).rejects.toThrow(BadRequestException);
@@ -601,6 +622,24 @@ describe("ServiceReportsService.upload — Idempotency-Key validation", () => {
 });
 
 describe("ServiceReportsService.upload — Idempotency-Key branches", () => {
+  it.each(["Changed investigation", ""])("does not silently discard changed custom report type text on a completed-key replay: %j", async (changedLabel) => {
+    const idemKey = { findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "COMPLETED", serviceReportId: "sr-existing" }) };
+    const existing = { id: "sr-existing", reportTypeCode: "OTHER", reportTypeOther: "Original investigation" };
+    const { service, storage } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey, serviceReport: { findUnique: jest.fn().mockResolvedValue(existing) } } });
+    const dto = { ...baseDto, reportTypeCode: "OTHER", ...(changedLabel ? { reportTypeOther: changedLabel } : {}) };
+    await expect(service.upload("cust-1", makeFile(), dto, actor, "completed-custom-key")).rejects.toThrow(ConflictException);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("replays a completed custom upload when only surrounding whitespace differs", async () => {
+    const idemKey = { findUnique: jest.fn().mockResolvedValue({ id: "claim-1", status: "COMPLETED", serviceReportId: "sr-existing" }) };
+    const existing = { id: "sr-existing", reportTypeCode: "OTHER", reportTypeOther: "Original investigation" };
+    const { service, storage } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey, serviceReport: { findUnique: jest.fn().mockResolvedValue(existing) } } });
+    const dto = { ...baseDto, reportTypeCode: "OTHER", reportTypeOther: "  Original investigation  " };
+    await expect(service.upload("cust-1", makeFile(), dto, actor, "completed-custom-key")).resolves.toEqual(expect.objectContaining({ id: "sr-existing", reportTypeOther: "Original investigation" }));
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
   it("never touches serviceReportUploadIdempotencyKey when no key is supplied", async () => {
     const idemKey = { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() };
     const { service } = buildHarness({ prisma: { serviceReportUploadIdempotencyKey: idemKey } });
@@ -633,7 +672,7 @@ describe("ServiceReportsService.upload — Idempotency-Key branches", () => {
       update: jest.fn(),
       updateMany: jest.fn(),
     };
-    const existingReport = { id: "sr-existing", documentFileKey: "k", documentMimeType: "image/jpeg", uploadedBy: actor.userId };
+    const existingReport = { id: "sr-existing", documentFileKey: "k", documentMimeType: "image/jpeg", uploadedBy: actor.userId, reportTypeCode: baseDto.reportTypeCode, reportTypeOther: null };
     const { service, storage, extractionQueue } = buildHarness({
       prisma: { serviceReportUploadIdempotencyKey: idemKey, serviceReport: { findUnique: jest.fn().mockResolvedValue(existingReport) } },
     });
@@ -717,7 +756,7 @@ describe("ServiceReportsService.upload — Idempotency-Key branches", () => {
     const { service, storage } = buildHarness({
       prisma: {
         serviceReportUploadIdempotencyKey: idemKey,
-        serviceReport: { findUnique: jest.fn().mockResolvedValue({ id: "sr-winner", documentFileKey: "k", documentMimeType: "image/jpeg" }) },
+        serviceReport: { findUnique: jest.fn().mockResolvedValue({ id: "sr-winner", documentFileKey: "k", documentMimeType: "image/jpeg", reportTypeCode: baseDto.reportTypeCode, reportTypeOther: null }) },
       },
     });
 

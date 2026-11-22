@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
 import JobDetailPage from "./page";
@@ -17,10 +18,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock, push: pushMock }),
 }));
 
-const { getWorkOrderMock } = vi.hoisted(() => ({ getWorkOrderMock: vi.fn() }));
+const { getWorkOrderMock, fieldCompleteMock } = vi.hoisted(() => ({ getWorkOrderMock: vi.fn(), fieldCompleteMock: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, getWorkOrder: getWorkOrderMock };
+  return { ...actual, getWorkOrder: getWorkOrderMock, completeFieldWorkOrder: fieldCompleteMock };
 });
 
 const { getCachedAssignedWorkOrderMock, saveAssignedWorkOrderMock } = vi.hoisted(() => ({
@@ -100,6 +101,55 @@ describe("JobDetailPage", () => {
     await screen.findByRole("heading", { name: "WO-2026-08-00001" });
     expect(screen.getByTestId("upload-form")).toBeInTheDocument();
     expect(screen.queryByText(/available once the job is started/i)).not.toBeInTheDocument();
+  });
+
+  it("confirms field work completion and displays the saved timestamp after reloading", async () => {
+    const completed = job({ status: "IN_PROGRESS", fieldCompletedAt: "2026-11-21T08:00:00.000Z" } as Partial<WorkOrder>);
+    getWorkOrderMock.mockResolvedValueOnce(job({ status: "IN_PROGRESS" })).mockResolvedValue(completed);
+    fieldCompleteMock.mockResolvedValue(completed);
+    const user = userEvent.setup();
+    render(<JobDetailPage />);
+    await user.click(await screen.findByRole("button", { name: "Mark field work done" }));
+    expect(fieldCompleteMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm field work done" }));
+    expect(fieldCompleteMock).toHaveBeenCalledWith("token-1", "wo1");
+    expect(await screen.findByText(/Field work marked done:/)).toHaveTextContent("2026");
+    expect(screen.queryByRole("button", { name: "Mark field work done" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Manager.*still completes and closes/)).toBeInTheDocument();
+  });
+
+  it("allows retry after a field completion error", async () => {
+    getWorkOrderMock.mockResolvedValue(job({ status: "IN_PROGRESS" }));
+    fieldCompleteMock.mockRejectedValueOnce(new ApiError(409, "Job changed. Try again.")).mockResolvedValue({ fieldCompletedAt: "2026-11-21T08:00:00.000Z" });
+    const user = userEvent.setup();
+    render(<JobDetailPage />);
+    await user.click(await screen.findByRole("button", { name: "Mark field work done" }));
+    await user.click(screen.getByRole("button", { name: "Confirm field work done" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Job changed. Try again.");
+    await user.click(screen.getByRole("button", { name: "Confirm field work done" }));
+    expect(fieldCompleteMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not offer field completion without its exact grant", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "u1" }, accessToken: "token-1", hasPermission: (_module: string, action: string) => action !== "field_complete_own" });
+    getWorkOrderMock.mockResolvedValue(job({ status: "IN_PROGRESS" }));
+    render(<JobDetailPage />);
+    await screen.findByRole("heading", { name: "WO-2026-08-00001" });
+    expect(screen.queryByRole("button", { name: "Mark field work done" })).not.toBeInTheDocument();
+  });
+
+  it.each(["DRAFT", "SCHEDULED", "COMPLETED", "CLOSED", "CANCELLED"] as const)("does not offer field completion for %s", async (status) => {
+    getWorkOrderMock.mockResolvedValue(job({ status }));
+    render(<JobDetailPage />);
+    await screen.findByRole("heading", { name: "WO-2026-08-00001" });
+    expect(screen.queryByRole("button", { name: "Mark field work done" })).not.toBeInTheDocument();
+  });
+
+  it("shows persisted field completion without offering it again", async () => {
+    getWorkOrderMock.mockResolvedValue(job({ status: "IN_PROGRESS", fieldCompletedAt: "2026-11-21T08:00:00.000Z" } as Partial<WorkOrder>));
+    render(<JobDetailPage />);
+    expect(await screen.findByText(/Field work marked done:/)).toHaveTextContent("2026");
+    expect(screen.queryByRole("button", { name: "Mark field work done" })).not.toBeInTheDocument();
   });
 
   it("shows a placeholder instead of the upload form while still SCHEDULED", async () => {

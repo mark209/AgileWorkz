@@ -5,11 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getWorkOrder, type WorkOrder } from "@/lib/api";
 import { ApiError } from "@/lib/api-client";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { StatusBadge } from "@/components/status-badge";
 import { StartJobButton } from "@/components/start-job-button";
+import { FieldCompleteButton } from "@/components/field-complete-button";
 import { ServiceReportUploadForm } from "@/components/service-report-upload-form";
 import { getCachedAssignedWorkOrder, saveAssignedWorkOrder } from "@/lib/offline-store";
-import { colors, dangerText, page, pageHeader, heading, secondaryButton, subheading } from "@/lib/styles";
+import { card, colors, dangerText, page, pageHeader, heading, secondaryButton, sectionHeading, subheading } from "@/lib/styles";
 
 /**
  * Phase 4 Operations Frontend — a Technician's own Work Order detail.
@@ -83,7 +85,7 @@ export default function JobDetailPage() {
 
       {workOrder && (
         <>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <h1 style={heading}>{workOrder.workOrderNumber}</h1>
             <StatusBadge status={workOrder.status} />
           </div>
@@ -93,17 +95,18 @@ export default function JobDetailPage() {
 
           {offlineSavedAt !== null && (
             <p role="status" style={{ ...subheading, color: colors.textMuted }}>
-              Offline copy — last refreshed {new Date(offlineSavedAt).toLocaleString()}. Job changes require a connection.
+              Offline copy — last refreshed {formatDateTime(offlineSavedAt)}. Job changes require a connection.
             </p>
           )}
 
-          <section style={{ marginTop: 20 }}>
+          <section style={{ ...card, marginTop: 20 }}>
+            <h2 style={sectionHeading}>Job details</h2>
             <p style={{ color: colors.textMuted, fontSize: 14 }}>Service location: {workOrder.site.label}</p>
             {workOrder.scheduledDate && (
-              <p style={{ color: colors.textMuted, fontSize: 14 }}>Scheduled: {new Date(workOrder.scheduledDate).toLocaleDateString()}</p>
+              <p style={{ color: colors.textMuted, fontSize: 14 }}>Scheduled: {formatDate(workOrder.scheduledDate)}</p>
             )}
             {workOrder.startedAt && (
-              <p style={{ color: colors.textMuted, fontSize: 14 }}>Started: {new Date(workOrder.startedAt).toLocaleString()}</p>
+              <p style={{ color: colors.textMuted, fontSize: 14 }}>Started: {formatDateTime(workOrder.startedAt)}</p>
             )}
             {workOrder.description && <p style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{workOrder.description}</p>}
             {workOrder.standaloneReason && (
@@ -111,12 +114,23 @@ export default function JobDetailPage() {
             )}
           </section>
 
-          <section style={{ marginTop: 24 }}>
+          {(workOrder.tasks?.length ?? 0) > 0 && <section style={card}>
+            <h2 style={sectionHeading}>Scope &amp; work instructions</h2>
+            <ol style={{ paddingLeft: 22 }}>{workOrder.tasks?.map((task) => <li key={task.id} style={{ marginBottom: 16 }}>
+              <p style={{ fontWeight: 600, whiteSpace: "pre-wrap" }}>{task.description}</p>
+              {task.method && <p style={{ whiteSpace: "pre-wrap" }}>{task.method}</p>}
+              {task.indications && <p style={{ color: colors.textMuted, whiteSpace: "pre-wrap" }}>Indications: {task.indications}</p>}
+            </li>)}</ol>
+          </section>}
+
+          <section style={card}>
+            <h2 style={sectionHeading}>Job actions</h2>
             <StartJobButton workOrder={workOrder} onStarted={load} />
+            <FieldCompleteButton workOrder={workOrder} onCompleted={load} />
             {workOrder.status === "DRAFT" && <p style={subheading}>This Work Order is still Draft. Ask the responsible team to move it to Scheduled before starting.</p>}
           </section>
 
-          <section style={{ marginTop: 28, borderTop: `1px solid ${colors.border}`, paddingTop: 20 }}>
+          <section style={{ ...card, marginTop: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>Upload Service Report</h2>
             {["IN_PROGRESS", "COMPLETED"].includes(workOrder.status) && hasPermission("service_reports", "upload") ? (
               <ServiceReportUploadForm workOrder={workOrder} />

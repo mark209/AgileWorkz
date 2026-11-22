@@ -63,7 +63,10 @@ export class ServiceReportConfirmationService {
   }
 
   async getCanonicalView(serviceReportId: string) {
-    const report = await this.findReportOrThrow(serviceReportId);
+    const report = await this.prisma.serviceReport.findUnique({ where: { id: serviceReportId }, include: {
+      verifiedByUser: { select: { fullName: true } }, confirmedByUser: { select: { fullName: true } }, lockedByUser: { select: { fullName: true } },
+    } });
+    if (!report) throw new NotFoundException("Service Report not found");
     if (report.status !== ServiceReportStatus.CONFIRMED && report.status !== ServiceReportStatus.LOCKED) {
       throw new BadRequestException(`Service Report is ${report.status}, not CONFIRMED or LOCKED — no canonical data exists yet`);
     }
@@ -75,7 +78,7 @@ export class ServiceReportConfirmationService {
       this.prisma.serviceReportNarrativeItem.findMany({ where: { serviceReportId }, orderBy: { sortOrder: "asc" } }),
       this.prisma.serviceReportSignoff.findMany({ where: { serviceReportId }, orderBy: { sortOrder: "asc" } }),
     ]);
-    return { report, technicians, equipmentUnits, problems, measurements, narrativeItems, signoffs };
+    return { report: { ...report, verifiedByName: report.verifiedByUser?.fullName ?? null, confirmedByName: report.confirmedByUser?.fullName ?? null, lockedByName: report.lockedByUser?.fullName ?? null }, technicians, equipmentUnits, problems, measurements, narrativeItems, signoffs };
   }
 
   /**
@@ -103,7 +106,26 @@ export class ServiceReportConfirmationService {
     return this.prisma.$transaction(async (tx) => {
       const report = await tx.serviceReport.findUnique({ where: { id: serviceReportId } });
       if (report?.verificationBasis === ServiceReportVerificationBasis.DOCUMENT_ONLY) {
-        throw new BadRequestException("Document-only approved reports have no extracted fields to confirm");
+        if (report.status !== ServiceReportStatus.VERIFIED) {
+          throw new BadRequestException("Only a VERIFIED report can receive final approval");
+        }
+        const guarded = await tx.serviceReport.updateMany({
+          where: { id: serviceReportId, status: ServiceReportStatus.VERIFIED },
+          data: { status: ServiceReportStatus.CONFIRMED, confirmedBy: actor.userId, confirmedAt: new Date() },
+        });
+        if (guarded.count !== 1) throw new ConflictException("This Service Report was already approved");
+        await this.audit.write({
+          actorType: ActorType.USER, actorUserId: actor.userId,
+          action: "service_report_confirmed", entityType: "ServiceReport", entityId: serviceReportId,
+          beforeData: { status: ServiceReportStatus.VERIFIED },
+          afterData: { status: ServiceReportStatus.CONFIRMED, verificationBasis: ServiceReportVerificationBasis.DOCUMENT_ONLY },
+          ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+        }, tx);
+        return {
+          report: await tx.serviceReport.findUniqueOrThrow({ where: { id: serviceReportId } }),
+          createdCounts: { technicians: 0, equipmentUnits: 0, problems: 0, measurements: 0, narrativeItems: 0, signoffs: 0 },
+          skippedCount: 0, warnings: [],
+        };
       }
       // Steps 1-4: re-read, validate, resolve deterministic mappings.
       const plan = await this.planBuilder.buildPlan(tx, serviceReportId);

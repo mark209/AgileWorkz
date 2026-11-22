@@ -26,6 +26,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatReportType } from "@/lib/format";
+import { ApprovalStages } from "@/components/service-reports/approval-stages";
 import { DocumentViewer } from "@/components/service-reports/document-viewer";
 import { FieldSection } from "@/components/service-reports/field-section";
 import { VerificationToolbar } from "@/components/service-reports/verification-toolbar";
@@ -46,7 +47,9 @@ export default function ServiceReportVerifyPage() {
 
   const canVerify = hasPermission("service_reports", "verify");
   const canConfirm = hasPermission("service_reports", "confirm");
+  const canTechnicalApprove = hasPermission("service_reports", "technical_approve");
   const canDocumentApprove = hasPermission("service_reports", "document_approve");
+  const pageAction = canDocumentApprove ? "Verify" : "Review";
 
   const load = useCallback(async () => {
     if (!accessToken || !canVerify) return;
@@ -146,10 +149,10 @@ export default function ServiceReportVerifyPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-6 py-6">
-      <Breadcrumbs items={[{ label: "Service Reports", href: "/service-reports" }, { label: "Verify" }]} />
-      <PageHeader
-        title={view ? `Verify ${formatReportType(view.report.reportTypeCode)} Report` : "Verify Service Report"}
+    <div className="mx-auto flex max-w-[1600px] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
+      <Breadcrumbs items={[{ label: "Service Reports", href: "/service-reports" }, { label: pageAction }]} />
+      <PageHeader className="mb-0"
+        title={view ? `${pageAction} ${formatReportType(view.report.reportTypeCode, view.report.reportTypeOther)} Report` : `${pageAction} Service Report`}
         description={view ? `Document: ${view.report.documentFileName}` : undefined}
         actions={view ? <StatusBadge status={view.report.status} /> : undefined}
       />
@@ -163,6 +166,21 @@ export default function ServiceReportVerifyPage() {
 
       {view && (
         <>
+          <ApprovalStages status={view.report.status} />
+          <nav aria-label="Verification workspace" className="flex flex-wrap gap-2 lg:hidden">
+            <a href="#report-document" className="rounded-md border bg-card px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">View document</a>
+            <a href="#report-review" className="rounded-md border bg-card px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Review &amp; approval ↓</a>
+          </nav>
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <section id="report-document" aria-label="Original uploaded document" className="min-w-0 scroll-mt-6 rounded-xl border bg-card p-4 shadow-sm lg:sticky lg:top-6 sm:p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+                <div className="min-w-0 flex-1"><h2 className="text-base font-semibold">Original uploaded document</h2><p className="mt-1 break-all text-xs text-muted-foreground">{view.report.documentFileName}</p></div>
+                <Button type="button" variant="outline" size="sm" onClick={load}>Refresh document link</Button>
+              </div>
+              <DocumentViewer url={view.documentUrl} mimeType={view.report.documentMimeType} fileName={view.report.documentFileName} />
+            </section>
+            <section id="report-review" aria-label="Report review and approval" className="min-w-0 scroll-mt-6 space-y-4">
+              <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Review workspace</p><h2 className="mt-1 text-lg font-semibold">{documentOnly ? "Document review & approval" : "Field review & approval"}</h2></div>
           {!documentOnly && <VerificationToolbar
             progress={progress}
             bulkEligibleCount={bulkEligibleCount}
@@ -170,12 +188,13 @@ export default function ServiceReportVerifyPage() {
             onBulkConfirm={handleBulkConfirm}
             onComplete={handleComplete}
             disabled={disabled}
+            canApprove={canTechnicalApprove}
           />}
 
           {documentOnly && (view.report.status === "PENDING_VERIFICATION" || view.report.status === "EXTRACTION_FAILED") && (
             <div className="rounded-md border border-input bg-card p-4">
               <h2 className="text-base font-semibold">Original document review</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Review the uploaded document before approving it. Approval verifies the document only; no report fields are extracted or confirmed.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Supervisor review is the first approval stage. Manager or Super Admin final approval follows. No report fields are extracted from a document-only report.</p>
               {canDocumentApprove ? (
                 <div className="mt-4 flex flex-col gap-3">
                   <label className="flex items-start gap-2 text-sm">
@@ -186,13 +205,14 @@ export default function ServiceReportVerifyPage() {
                     {approvingDocument ? "Approving…" : "Approve document"}
                   </Button>
                 </div>
-              ) : <p className="mt-3 text-sm text-muted-foreground">Super Admin approval is required.</p>}
+              ) : <p className="mt-3 text-sm text-muted-foreground">Technical Supervisor or Supervisor review is required.</p>}
             </div>
           )}
 
           {documentOnly && view.report.status === "VERIFIED" && (
             <div className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              Document approved. No structured report fields were extracted or confirmed.
+              Supervisor review complete. Awaiting Manager or Super Admin final approval.
+              {canConfirm && <Button type="button" className="mt-3 w-full sm:w-auto" onClick={() => { handleConfirm().catch((e) => setError(e instanceof Error ? e.message : "Final approval failed.")); }}>Final approval</Button>}
             </div>
           )}
 
@@ -216,20 +236,14 @@ export default function ServiceReportVerifyPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-2rem)]">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold">Original uploaded document</h2>
-                <Button type="button" variant="outline" size="sm" onClick={load}>Refresh document link</Button>
-              </div>
-              <DocumentViewer url={view.documentUrl} mimeType={view.report.documentMimeType} fileName={view.report.documentFileName} />
-            </div>
-
             {!documentOnly && <div className="flex flex-col gap-4">
               <div>
                 <h2 className="text-base font-semibold">Extracted fields for review</h2>
                 <p className="text-sm text-muted-foreground">AI values are provisional until a reviewer confirms or corrects them against the original document.</p>
               </div>
+              <nav aria-label="Review sections" className="flex flex-wrap gap-2">
+                {STAGING_CATEGORIES.filter(category => view.fields[category].length > 0).map(category => <a key={category} href={`#review-${category}`} className="rounded-md border bg-card px-3 py-2 text-xs font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{STAGING_CATEGORY_LABELS[category]} · {view.fields[category].length}</a>)}
+              </nav>
               {STAGING_CATEGORIES.map((category) => (
                 <FieldSection
                   key={category}
@@ -241,6 +255,7 @@ export default function ServiceReportVerifyPage() {
                 />
               ))}
             </div>}
+            </section>
           </div>
         </>
       )}

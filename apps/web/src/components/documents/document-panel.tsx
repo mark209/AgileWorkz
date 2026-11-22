@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
+import { formatDate } from "@/lib/format";
 
 // Approved V1 upload policy (matches apps/api/src/modules/documents/documents.service.ts
 // exactly) — enforced here for UX only; the backend remains authoritative.
@@ -201,7 +202,7 @@ export function DocumentPanel({ relatedType, relatedId }: { relatedType: Documen
                 <p className="truncate text-sm font-medium">{doc.fileName}</p>
                 <p className="text-xs text-muted-foreground">
                   {DOCUMENT_TYPE_LABEL[doc.documentType]} · {formatFileSize(doc.fileSize)} ·{" "}
-                  {new Date(doc.uploadedAt).toLocaleDateString()}
+                  {formatDate(doc.uploadedAt)}
                 </p>
               </div>
               <Button variant="outline" size="sm" onClick={() => handleOpen(doc)}>

@@ -18,18 +18,19 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
 // (see revision-editor.tsx), not aggregated here.
 export function RevisionSummaryCard({ revision }: { revision: QuotationRevision }) {
   const hasDiscount = Number(revision.discountAmount) > 0;
+  const vatExempt = revision.defaultTaxTreatment === "VAT_EXEMPT" && Number(revision.vatAmount) === 0;
   return (
     <Card className="shadow-none">
       <CardHeader className="p-4 pb-2">
         <CardTitle className="text-base">Quotation summary</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0">
-        <Row label="Subtotal" value={formatMoney(revision.subtotal)} />
+        <Row label={vatExempt ? "Subtotal (VAT exempt)" : "Subtotal (includes VAT)"} value={formatMoney(revision.subtotal)} />
         {hasDiscount && (
           <Row label={`Discount (${formatPercent(revision.discountPercent)})`} value={`− ${formatMoney(revision.discountAmount)}`} />
         )}
-        <Row label="Net of VAT" value={formatMoney(revision.netAmount)} />
-        <Row label={`VAT (${formatPercent(revision.vatRatePercent)})`} value={formatMoney(revision.vatAmount)} />
+        <Row label={vatExempt ? "Net amount" : "Net of VAT"} value={formatMoney(revision.netAmount)} />
+        <Row label={vatExempt ? "VAT (Exempt)" : `VAT (${formatPercent(revision.vatRatePercent)})`} value={formatMoney(revision.vatAmount)} />
         <div className="mt-1 border-t pt-1.5">
           <Row label="Total" value={formatMoney(revision.totalAmount)} emphasize />
         </div>

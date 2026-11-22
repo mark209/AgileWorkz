@@ -76,6 +76,7 @@ function toPublicServiceReport(report: ServiceReport): PublicServiceReport {
     siteId: report.siteId,
     workOrderId: report.workOrderId,
     reportTypeCode: report.reportTypeCode,
+    reportTypeOther: report.reportTypeOther,
     sourceType: report.sourceType,
     status: report.status,
     verificationBasis: report.verificationBasis,
@@ -143,6 +144,7 @@ export class ServiceReportsService {
     actor: ActorContext,
     idempotencyKey?: string,
   ): Promise<PublicServiceReport> {
+    dto = { ...dto, reportTypeOther: this.normalizeReportTypeOther(dto) ?? undefined };
     if (!idempotencyKey) {
       return this.performUpload(customerId, file, dto, actor);
     }
@@ -155,6 +157,9 @@ export class ServiceReportsService {
     const claim = await this.claimIdempotencyKey(actor.userId, idempotencyKey);
     if (claim.mode === "return-existing") {
       const existing = await this.findByIdOrThrow(claim.serviceReportId);
+      if (existing.reportTypeCode !== dto.reportTypeCode || (existing.reportTypeOther ?? null) !== (dto.reportTypeOther ?? null)) {
+        throw new ConflictException("This upload key belongs to a different report type. Start a new upload for the changed report type.");
+      }
       return toPublicServiceReport(existing);
     }
     if (claim.mode === "conflict") {
@@ -183,6 +188,15 @@ export class ServiceReportsService {
         .catch(() => undefined);
       throw e;
     }
+  }
+
+  private normalizeReportTypeOther(dto: UploadServiceReportDto): string | null {
+    if (dto.reportTypeOther == null) return null;
+    if (dto.reportTypeCode !== "OTHER") throw new BadRequestException("A custom report type is only allowed when reportTypeCode is OTHER");
+    if (typeof dto.reportTypeOther !== "string") throw new BadRequestException("Custom report type must be text");
+    const label = dto.reportTypeOther.trim();
+    if (label.length < 1 || label.length > 120) throw new BadRequestException("Custom report type must be 1 to 120 characters");
+    return label;
   }
 
   /**
@@ -325,6 +339,7 @@ export class ServiceReportsService {
             siteId: dto.siteId,
             workOrderId,
             reportTypeCode: dto.reportTypeCode,
+            reportTypeOther: dto.reportTypeOther ?? null,
             sourceType: dto.sourceType ?? (workOrderId ? ServiceReportSourceType.WORK_ORDER_LINKED : null),
             status: extractionEnabled ? ServiceReportStatus.PENDING_EXTRACTION : ServiceReportStatus.PENDING_VERIFICATION,
             verificationBasis: extractionEnabled
@@ -359,6 +374,7 @@ export class ServiceReportsService {
       afterData: {
         serviceReportNumber: report.serviceReportNumber,
         reportTypeCode: report.reportTypeCode,
+        reportTypeOther: report.reportTypeOther,
         customerId: report.customerId,
         siteId: report.siteId,
         workOrderId: report.workOrderId,
@@ -467,7 +483,7 @@ export class ServiceReportsService {
   async listByStatus(statuses: ServiceReportStatus[], actor?: ActorContext): Promise<PublicServiceReport[]> {
     const scope = actor ? await this.access.reportFilter(actor.userId) : {};
     const reports = await this.prisma.serviceReport.findMany({
-      where: { status: { in: statuses }, ...scope },
+      where: { ...(statuses.length ? { status: { in: statuses } } : {}), ...scope },
       orderBy: { uploadedAt: "asc" },
     });
     return reports.map(toPublicServiceReport);

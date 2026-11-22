@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { GENERAL_CLEANING_SCOPE } from "./cleaning-scope-template";
 import { ActorType } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -14,6 +15,25 @@ export class QuotationTestingCommissioningItemsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  async applyCleaningScope(revisionId: string, actor: ActorContext) {
+    return this.prisma.$transaction(async (tx) => {
+      const revision = await tx.quotationRevision.findUnique({ where: { id: revisionId } });
+      if (!revision) throw new NotFoundException("Quotation revision not found");
+      assertRevisionEditable(revision);
+      // Serialize template application with other applications and lifecycle
+      // transitions. Existing scope rows are never overwritten or duplicated.
+      const guarded = await tx.quotationRevision.updateMany({ where: { id: revisionId, status: "DRAFT" }, data: { updatedAt: new Date() } });
+      if (!guarded.count) throw new ConflictException("This quotation revision is no longer a draft");
+      if (await tx.quotationTestingCommissioningItem.count({ where: { quotationRevisionId: revisionId } })) {
+        throw new ConflictException("This quotation already has checklist items. Edit the existing scope instead.");
+      }
+      await tx.quotationTestingCommissioningItem.createMany({ data: GENERAL_CLEANING_SCOPE.map((item, index) => ({ quotationRevisionId: revisionId, ...item, included: true, sortOrder: index * 10 })) });
+      await tx.quotationRevision.update({ where: { id: revisionId }, data: { scopeChecklistTitle: "GENERAL CLEANING SCOPE OF WORK" } });
+      await this.audit.write({ actorType: ActorType.USER, actorUserId: actor.userId, action: "quotation_cleaning_scope_applied", entityType: "quotation_revision", entityId: revisionId, afterData: { itemCount: GENERAL_CLEANING_SCOPE.length }, ipAddress: actor.ipAddress, userAgent: actor.userAgent }, tx);
+      return tx.quotationTestingCommissioningItem.findMany({ where: { quotationRevisionId: revisionId }, orderBy: { sortOrder: "asc" } });
+    });
+  }
 
   async list(revisionId: string) {
     await this.findRevisionOrThrow(revisionId);
@@ -31,6 +51,8 @@ export class QuotationTestingCommissioningItemsService {
       data: {
         quotationRevisionId: revisionId,
         description: dto.description,
+        method: dto.method,
+        indications: dto.indications,
         included: dto.included ?? true,
         sortOrder: dto.sortOrder ?? (await this.nextSortOrder(revisionId)),
       },

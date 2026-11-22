@@ -20,7 +20,7 @@ export const colors = { green: GREEN, greenDark: GREEN_DARK, red: RED, textMuted
 export const page: CSSProperties = {
   maxWidth: 480,
   margin: "0 auto",
-  padding: "20px 16px 40px",
+  padding: "24px 16px 40px",
 };
 
 export const pageHeader: CSSProperties = {
@@ -28,19 +28,22 @@ export const pageHeader: CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
+  flexWrap: "wrap",
   marginBottom: 20,
 };
 
 export const heading: CSSProperties = {
-  fontSize: 20,
+  fontSize: 22,
   fontWeight: 600,
   margin: 0,
+  overflowWrap: "anywhere",
 };
 
 export const subheading: CSSProperties = {
   color: TEXT_MUTED,
   fontSize: 14,
   margin: "4px 0 0",
+  lineHeight: 1.6,
 };
 
 export const card: CSSProperties = {
@@ -48,13 +51,14 @@ export const card: CSSProperties = {
   width: "100%",
   textAlign: "left",
   border: `1px solid ${BORDER}`,
-  borderRadius: 10,
-  padding: 16,
-  marginBottom: 12,
+  borderRadius: 12,
+  padding: 18,
+  marginBottom: 14,
   background: "#fff",
   color: "inherit",
   textDecoration: "none",
   boxSizing: "border-box",
+  overflowWrap: "anywhere",
 };
 
 export const button: CSSProperties = {
@@ -123,4 +127,10 @@ export const label: CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
   marginTop: 16,
+};
+
+export const sectionHeading: CSSProperties = {
+  fontSize: 16,
+  fontWeight: 650,
+  margin: "0 0 14px",
 };

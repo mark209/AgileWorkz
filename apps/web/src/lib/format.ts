@@ -44,6 +44,14 @@ export function formatDateTime(value: string | null | undefined): string {
   });
 }
 
-export function formatReportType(code: string): string {
+export function formatTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" });
+}
+
+export function formatReportType(code: string, other?: string | null): string {
+  if (code === "OTHER" && other?.trim()) return other.trim();
   return code.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

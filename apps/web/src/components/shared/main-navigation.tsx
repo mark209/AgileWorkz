@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BriefcaseBusiness, ChevronLeft, ChevronRight, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, Users } from "lucide-react";
+import { BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -24,6 +24,7 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
     label: "Operations",
     items: [
       { label: "Work Orders", href: "/work-orders", icon: BriefcaseBusiness },
+      { label: "Work Schedule", href: "/work-schedule", icon: CalendarDays },
       { label: "Service Reports", href: "/service-reports", icon: ClipboardList },
     ],
   },
@@ -68,7 +69,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
 
   const groups = navigationGroups.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.href === "/work-orders"
+    items: group.items.filter((item) => item.href === "/work-orders" || item.href === "/work-schedule"
       ? hasPermission("work_orders", "read") || hasPermission("work_orders", "read_assigned") || hasPermission("work_orders", "read_own")
       : item.href === "/members"
         ? user.roles?.includes("Admin/Owner") && hasPermission("users", "manage")
@@ -146,11 +147,11 @@ export function MainNavigation({ children }: { children: ReactNode }) {
       <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background md:flex ${sidebarCollapsed ? "w-[72px]" : "w-[244px]"}`}>
         {navigationContent(sidebarCollapsed)}
       </aside>
-      <div className="min-w-0 flex-1">
-        <div className="flex h-14 items-center gap-3 border-b px-4 md:hidden">
+      <div className="min-w-0 flex-1 bg-muted/30">
+        <div className="flex h-14 items-center gap-3 border-b bg-background px-4 md:hidden">
           <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <DialogTrigger asChild><Button variant="outline" size="icon" aria-label="Open menu"><Menu className="h-5 w-5" /></Button></DialogTrigger>
-            <DialogContent className="left-0 top-0 flex h-full w-[min(20rem,85vw)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0" aria-describedby="mobile-menu-description" onOpenAutoFocus={(event: Event) => { event.preventDefault(); document.getElementById("mobile-navigation-first")?.focus(); }}>
+            <DialogContent className="left-0 top-0 flex h-full max-h-none w-[min(20rem,85vw)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0" aria-describedby="mobile-menu-description" onOpenAutoFocus={(event: Event) => { event.preventDefault(); document.getElementById("mobile-navigation-first")?.focus(); }}>
               <DialogTitle className="sr-only">Main menu</DialogTitle>
               <DialogDescription id="mobile-menu-description" className="sr-only">Navigate AgileWorks HVAC ERP</DialogDescription>
               {navigationContent(false, () => setMobileMenuOpen(false))}
@@ -159,7 +160,7 @@ export function MainNavigation({ children }: { children: ReactNode }) {
           <span className="min-w-0 flex-1 truncate font-semibold">AgileWorks HVAC ERP</span>
           <span className="max-w-[35vw] truncate text-sm text-muted-foreground" aria-label="Signed in user"><ProfileName fullName={userName} /></span>
         </div>
-        <div key={pathname} className="page-content-enter">{children}</div>
+        <div key={pathname} className="page-content-enter min-h-[calc(100vh-3.5rem)] md:min-h-screen">{children}</div>
       </div>
     </div>
     {welcome && <WelcomeToast {...welcome} onComplete={dismissWelcome} />}

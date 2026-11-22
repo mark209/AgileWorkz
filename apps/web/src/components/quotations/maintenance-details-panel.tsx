@@ -6,6 +6,7 @@ import {
   MAINTENANCE_BILLING_FREQUENCY_LABEL,
   MAINTENANCE_FREQUENCY_LABEL,
   upsertMaintenanceDetails,
+  completeMissingMaintenanceDetails,
   type MaintenanceBillingFrequency,
   type MaintenanceFrequency,
   type QuotationMaintenanceDetails,
@@ -25,12 +26,14 @@ export function MaintenanceDetailsPanel({
   canEdit,
   details,
   onChanged,
+  repairAccepted = false,
 }: {
   quotationId: string;
   revisionId: string;
   canEdit: boolean;
   details: QuotationMaintenanceDetails | null;
   onChanged: () => void;
+  repairAccepted?: boolean;
 }) {
   const { accessToken } = useAuth();
   const [contractPeriodMonths, setContractPeriodMonths] = useState(String(details?.contractPeriodMonths ?? 12));
@@ -48,7 +51,7 @@ export function MaintenanceDetailsPanel({
     setError(null);
     setSavedNotice(false);
     try {
-      await upsertMaintenanceDetails(accessToken, quotationId, revisionId, {
+      await (repairAccepted ? completeMissingMaintenanceDetails : upsertMaintenanceDetails)(accessToken, quotationId, revisionId, {
         contractPeriodMonths: Number(contractPeriodMonths),
         frequency,
         scheduledVisits: Number(scheduledVisits),
@@ -68,14 +71,21 @@ export function MaintenanceDetailsPanel({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Maintenance contract details</CardTitle>
+        <CardTitle className="text-base">Maintenance visit plan</CardTitle>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 space-y-2 text-sm text-muted-foreground">
+          <p>This section is only for quotations classified as Preventive Maintenance. It tells the system how many visit Work Orders to create and how far apart to date them. Repair, installation, supply and other quotation types do not need this plan.</p>
+          <p>Example: a 12-month agreement, quarterly visits and 4 total visits creates four separate Work Orders. Billing frequency describes the agreement; generating visits does not create invoices or assign technicians.</p>
+          <p>For a single maintenance visit, set Total visits to 1. For a job that is not a maintenance agreement, use its appropriate quotation type. Visits are generated only after quotation approval and customer acceptance.</p>
+        </div>
+        {repairAccepted && <p role="status" className="mb-3 text-sm text-amber-800">Complete the missing contract details to generate visits. This is recorded as an audited correction to the accepted quotation.</p>}
         {canEdit ? (
           <form onSubmit={handleSave} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="md-period">Contract period (months)</Label>
               <Input id="md-period" type="number" min="1" value={contractPeriodMonths} onChange={(e) => setContractPeriodMonths(e.target.value)} />
+              <p className="text-xs text-muted-foreground">The length of the agreed maintenance coverage.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="md-frequency">Visit frequency</Label>
@@ -89,8 +99,9 @@ export function MaintenanceDetailsPanel({
               <p className="text-xs text-muted-foreground">How often the service visit takes place.</p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="md-visits">Scheduled visits</Label>
+              <Label htmlFor="md-visits">Total visits</Label>
               <Input id="md-visits" type="number" min="1" value={scheduledVisits} onChange={(e) => setScheduledVisits(e.target.value)} />
+              <p className="text-xs text-muted-foreground">One Work Order will be created for each visit. Use 1 for a single visit.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="md-billing">Billing frequency</Label>
@@ -123,7 +134,7 @@ export function MaintenanceDetailsPanel({
                 <dd className="text-sm">{MAINTENANCE_FREQUENCY_LABEL[details.frequency]}</dd>
               </div>
               <div>
-                <dt className="text-xs uppercase text-muted-foreground">Scheduled visits</dt>
+                <dt className="text-xs uppercase text-muted-foreground">Total visits</dt>
                 <dd className="text-sm">{details.scheduledVisits}</dd>
               </div>
               <div>

@@ -16,9 +16,8 @@ function actorFrom(req: AuthedRequest) {
 
 /**
  * Phase 5 Step 6 — Confirm Report / Canonical Service Report Write.
- * Preview and Confirm require service_reports.confirm (Office
- * Staff/Manager/Admin-Owner, per the Phase 5 RBAC matrix already seeded in
- * prisma/seed.ts — Technician never holds it). The canonical viewer is
+ * Preview and Confirm require service_reports.confirm (Manager/Admin-Owner
+ * final approval after Supervisor review). The canonical viewer is
  * gated on the broader service_reports.read instead — a Manager/Admin-Owner
  * inspecting already-confirmed data doesn't need confirm authority, only
  * general read access, matching the same permission the verification queue

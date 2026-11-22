@@ -7,18 +7,18 @@ import { listServiceReportsForWorkOrder, type ServiceReportListItem } from "@/li
 import { ApiError } from "@/lib/api-client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDateTime } from "@/lib/format";
 
 /**
  * Phase 4 Operations Frontend — Service Reports linked to this Work Order.
  * Never duplicates anything about how a report is itself extracted,
  * verified, confirmed, or locked — that remains entirely Phase 5's own
- * frozen pipeline. Every row links to the existing verify page
- * (/service-reports/:id/verify), which already renders the correct
- * read-only/canonical-link view for CONFIRMED/LOCKED reports on its own —
- * this panel never needs to branch on status to pick a destination.
+ * pipeline. Finalized reports open the canonical reader; in-review
+ * reports open verification only for callers with that permission.
  */
 export function WorkOrderServiceReportsPanel({ workOrderId }: { workOrderId: string }) {
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
+  const canVerify = hasPermission("service_reports", "verify");
   const [reports, setReports] = useState<ServiceReportListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,16 +45,16 @@ export function WorkOrderServiceReportsPanel({ workOrderId }: { workOrderId: str
   return (
     <ul className="flex flex-col gap-2">
       {reports.map((r) => (
-        <li key={r.id} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-          <div>
-            <p className="font-medium">{r.serviceReportNumber}</p>
-            <p className="text-xs text-muted-foreground">{new Date(r.uploadedAt).toLocaleString()}</p>
+        <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm">
+          <div className="min-w-0">
+            <p className="break-words font-medium">{r.serviceReportNumber}</p>
+            <p className="text-xs text-muted-foreground">{formatDateTime(r.uploadedAt)}</p>
           </div>
           <div className="flex items-center gap-3">
             <StatusBadge status={r.status} />
-            <Link href={`/service-reports/${r.id}/verify`} className="font-medium text-primary hover:underline">
+            {(r.status === "CONFIRMED" || r.status === "LOCKED" || canVerify) ? <Link href={`/service-reports/${r.id}/${r.status === "CONFIRMED" || r.status === "LOCKED" ? "canonical" : "verify"}`} className="font-medium text-primary hover:underline">
               View →
-            </Link>
+            </Link> : <span className="text-xs text-muted-foreground">Awaiting review</span>}
           </div>
         </li>
       ))}

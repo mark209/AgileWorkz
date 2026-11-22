@@ -91,11 +91,12 @@ export function listMyServiceReports(accessToken: string) {
   return apiRequest<ServiceReportListItem[]>("/service-reports/mine", { accessToken });
 }
 export function uploadCustomerServiceReport(accessToken: string, customerId: string, input: {
-  siteId: string; reportTypeCode: string; sourceType: string; file: File; idempotencyKey: string;
+  siteId: string; reportTypeCode: string; reportTypeOther?: string; sourceType: string; file: File; idempotencyKey: string;
 }) {
   const form = new FormData();
   form.append("siteId", input.siteId);
   form.append("reportTypeCode", input.reportTypeCode);
+  if (input.reportTypeOther) form.append("reportTypeOther", input.reportTypeOther);
   form.append("sourceType", input.sourceType);
   form.append("file", input.file);
   return uploadFileWithProgress<{ id: string; serviceReportNumber: string }>(
@@ -103,12 +104,13 @@ export function uploadCustomerServiceReport(accessToken: string, customerId: str
   );
 }
 export function uploadWorkOrderServiceReport(accessToken: string, customerId: string, input: {
-  siteId: string; workOrderId: string; reportTypeCode: string; file: File; idempotencyKey: string;
+  siteId: string; workOrderId: string; reportTypeCode: string; reportTypeOther?: string; file: File; idempotencyKey: string;
 }) {
   const form = new FormData();
   form.append("siteId", input.siteId);
   form.append("workOrderId", input.workOrderId);
   form.append("reportTypeCode", input.reportTypeCode);
+  if (input.reportTypeOther) form.append("reportTypeOther", input.reportTypeOther);
   form.append("file", input.file);
   return uploadFileWithProgress<{ id: string; serviceReportNumber: string }>(
     `/customers/${customerId}/service-reports`, accessToken, form, undefined, input.idempotencyKey,
@@ -231,6 +233,7 @@ export function listQuotationsForCustomer(accessToken: string, customerId: strin
   return apiRequest<Quotation[]>(`/customers/${customerId}/quotations`, { accessToken });
 }
 export interface CreateQuotationInput {
+  sourceWorkOrderId?: string;
   siteId: string;
   quotationType: QuotationType;
   quotationTypeOther?: string;
@@ -268,6 +271,11 @@ export function createNextRevision(accessToken: string, quotationId: string) {
   return apiRequest<QuotationRevision>(`/quotations/${quotationId}/revisions`, { method: "POST", accessToken });
 }
 export interface UpdateRevisionContentInput {
+  pdfLayout?: "AUTO" | "STANDARD" | "MAINTENANCE";
+  recipientName?: string;
+  preparedByName?: string;
+  paymentInstructions?: string;
+  scopeChecklistTitle?: string;
   scopeOfWork?: string;
   paymentTerms?: string;
   warranty?: string;
@@ -275,7 +283,7 @@ export interface UpdateRevisionContentInput {
   notes?: string;
   exclusions?: string;
   termsAndConditions?: string;
-  validUntil?: string;
+  validUntil?: string | null;
   defaultTaxTreatment?: TaxTreatment;
   discountPercent?: number;
   discountAmount?: number;
@@ -486,7 +494,7 @@ export function createTestingItem(
   accessToken: string,
   quotationId: string,
   revisionId: string,
-  body: { description: string; included?: boolean; sortOrder?: number },
+  body: { description: string; method?: string; indications?: string; included?: boolean; sortOrder?: number },
 ) {
   return apiRequest<QuotationTestingCommissioningItem>(testingItemsUrl(quotationId, revisionId), {
     method: "POST",
@@ -499,7 +507,7 @@ export function updateTestingItem(
   quotationId: string,
   revisionId: string,
   itemId: string,
-  body: { description?: string; included?: boolean; sortOrder?: number },
+  body: { description?: string; method?: string; indications?: string; included?: boolean; sortOrder?: number },
 ) {
   return apiRequest<QuotationTestingCommissioningItem>(`${testingItemsUrl(quotationId, revisionId)}/${itemId}`, {
     method: "PATCH",
@@ -649,16 +657,20 @@ export function convertQuotationToWorkOrders(
   });
 }
 
-export function generateMaintenanceVisits(accessToken: string, quotationId: string, revisionId: string, startDate: string) {
+export function generateMaintenanceVisits(accessToken: string, quotationId: string, revisionId: string, startDate: string, responsibleManagerId?: string, visitDates?: string[]) {
   return apiRequest<WorkOrder[]>(`/quotations/${quotationId}/revisions/${revisionId}/generate-maintenance-visits`, {
     method: "POST",
-    body: { startDate },
+    body: { startDate, responsibleManagerId, visitDates },
     accessToken,
   });
 }
 
 export function listManagers(accessToken: string) {
   return apiRequest<Array<{ id: string; fullName: string }>>("/users/managers", { accessToken });
+}
+
+export function getRevisionWorkOrders(accessToken: string, quotationId: string, revisionId: string) {
+  return apiRequest<import("./types").QuotationWorkOrderGeneration>(`/quotations/${quotationId}/revisions/${revisionId}/work-orders`, { accessToken });
 }
 
 export function setResponsibleManager(accessToken: string, workOrderId: string, responsibleManagerId: string | null) {
@@ -728,6 +740,10 @@ export function startWorkOrder(accessToken: string, id: string) {
   return apiRequest<WorkOrder>(`/work-orders/${id}/start`, { method: "PATCH", accessToken });
 }
 
+export function completeFieldWorkOrder(accessToken: string, id: string) {
+  return apiRequest<Pick<WorkOrder, "id" | "status" | "fieldCompletedAt">>(`/work-orders/${id}/field-complete`, { method: "PATCH", accessToken });
+}
+
 export function completeWorkOrder(accessToken: string, id: string) {
   return apiRequest<WorkOrder>(`/work-orders/${id}/complete`, { method: "PATCH", accessToken });
 }
@@ -780,4 +796,16 @@ export function unassignTechnician(accessToken: string, workOrderId: string, ass
 // shape.
 export function listServiceReportsForWorkOrder(accessToken: string, workOrderId: string) {
   return apiRequest<ServiceReportListItem[]>(`/work-orders/${workOrderId}/service-reports`, { accessToken });
+}
+
+export function listRelatedQuotations(accessToken: string, workOrderId: string) {
+  return apiRequest<Quotation[]>(`/work-orders/${workOrderId}/quotations`, { accessToken });
+}
+
+export function applyCleaningScope(accessToken: string, quotationId: string, revisionId: string) {
+  return apiRequest<QuotationTestingCommissioningItem[]>(`${testingItemsUrl(quotationId, revisionId)}/cleaning-scope`, { method: "POST", accessToken });
+}
+
+export function completeMissingMaintenanceDetails(accessToken: string, quotationId: string, revisionId: string, body: { contractPeriodMonths: number; frequency: MaintenanceFrequency; scheduledVisits: number; billingFrequency: MaintenanceBillingFrequency }) {
+  return apiRequest<QuotationMaintenanceDetails>(`${maintenanceDetailsUrl(quotationId, revisionId)}/accepted-correction`, { method: "POST", body, accessToken });
 }

@@ -8,6 +8,18 @@ const d = (v: string | number) => new Decimal(v);
 // the implementation are provably the same calculation, not just similarly
 // worded.
 describe("calculateRevisionPricing", () => {
+  it.each([0, 8, 12])("reconciles mixed taxable/exempt lines and a separate discount at a configured %s%% VAT rate", (rate) => {
+    const result = calculateRevisionPricing([
+      { id: "taxable", sortOrder: 0, quantity: d(2), unitCostExpense: null, markupPercent: null, unitPriceBeforeVatInput: d(100), taxTreatment: TaxTreatment.VAT_INCLUSIVE, sectionId: null },
+      { id: "exempt", sortOrder: 1, quantity: d(1), unitCostExpense: null, markupPercent: null, unitPriceBeforeVatInput: d(50), taxTreatment: TaxTreatment.VAT_EXEMPT, sectionId: null },
+    ], d(rate), d(10));
+    expect(result.subtotal.toNumber()).toBe(250 + 2 * rate);
+    expect(result.discountAmount.toNumber()).toBe(10);
+    expect(result.netAmount.plus(result.vatAmount).equals(result.totalAmount)).toBe(true);
+    expect(result.subtotal.minus(result.discountAmount).equals(result.totalAmount)).toBe(true);
+    expect(result.lines[1].lineVatAmount.isZero()).toBe(true);
+    expect(result.lines.reduce((sum, line) => sum.plus(line.lineVatAmount), d(0)).equals(result.vatAmount)).toBe(true);
+  });
   it("Example 1 — costed line, VAT_INCLUSIVE, no discount: markup and gross margin are distinct", () => {
     const result = calculateRevisionPricing(
       [

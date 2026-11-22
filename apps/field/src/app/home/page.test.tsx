@@ -76,7 +76,15 @@ describe("HomePage (My Jobs)", () => {
       logout: vi.fn(),
     });
     render(<HomePage />);
-    expect(screen.getByText(/isn.t set up to view assigned jobs/i)).toBeInTheDocument();
+    expect(screen.getByText(/AgileWorks Field shows technician assignments/)).toBeInTheDocument();
+    expect(listMyWorkOrdersMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["Supervisor", "Technical Supervisor"])("guides a valid %s to Office report review without suggesting broken setup", (role) => {
+    useAuthMock.mockReturnValue({ user: { id: "supervisor", fullName: "QA Supervisor", roles: [role] }, accessToken: "token-1", hasPermission: (module: string, action: string) => module === "service_reports" && ["read", "verify", "technical_approve", "document_approve"].includes(action), logout: vi.fn() });
+    render(<HomePage />);
+    expect(screen.getByText(/Open AgileWorks Office.*Service Reports/)).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t set up/i)).not.toBeInTheDocument();
     expect(listMyWorkOrdersMock).not.toHaveBeenCalled();
   });
 

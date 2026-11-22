@@ -24,6 +24,7 @@ import { Breadcrumbs } from "@/components/shared/breadcrumbs";
 import { PageHeader } from "@/components/shared/page-header";
 import { ErrorState, LoadingState } from "@/components/shared/states";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentPanel } from "@/components/documents/document-panel";
 
@@ -102,7 +103,7 @@ export default function AssetDetailPage() {
 
   if (error) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Equipment" }]} />
         <ErrorState message={error} onRetry={load} />
       </main>
@@ -111,7 +112,7 @@ export default function AssetDetailPage() {
 
   if (!asset) {
     return (
-      <main className="container py-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Customers", href: "/customers" }, { label: "Equipment" }]} />
         <LoadingState label="Loading equipment…" />
       </main>
@@ -119,7 +120,7 @@ export default function AssetDetailPage() {
   }
 
   return (
-    <main className="container py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Breadcrumbs
         items={[
           { label: "Dashboard", href: "/dashboard" },
@@ -147,8 +148,8 @@ export default function AssetDetailPage() {
             />
             <Field label="Refrigerant" value={asset.refrigerantType} />
             <Field label="Location at site" value={asset.locationInSite} />
-            <Field label="Installed" value={asset.installDate ? new Date(asset.installDate).toLocaleDateString() : null} />
-            <Field label="Warranty expiry" value={asset.warrantyExpiry ? new Date(asset.warrantyExpiry).toLocaleDateString() : null} />
+            <Field label="Installed" value={asset.installDate ? formatDate(asset.installDate) : null} />
+            <Field label="Warranty expiry" value={asset.warrantyExpiry ? formatDate(asset.warrantyExpiry) : null} />
             <Field label="Notes" value={asset.notes} />
           </CardContent>
         </Card>
@@ -185,7 +186,7 @@ export default function AssetDetailPage() {
           {history.length === 0 ? <p className="text-sm text-muted-foreground">No verified Service Reports are linked to this equipment yet.</p> :
             <ul className="space-y-2">{history.map((report) => <li key={report.id} className="flex items-center justify-between border-b py-2 text-sm">
               <Link className="font-medium text-primary hover:underline" href={`/service-reports/${report.id}/${report.status === "VERIFIED" ? "verify" : "canonical"}`}>{report.serviceReportNumber}</Link>
-              <span>{new Date(report.serviceDate ?? report.uploadedAt).toLocaleDateString()}</span>
+              <span>{formatDate(report.serviceDate ?? report.uploadedAt)}</span>
             </li>)}</ul>}
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,6 +45,10 @@ export function ActionConfirmDialog({
   onConfirm,
 }: ActionConfirmDialogProps) {
   const [reason, setReason] = useState("");
+
+  useEffect(() => {
+    if (!open) setReason("");
+  }, [open]);
 
   function handleOpenChange(next: boolean) {
     if (submitting && !next) return;

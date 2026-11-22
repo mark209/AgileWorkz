@@ -38,6 +38,11 @@ function queuedReport(overrides: Partial<QueuedServiceReport> = {}): QueuedServi
 }
 
 describe("syncQueuedServiceReports", () => {
+  it("preserves a custom report type when replaying a queued upload", async () => {
+    getQueuedServiceReportsMock.mockResolvedValue([queuedReport({ reportTypeCode: "OTHER", reportTypeOther: "Cooling performance assessment" })]);
+    await syncQueuedServiceReports("tech-1", "fresh-access-token");
+    expect(uploadServiceReportMock).toHaveBeenCalledWith("fresh-access-token", "customer-1", expect.objectContaining({ reportTypeCode: "OTHER", reportTypeOther: "Cooling performance assessment" }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(navigator, "onLine", { configurable: true, value: true });

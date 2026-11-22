@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Quotation } from "@/lib/api/types";
 import QuotationsListPage from "./page";
 
@@ -74,5 +74,25 @@ describe("QuotationsListPage", () => {
     render(<QuotationsListPage />);
     const link = await screen.findByRole("link", { name: /view →/i });
     expect(link).toHaveAttribute("href", "/quotations/q1");
+  });
+
+  it("shows and searches the customer name", async () => {
+    listQuotationsMock.mockResolvedValue([quotation({ customer: { name: "Role Access" } })]);
+    render(<QuotationsListPage />);
+    expect(await screen.findByText("Role Access")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search quotations" }), { target: { value: "Role Access" } });
+    expect(screen.getByRole("link", { name: "QT-2026-08-00001" })).toBeInTheDocument();
+  });
+
+  it("hides previous rows while a new status filter loads", async () => {
+    listQuotationsMock.mockResolvedValueOnce([quotation({ status: "PENDING_APPROVAL" })]);
+    const view = render(<QuotationsListPage />);
+    expect(await screen.findByRole("link", { name: "QT-2026-08-00001" })).toBeInTheDocument();
+
+    listQuotationsMock.mockReturnValueOnce(new Promise(() => {}));
+    useSearchParamsMock.mockReturnValue(new URLSearchParams("status=SENT"));
+    view.rerender(<QuotationsListPage />);
+    await waitFor(() => expect(listQuotationsMock).toHaveBeenCalledWith("token-1", "SENT"));
+    expect(screen.queryByRole("link", { name: "QT-2026-08-00001" })).not.toBeInTheDocument();
   });
 });

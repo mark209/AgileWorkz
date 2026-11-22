@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsDateString, IsEnum, IsIn, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 import { TaxTreatment } from "@prisma/client";
 
 // vat_rate_percent is deliberately absent — never client-settable, always a
@@ -8,6 +8,21 @@ import { TaxTreatment } from "@prisma/client";
 // service layer, not declaratively, matching the existing "capacity pair"
 // validation style used elsewhere in this codebase.
 export class UpdateRevisionContentDto {
+  @IsOptional() @IsIn(["AUTO", "STANDARD", "MAINTENANCE"])
+  pdfLayout?: "AUTO" | "STANDARD" | "MAINTENANCE";
+
+  @IsOptional() @IsString() @MaxLength(160)
+  recipientName?: string;
+
+  @IsOptional() @IsString() @MaxLength(160)
+  preparedByName?: string;
+
+  @IsOptional() @IsString()
+  paymentInstructions?: string;
+
+  @IsOptional() @IsString() @MaxLength(160)
+  scopeChecklistTitle?: string;
+
   @IsOptional()
   @IsString()
   scopeOfWork?: string;
@@ -38,7 +53,7 @@ export class UpdateRevisionContentDto {
 
   @IsOptional()
   @IsDateString()
-  validUntil?: string;
+  validUntil?: string | null;
 
   @IsOptional()
   @IsEnum(TaxTreatment)

@@ -10,3 +10,9 @@ coverage/
 .DS_Store
 storage-local/
 *.tsbuildinfo
+
+# Local audit databases, credentials, fixtures and generated evidence.
+/.local-tools/
+/.test-tmp/
+/audit-screenshots/
+/output/

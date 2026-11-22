@@ -28,7 +28,9 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/dashboard");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Sign in failed. Please try again.");
+      setError(err instanceof ApiError
+        ? err.status === 429 ? "Too many sign-in attempts. Please wait a moment and try again." : err.message
+        : "Sign in failed. Please try again.");
     } finally {
       submitting.current = false;
     }

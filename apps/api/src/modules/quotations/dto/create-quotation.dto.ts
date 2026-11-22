@@ -8,6 +8,11 @@ import { QuotationType, TaxTreatment } from "@prisma/client";
 // always server-derived from template selection (§08), never client-supplied
 // at creation.
 export class CreateQuotationDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  sourceWorkOrderId?: string;
+
   @IsString()
   @MinLength(1)
   siteId!: string;
